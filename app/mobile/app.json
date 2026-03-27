@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Neriah",
+    "slug": "neriah",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.neriah.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Neriah needs camera access to photograph student exercise books.",
+        "NSPhotoLibraryUsageDescription": "Neriah needs photo library access to select book images."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "app.neriah.mobile",
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiBaseUrl": "https://neriah-apim-dev.azure-api.net/api"
+    }
+  }
+}
