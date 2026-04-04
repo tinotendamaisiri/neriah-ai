@@ -1,0 +1,30 @@
+# Credentials and secrets — never upload
+credentials.json
+.env
+*.key
+*.pem
+
+# Local Python environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Tests — not needed at runtime
+tests/
+
+# Dev tooling
+.git/
+.gitignore
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+
+# Docs
+*.md
+docs/

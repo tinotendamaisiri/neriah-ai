@@ -1,0 +1,37 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - functions
+      - deploy
+      - neriah-grading
+      - --gen2
+      - --runtime=python311
+      - --region=us-central1
+      - --source=.
+      - --entry-point=neriah
+      - --trigger-http
+      - --allow-unauthenticated
+      - --memory=1Gi
+      - --timeout=300s
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=us-central1,INFERENCE_BACKEND=vertex,OLLAMA_BASE_URL=http://localhost:11434,GCS_BUCKET_SCANS=neriah-scans-dev,GCS_BUCKET_MARKED=neriah-marked-dev,GCS_BUCKET_SUBMISSIONS=neriah-submissions-dev,WHATSAPP_VERIFY_TOKEN=$$WHATSAPP_VERIFY_TOKEN,WHATSAPP_ACCESS_TOKEN=$$WHATSAPP_ACCESS_TOKEN,WHATSAPP_PHONE_NUMBER_ID=$$WHATSAPP_PHONE_NUMBER_ID,APP_JWT_SECRET=$$APP_JWT_SECRET
+    secretEnv:
+      - WHATSAPP_VERIFY_TOKEN
+      - WHATSAPP_ACCESS_TOKEN
+      - WHATSAPP_PHONE_NUMBER_ID
+      - APP_JWT_SECRET
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/WHATSAPP_VERIFY_TOKEN/versions/latest
+      env: WHATSAPP_VERIFY_TOKEN
+    - versionName: projects/$PROJECT_ID/secrets/WHATSAPP_ACCESS_TOKEN/versions/latest
+      env: WHATSAPP_ACCESS_TOKEN
+    - versionName: projects/$PROJECT_ID/secrets/WHATSAPP_PHONE_NUMBER_ID/versions/latest
+      env: WHATSAPP_PHONE_NUMBER_ID
+    - versionName: projects/$PROJECT_ID/secrets/APP_JWT_SECRET/versions/latest
+      env: APP_JWT_SECRET
+
+options:
+  logging: CLOUD_LOGGING_ONLY

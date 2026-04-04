@@ -1,68 +1,8 @@
-# Python
 __pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-*.whl
-.venv/
-backend/.venv/
-venv/
-env/
+*.pyc
 .env
-
-# Azure Functions
-backend/local.settings.json
-local.settings.json
-.python_packages/
-.funcignore
-
-# Node / React Native / Expo
-node_modules/
-.expo/
-.expo-shared/
-dist/
-build/
-*.tsbuildinfo
-.next/
-out/
-
-# Environment files
-*.env
-*.env.local
-*.env.*.local
-!.env.example
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+.venv/
+venv/
+*.egg-info/
 .DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Test
-.pytest_cache/
-*.pytest_cache
-.coverage
-htmlcov/
-coverage.xml
-
-# Bicep compiled ARM templates (regenerated from bicep source)
-*.json.compiled
-
-# Secrets / keys
-*.pem
-*.p12
-*.pfx
+credentials.json
