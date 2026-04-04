@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from shared.annotator import annotate_image
 from shared.blob_client import generate_sas_url, upload_marked, upload_scan
+from shared.config import get_settings
 from shared.cosmos_client import get_item, upsert_item
 from shared.models import AnswerKey, GradingVerdict, Mark
 from shared.ocr_client import analyse_image, group_answer_regions
@@ -195,8 +196,8 @@ async def run_marking(request: MarkingRequest) -> MarkingResult:
         )
         await upload_marked(annotated_bytes, marked_filename)
         marked_image_url = generate_sas_url(
-            settings_container_marked(), marked_filename, expiry_hours=168
-        )
+            get_settings().azure_storage_container_marked, marked_filename, expiry_hours=168
+        )  # BUG FIX: was settings_container_marked() (called as function); now direct property access
 
     # ── Step 9: Write Mark to Cosmos ──────────────────────────────────────────
     logger.debug("Step 9: write mark to Cosmos")
@@ -207,10 +208,14 @@ async def run_marking(request: MarkingRequest) -> MarkingResult:
         teacher_id=request.teacher_id,
         student_id=request.student_id,
         answer_key_id=request.answer_key_id,
+        class_id=request.class_id,
         score=score,
         max_score=max_score,
+        percentage=round(score / max_score * 100, 2) if max_score else None,
         marked_image_url=marked_image_url,
         raw_ocr_text=ocr_text,
+        source=request.source,
+        approved=request.source == "teacher_scan",  # teacher scans auto-approved; submissions need review
     )
     await upsert_item("marks", mark.model_dump(mode="json"))
 
@@ -230,11 +235,4 @@ async def run_marking(request: MarkingRequest) -> MarkingResult:
     )
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
-
-def settings_container_marked() -> str:
-    """Return the marked-images container name from config.
-    Imported lazily so the module loads without credentials present.
-    """
-    from shared.config import settings
-    return settings.azure_storage_container_marked
+# (settings_container_marked helper removed — now using get_settings().azure_storage_container_marked directly)

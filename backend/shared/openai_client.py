@@ -127,12 +127,27 @@ async def check_image_quality(image_bytes: bytes) -> ImageQualityResult:
 
 # ── 2. Answer grading ─────────────────────────────────────────────────────────
 
+_GRADING_CALIBRATION: dict[str, str] = {
+    "grade_1": "Grade 1 — very lenient: accept phonetic/creative spelling, basic sentence structure, and simple arithmetic; reward intent and partial understanding.",
+    "grade_2": "Grade 2 — very lenient: accept phonetic/creative spelling, basic sentence structure, and simple arithmetic; reward intent and partial understanding.",
+    "grade_3": "Grade 3 — very lenient: accept phonetic/creative spelling, basic sentence structure, and simple arithmetic; reward intent and partial understanding.",
+    "grade_4": "Grade 4 — moderate: expect mostly correct spelling, clear paragraph structure, and multi-step arithmetic; minor spelling errors are acceptable.",
+    "grade_5": "Grade 5 — moderate: expect mostly correct spelling, clear paragraph structure, and multi-step arithmetic; minor spelling errors are acceptable.",
+    "grade_6": "Grade 6 — moderate: expect mostly correct spelling, clear paragraph structure, and multi-step arithmetic; minor spelling errors are acceptable.",
+    "grade_7": "Grade 7 — moderate: expect mostly correct spelling, clear paragraph structure, and multi-step arithmetic; minor spelling errors are acceptable.",
+    "form_1": "Form 1 — strict: require proper grammar and spelling, well-structured essays, and algebraic reasoning; penalise unclear expression.",
+    "form_2": "Form 2 — strict: require proper grammar and spelling, well-structured essays, and algebraic reasoning; penalise unclear expression.",
+    "form_3": "Form 3 — strict: require proper grammar and spelling, well-structured essays, and algebraic reasoning; penalise unclear expression.",
+    "form_4": "Form 4 — strict: require proper grammar and spelling, well-structured essays, and algebraic reasoning; penalise unclear expression.",
+    "form_5": "Form 5 A-Level — rigorous: apply A-level standards; expect analytical depth, precise subject terminology, and well-reasoned arguments.",
+    "form_6": "Form 6 A-Level — rigorous: apply A-level standards; expect analytical depth, precise subject terminology, and well-reasoned arguments.",
+    "tertiary": "College/University — academic: apply tertiary standards; expect formal structure, correct citations where applicable, critical analysis, and domain-specific precision.",
+}
+
 _GRADING_SYSTEM_PROMPT = (
     "You are an expert homework marker for African schools.\n"
     "Grade the student's answers against the provided answer key.\n"
-    "Education level: {education_level}\n"
-    "Apply marking intensity appropriate to this level — be lenient for lower grades, "
-    "strict for tertiary.\n"
+    "Calibration: {calibration}\n"
     "Respond ONLY with valid JSON: a list of objects each matching:\n"
     '{{"question_number": int, "verdict": "correct"|"incorrect"|"partial", '
     '"awarded_marks": float, "feedback": string|null}}\n'
@@ -161,7 +176,8 @@ async def grade_submission(
         One GradingVerdict per question. Missing questions receive verdict=incorrect, marks=0.
     """
     client = _get_client()
-    system_prompt = _GRADING_SYSTEM_PROMPT.format(education_level=education_level)
+    calibration = _GRADING_CALIBRATION.get(education_level, _GRADING_CALIBRATION["grade_7"])
+    system_prompt = _GRADING_SYSTEM_PROMPT.format(calibration=calibration)
     user_message = (
         f"ANSWER KEY:\n{answer_key.model_dump_json()}\n\n"
         f"STUDENT ANSWERS (OCR extracted):\n{ocr_text}"
@@ -197,12 +213,16 @@ def _parse_grading_response(
     Returns all-zero verdicts for every question on any parse failure.
     """
     question_numbers = {q.number for q in answer_key.questions}
+    q_max: dict[int, float] = {q.number: q.max_marks for q in answer_key.questions}
 
     try:
         data: list[dict[str, Any]] = json.loads(raw)
         if not isinstance(data, list):
             raise ValueError("Expected a JSON array")
-        verdicts = [GradingVerdict(**item) for item in data]
+        verdicts = [
+            GradingVerdict(**{**item, "max_marks": q_max.get(item.get("question_number", 0), 1.0)})
+            for item in data
+        ]
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         logger.error("grade_submission: failed to parse response (%s): %r", exc, raw)
         return [
@@ -210,6 +230,7 @@ def _parse_grading_response(
                 question_number=q.number,
                 verdict=GradingVerdictEnum.INCORRECT,
                 awarded_marks=0.0,
+                max_marks=q.max_marks,
                 feedback="Grading error — could not parse response",
             )
             for q in answer_key.questions
@@ -228,6 +249,7 @@ def _parse_grading_response(
                     question_number=q.number,
                     verdict=GradingVerdictEnum.INCORRECT,
                     awarded_marks=0.0,
+                    max_marks=q.max_marks,
                     feedback="Not attempted",
                 )
             )
@@ -237,10 +259,29 @@ def _parse_grading_response(
 
 # ── 3. Marking scheme generation ──────────────────────────────────────────────
 
+_SCHEME_CALIBRATION: dict[str, str] = {
+    "grade_1": "Grade 1 — simple, single-word or very short-phrase answers; basic counting and addition; accept common spelling variations and phonetic spelling.",
+    "grade_2": "Grade 2 — simple, single-word or very short-phrase answers; basic arithmetic; accept common spelling variations and phonetic spelling.",
+    "grade_3": "Grade 3 — short phrases or one-sentence answers; basic arithmetic and multiplication tables; accept reasonable spelling variations.",
+    "grade_4": "Grade 4 — short sentence answers; basic paragraphs; multi-step arithmetic; standard spelling expected with minor errors tolerated.",
+    "grade_5": "Grade 5 — short sentence answers; paragraph-length explanations; multi-step math; standard spelling and grammar expected.",
+    "grade_6": "Grade 6 — full sentence answers; structured paragraphs; fractions, decimals, and ratios; correct spelling and grammar required.",
+    "grade_7": "Grade 7 — full sentence or short paragraph answers; structured responses; all core arithmetic and introductory algebra; correct spelling and grammar required.",
+    "form_1": "Form 1 — complete sentence answers; structured essay responses where applicable; introductory algebra and geometry; correct grammar and spelling required.",
+    "form_2": "Form 2 — well-structured sentence and paragraph answers; algebraic manipulation, geometry proofs; precise language required.",
+    "form_3": "Form 3 — detailed explanations; structured multi-paragraph responses; advanced algebra, trigonometry; precise terminology and correct grammar required.",
+    "form_4": "Form 4 — detailed analytical responses; structured essays with clear arguments; advanced mathematics and sciences; precise subject terminology required.",
+    "form_5": "Form 5 A-Level — detailed explanations and essay-style answers; analytical depth expected; advanced mathematics, sciences, and humanities at A-level standard; precise terminology and rigorous reasoning required.",
+    "form_6": "Form 6 A-Level — detailed explanations and essay-style answers; analytical depth and synthesis expected; A-level standard across all subjects; precise terminology and well-supported arguments required.",
+    "tertiary": "College/University — academic rigour required; citations and references where applicable; critical analysis and synthesis; domain-specific precision; formal academic writing style.",
+}
+
 _SCHEME_SYSTEM_PROMPT = (
     "You are a curriculum-aligned marking scheme generator for African schools.\n"
     "Generate a complete marking scheme for the question paper provided.\n"
-    "Education level: {education_level}\n"
+    "Level calibration: {calibration}\n"
+    "Keep answers appropriate for this level — do not over-complicate answers for younger learners "
+    "or oversimplify for advanced students.\n"
     "Respond ONLY with valid JSON: a list of objects each matching:\n"
     '{{"number": int, "correct_answer": string, "max_marks": float, '
     '"marking_notes": string|null}}\n'
@@ -265,7 +306,8 @@ async def generate_marking_scheme(
         List of Question objects. Empty list on parse failure.
     """
     client = _get_client()
-    system_prompt = _SCHEME_SYSTEM_PROMPT.format(education_level=education_level)
+    calibration = _SCHEME_CALIBRATION.get(education_level, _SCHEME_CALIBRATION["grade_7"])
+    system_prompt = _SCHEME_SYSTEM_PROMPT.format(calibration=calibration)
 
     response = await client.chat.completions.create(
         model=settings.azure_openai_deployment,

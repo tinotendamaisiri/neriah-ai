@@ -7,6 +7,7 @@
 import React, { useState, useRef } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { COLORS } from '../constants/colors';
 // TODO: import { Camera } from 'expo-camera' for live viewfinder with frame overlay
 
 interface ScanButtonProps {
@@ -63,12 +64,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 32 },
   frameGuide: {
     position: 'absolute', top: 20, left: 20, right: 20, bottom: 100,
-    borderWidth: 2, borderColor: '#22c55e', borderRadius: 8,
+    borderWidth: 2, borderColor: COLORS.teal500, borderRadius: 8,
     justifyContent: 'center', alignItems: 'center',
     // TODO: make border dashed using a library or custom drawn corners
   },
-  frameGuideText: { color: '#22c55e', fontSize: 13, backgroundColor: 'rgba(255,255,255,0.7)', padding: 4, borderRadius: 4 },
-  captureButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#22c55e', justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: '#fff' },
-  captureButtonDisabled: { backgroundColor: '#86efac' },
-  captureButtonInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff' },
+  frameGuideText: { color: COLORS.teal500, fontSize: 13, backgroundColor: 'rgba(255,255,255,0.7)', padding: 4, borderRadius: 4 },
+  captureButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.teal500, justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: COLORS.white },
+  captureButtonDisabled: { backgroundColor: COLORS.teal100 },
+  captureButtonInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: COLORS.white },
 });

@@ -21,15 +21,17 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15
 }
 
 var containers = [
-  { name: 'teachers',    partitionKey: '/phone' }
-  { name: 'classes',     partitionKey: '/teacher_id' }
-  { name: 'students',    partitionKey: '/class_id' }
-  { name: 'answer_keys', partitionKey: '/class_id' }
-  { name: 'marks',       partitionKey: '/student_id' }
-  { name: 'sessions',          partitionKey: '/phone' }
-  { name: 'rubrics',           partitionKey: '/class_id' }
-  { name: 'submissions',       partitionKey: '/student_id' }
-  { name: 'submission_codes',  partitionKey: '/class_id' }
+  { name: 'teachers',           partitionKey: '/phone' }
+  { name: 'classes',            partitionKey: '/teacher_id' }
+  { name: 'students',           partitionKey: '/class_id' }
+  { name: 'answer_keys',        partitionKey: '/class_id' }
+  { name: 'marks',              partitionKey: '/student_id' }
+  { name: 'sessions',           partitionKey: '/phone' }
+  { name: 'rubrics',            partitionKey: '/class_id' }
+  { name: 'submissions',        partitionKey: '/student_id' }
+  { name: 'submission_codes',   partitionKey: '/class_id' }
+  { name: 'otp_verifications',  partitionKey: '/phone' }
+  { name: 'schools',            partitionKey: '/id' }
 ]
 
 resource cosmosContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = [for c in containers: {
@@ -39,7 +41,7 @@ resource cosmosContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/co
     resource: {
       id: c.name
       partitionKey: { paths: [c.partitionKey], kind: 'Hash' }
-      defaultTtl: c.name == 'sessions' ? 86400 : -1
+      defaultTtl: c.name == 'sessions' ? 86400 : c.name == 'otp_verifications' ? 600 : -1
     }
   }
 }]

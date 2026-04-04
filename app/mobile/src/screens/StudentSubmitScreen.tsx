@@ -1,0 +1,183 @@
+// src/screens/StudentSubmitScreen.tsx
+// Lists open assignments; tapping one starts the camera capture flow.
+
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useAuth } from '../context/AuthContext';
+import { getAssignments } from '../services/api';
+import { Assignment, StudentRootStackParamList } from '../types';
+import { COLORS } from '../constants/colors';
+
+type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
+
+export default function StudentSubmitScreen() {
+  const { user } = useAuth();
+  const navigation = useNavigation<Nav>();
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (!user?.class_id) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    try {
+      const data = await getAssignments(user.class_id);
+      setAssignments(data);
+    } catch {
+      if (!isRefresh) {
+        Alert.alert('Error', 'Could not load assignments. Pull down to retry.');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user]);
+
+  useEffect(() => { load(false); }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    load(true);
+  };
+
+  const startSubmission = (assignment: Assignment) => {
+    if (!user?.class_id) return;
+    navigation.navigate('StudentCamera', {
+      answer_key_id: assignment.id,
+      answer_key_title: assignment.title ?? assignment.subject ?? 'Assignment',
+      class_id: user.class_id,
+    });
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={COLORS.teal500} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Submit Work</Text>
+        <Text style={styles.headerSub}>Choose an assignment to submit</Text>
+      </View>
+
+      {!user?.class_id ? (
+        <View style={styles.noClassCard}>
+          <Text style={styles.noClassIcon}>🏫</Text>
+          <Text style={styles.noClassTitle}>Not in a class yet</Text>
+          <Text style={styles.noClassText}>
+            Ask your teacher for a class join code and add it in Settings.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={assignments}
+          keyExtractor={item => item.id}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.teal500} />}
+          contentContainerStyle={assignments.length === 0 ? styles.emptyFlex : styles.listContent}
+          ListEmptyComponent={() => (
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📋</Text>
+              <Text style={styles.emptyTitle}>No open assignments</Text>
+              <Text style={styles.emptyText}>Your teacher hasn't opened any assignments yet.</Text>
+            </View>
+          )}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.card} onPress={() => startSubmission(item)}>
+              <View style={styles.cardIcon}>
+                <Text style={styles.cardIconText}>📝</Text>
+              </View>
+              <View style={styles.cardBody}>
+                <Text style={styles.cardTitle}>{item.title ?? item.subject ?? 'Assignment'}</Text>
+                {item.subject && item.title && (
+                  <Text style={styles.cardSub}>{item.subject}</Text>
+                )}
+                {item.total_marks != null && (
+                  <Text style={styles.cardMeta}>Total marks: {item.total_marks}</Text>
+                )}
+              </View>
+              <View style={styles.cardArrow}>
+                <Text style={styles.cardArrowText}>→</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.background },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: {
+    backgroundColor: COLORS.teal500,
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 24,
+  },
+  headerTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
+  headerSub: { color: COLORS.teal100, fontSize: 13, marginTop: 4 },
+  listContent: { padding: 16 },
+  emptyFlex: { flex: 1 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  emptyIcon: { fontSize: 56, marginBottom: 16 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
+  emptyText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20 },
+  noClassCard: {
+    flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40,
+  },
+  noClassIcon: { fontSize: 56, marginBottom: 16 },
+  noClassTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
+  noClassText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20 },
+  card: {
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cardIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: COLORS.teal50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  cardIconText: { fontSize: 22 },
+  cardBody: { flex: 1 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  cardSub: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
+  cardMeta: { fontSize: 12, color: COLORS.textLight, marginTop: 4 },
+  cardArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.teal500,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardArrowText: { color: COLORS.white, fontSize: 16, fontWeight: '700' },
+});

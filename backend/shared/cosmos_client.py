@@ -30,6 +30,8 @@ CONTAINER_NAMES = frozenset({
     "rubrics",
     "submissions",
     "submission_codes",
+    "otp_verifications",    # partition key: /phone | TTL: 600s — auto-deleted after 10 minutes
+    "schools",              # partition key: /id — reference table, seeded on first GET /api/schools
 })
 
 # ── Module-level client (lazy singleton) ─────────────────────────────────────
@@ -127,7 +129,6 @@ async def query_items(
     kwargs: dict[str, Any] = {
         "query": query,
         "parameters": parameters or [],
-        "enable_cross_partition_query": partition_key is None,
     }
     if partition_key is not None:
         kwargs["partition_key"] = partition_key

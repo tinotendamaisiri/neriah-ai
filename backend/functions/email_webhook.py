@@ -15,7 +15,7 @@ import re
 
 import azure.functions as func
 
-from shared.cosmos_client import query_items
+from shared.cosmos_client import query_items, upsert_item
 from shared.email_client import send_error
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,19 @@ async def process_inbound_email(event_data: dict) -> None:
 
     submission_code = code_match.group(1).strip()
 
-    # Look up submission code in Cosmos
+    # ── Determine route: primary/secondary (join code) vs tertiary ────────────
+    # Join codes are 6 uppercase alphanumeric chars (e.g. "A7B3K2").
+    # Tertiary submission codes follow the NER-YYYY-... format.
+    if re.match(r"^[A-Z0-9]{6}$", submission_code):
+        await _run_primary_email_pipeline(
+            subject=subject,
+            submission_code=submission_code,
+            sender_email=sender_email,
+            attachments=attachments,
+        )
+        return
+
+    # ── Tertiary: look up submission code in Cosmos ───────────────────────────
     code_results = await query_items(
         container_name="submission_codes",
         query="SELECT * FROM c WHERE c.code = @code AND c.active = true",
@@ -336,3 +348,262 @@ async def _approve_submission_internal(submission_id: str) -> None:
 def sender_email_to_name(email: str) -> str:
     """Derive a display name from an email address (local part before @)."""
     return email.split("@")[0].replace(".", " ").replace("_", " ").title()
+
+
+async def _run_primary_email_pipeline(
+    subject: str,
+    submission_code: str,
+    sender_email: str,
+    attachments: list,
+) -> None:
+    """
+    Handle primary/secondary student submissions submitted via email.
+    Subject format: [JOIN_CODE] FirstName Surname - Assignment Title
+    e.g. "[A7B3K2] Tendai Moyo - Term 1 Math Test"
+    """
+    from uuid import uuid4
+
+    from shared.blob_client import generate_sas_url, upload_bytes
+    from shared.cosmos_client import get_item, upsert_item
+    from shared.email_client import send_error
+    from shared.models import Mark
+    from shared.annotator import annotate_image
+    from shared.blob_client import upload_marked
+    from shared.ocr_client import run_ocr
+    from shared.openai_client import check_image_quality, grade_submission
+    from shared.push_client import send_push_notification
+    from shared.config import settings
+
+    # Parse "Name - Assignment Title" from subject after the [CODE] bracket
+    rest = re.sub(r"\[[^\]]+\]\s*", "", subject).strip()
+    dash_match = re.match(r"^(.+?)\s+-\s+(.+)$", rest)
+    if not dash_match:
+        logger.warning(
+            "_run_primary_email_pipeline: can't parse name/assignment from subject %r", subject
+        )
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name="Student",
+            subject="Submission could not be processed",
+            message=(
+                "Your submission subject line could not be parsed.\n"
+                "Please use the format:\n"
+                "[CLASS-CODE] First Surname - Assignment Title"
+            ),
+        )
+        return
+
+    full_name = dash_match.group(1).strip()
+    assignment_title = dash_match.group(2).strip()
+    name_parts = full_name.split()
+
+    if len(name_parts) < 2:
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name="Student",
+            subject="Submission could not be processed",
+            message="Please include your full name (first name and surname) in the subject line.",
+        )
+        return
+
+    # Resolve class by join code
+    class_docs = await query_items(
+        "classes",
+        "SELECT * FROM c WHERE c.join_code = @code",
+        [{"name": "@code", "value": submission_code}],
+    )
+    if not class_docs:
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="Invalid class code",
+            message=f"The class code '{submission_code}' was not found. Check the code and try again.",
+        )
+        return
+    cls = class_docs[0]
+    class_id = cls["id"]
+    teacher_id = cls["teacher_id"]
+    education_level = cls.get("education_level", "form_1")
+
+    # Match student by email or name
+    first = name_parts[0].lower()
+    surname = " ".join(name_parts[1:]).lower()
+    all_students = await query_items(
+        "students",
+        "SELECT * FROM c WHERE c.class_id = @cid",
+        [{"name": "@cid", "value": class_id}],
+        partition_key=class_id,
+    )
+    student = next(
+        (
+            s for s in all_students
+            if s.get("first_name", "").lower() == first
+            and s.get("surname", "").lower() == surname
+        ),
+        None,
+    )
+    if not student:
+        logger.warning(
+            "_run_primary_email_pipeline: student '%s' not found in class %s", full_name, class_id
+        )
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="Student not found",
+            message=(
+                f"We couldn't find a student named '{full_name}' in this class. "
+                "Please check your name matches your school records."
+            ),
+        )
+        return
+
+    student_id = student["id"]
+
+    # Resolve answer key
+    open_keys = await query_items(
+        "answer_keys",
+        "SELECT * FROM c WHERE c.class_id = @cid AND c.open_for_submission = true",
+        [{"name": "@cid", "value": class_id}],
+        partition_key=class_id,
+    )
+    title_lower = assignment_title.lower()
+    matched_ak = next(
+        (
+            ak for ak in open_keys
+            if title_lower in (ak.get("title") or ak.get("subject") or "").lower()
+            or (ak.get("title") or ak.get("subject") or "").lower() in title_lower
+        ),
+        None,
+    )
+    if not matched_ak:
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="Assignment not found",
+            message=(
+                f"Assignment '{assignment_title}' was not found or is not accepting submissions. "
+                "Please check the assignment title and try again."
+            ),
+        )
+        return
+
+    # Must have an image attachment
+    image_attachment = next(
+        (a for a in attachments if (a.get("contentType") or "").startswith("image/")),
+        attachments[0] if attachments else None,
+    )
+    if not image_attachment:
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="No image attached",
+            message="Please attach a photo of your work and resubmit.",
+        )
+        return
+
+    import base64
+    try:
+        image_bytes = base64.b64decode(image_attachment.get("contentInBase64", ""))
+    except Exception:
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="Attachment could not be read",
+            message="Your attached image could not be read. Please try resubmitting.",
+        )
+        return
+
+    try:
+        # Quality gate
+        quality = await check_image_quality(image_bytes)
+        if not quality.pass_check:
+            await send_error(
+                recipient_email=sender_email,
+                recipient_name=full_name,
+                subject="Image quality too low",
+                message=quality.suggestion or "The image quality is too low. Please retake and resubmit.",
+            )
+            return
+
+        # Upload raw scan
+        filename = image_attachment.get("name", "submission.jpg")
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+        scan_blob = f"{teacher_id}/{class_id}/{student_id}/email_{uuid4()}.{ext}"
+        await upload_bytes(
+            image_bytes, scan_blob,
+            container_name=settings.azure_storage_container_scans,
+            content_type=image_attachment.get("contentType", "image/jpeg"),
+        )
+
+        # OCR + grade + annotate
+        ocr_result = await run_ocr(image_bytes)
+        ocr_text = ocr_result.full_text if hasattr(ocr_result, "full_text") else str(ocr_result)
+        bounding_boxes = ocr_result.bounding_boxes if hasattr(ocr_result, "bounding_boxes") else None
+
+        from shared.models import AnswerKey
+        answer_key = AnswerKey(**matched_ak)
+        verdicts = await grade_submission(ocr_text, answer_key, education_level)
+
+        annotated_bytes = None
+        if bounding_boxes:
+            try:
+                annotated_bytes = await annotate_image(image_bytes, bounding_boxes, verdicts)
+            except Exception as exc:
+                logger.warning("_run_primary_email_pipeline: annotation failed: %s", exc)
+
+        marked_image_url = None
+        if annotated_bytes:
+            marked_blob = f"{teacher_id}/{class_id}/{student_id}/email_marked_{uuid4()}.jpg"
+            await upload_marked(annotated_bytes, marked_blob)
+            marked_image_url = generate_sas_url(
+                settings.azure_storage_container_marked, marked_blob, expiry_hours=24 * 365
+            )
+
+        score = sum(v.awarded_marks for v in verdicts)
+        max_score = sum(q.max_marks for q in answer_key.questions)
+
+        mark = Mark(
+            teacher_id=teacher_id,
+            student_id=student_id,
+            answer_key_id=matched_ak["id"],
+            class_id=class_id,
+            score=score,
+            max_score=max_score,
+            percentage=round(score / max_score * 100, 2) if max_score else None,
+            marked_image_url=marked_image_url,
+            raw_ocr_text=ocr_text,
+            source="email",
+            approved=False,
+        )
+        await upsert_item("marks", mark.model_dump(mode="json"))
+
+        logger.info(
+            "_run_primary_email_pipeline: done mark_id=%s score=%.1f/%.1f",
+            mark.id, score, max_score,
+        )
+
+        # Notify teacher
+        teacher_docs = await query_items(
+            "teachers",
+            "SELECT c.push_token FROM c WHERE c.id = @id",
+            [{"name": "@id", "value": teacher_id}],
+        )
+        if teacher_docs and teacher_docs[0].get("push_token"):
+            ak_title = matched_ak.get("title") or matched_ak.get("subject", "assignment")
+            await send_push_notification(
+                teacher_docs[0]["push_token"],
+                title="New submission",
+                body=f"{full_name} submitted {ak_title}",
+                data={"mark_id": mark.id, "class_id": class_id},
+            )
+
+    except Exception as exc:
+        logger.exception(
+            "_run_primary_email_pipeline: pipeline error for %s: %s", full_name, exc
+        )
+        await send_error(
+            recipient_email=sender_email,
+            recipient_name=full_name,
+            subject="Submission processing error",
+            message="There was an error processing your submission. Please try resubmitting.",
+        )

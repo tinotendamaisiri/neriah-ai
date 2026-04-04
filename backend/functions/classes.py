@@ -1,85 +1,284 @@
 # functions/classes.py
-# GET  /api/classes  — list all classes for the authenticated teacher
-# POST /api/classes  — create a new class
+# Teacher class management.
+#
+# GET    /api/classes              — list teacher's classes (teacher JWT)
+# POST   /api/classes              — create a class (teacher JWT)
+# PUT    /api/classes/{class_id}   — update a class (teacher JWT)
+# DELETE /api/classes/{class_id}   — delete a class (teacher JWT)
+# GET    /api/classes/join/{code}  — look up class info by join code (no auth)
+# POST   /api/classes/join         — verify student belongs to class (student JWT)
 
 from __future__ import annotations
 
+import json
 import logging
+import random
+import string
+from typing import Optional
 
 import azure.functions as func
 
-from shared.cosmos_client import query_items, upsert_item
+from shared.auth import require_role
+from shared.cosmos_client import delete_item, query_items, upsert_item
 from shared.models import Class, EducationLevel
 
 logger = logging.getLogger(__name__)
 
-bp = func.Blueprint()
 
+def _ok(body, status: int = 200) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps(body, default=str), status_code=status, mimetype="application/json"
+    )
+
+
+def _err(message: str, status: int = 400) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps({"error": message}), status_code=status, mimetype="application/json"
+    )
+
+
+# ── GET / POST /api/classes ───────────────────────────────────────────────────
 
 async def handle_classes(req: func.HttpRequest) -> func.HttpResponse:
-    """Public async handler — called from function_app.py @app.route decorator."""
-    return classes(req)
-
-
-@bp.route(route="classes", methods=["GET", "POST"])
-def classes(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    GET:  Returns all classes owned by the authenticated teacher.
-    POST: Creates a new class. Body: { name: str, education_level: str }
-    """
-    # TODO: extract teacher_id from validated JWT bearer token
-    teacher_id = _get_teacher_id(req)
-    if not teacher_id:
-        return func.HttpResponse('{"error": "Unauthorized"}', status_code=401, mimetype="application/json")
-
+    """Route GET → list, POST → create."""
     if req.method == "GET":
-        return _list_classes(teacher_id)
-    return _create_class(req, teacher_id)
+        return await _list_classes(req)
+    return await _create_class(req)
 
 
-def _list_classes(teacher_id: str) -> func.HttpResponse:
-    """Return all classes for a teacher, ordered by created_at descending."""
-    # TODO: implement query — SELECT * FROM c WHERE c.teacher_id = @teacher_id
-    # TODO: order by c.created_at DESC
-    results = query_items(
+async def _list_classes(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        user = require_role(req, "teacher")
+    except ValueError as exc:
+        return _err(str(exc), status=401)
+
+    results = await query_items(
         container_name="classes",
-        query="SELECT * FROM c WHERE c.teacher_id = @teacher_id",
-        parameters=[{"name": "@teacher_id", "value": teacher_id}],
-        partition_key=teacher_id,
+        query="SELECT * FROM c WHERE c.teacher_id = @teacher_id ORDER BY c.created_at DESC",
+        parameters=[{"name": "@teacher_id", "value": user["id"]}],
+        partition_key=user["id"],
     )
-    import json
-    return func.HttpResponse(json.dumps(results), status_code=200, mimetype="application/json")
+    return _ok(results)
 
 
-def _create_class(req: func.HttpRequest, teacher_id: str) -> func.HttpResponse:
-    """Create a new Class document in Cosmos."""
-    # TODO: parse and validate request body
-    # TODO: validate education_level is a valid EducationLevel enum value
-    # TODO: create Class model, upsert to Cosmos, return 201 with the new document
-    import json
+async def _create_class(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        user = require_role(req, "teacher")
+    except ValueError as exc:
+        return _err(str(exc), status=401)
+
     try:
         body = req.get_json()
+        join_code = await _generate_unique_join_code()
         new_class = Class(
-            teacher_id=teacher_id,
+            teacher_id=user["id"],
             name=body["name"],
             education_level=EducationLevel(body["education_level"]),
+            join_code=join_code,
+            subject=body.get("subject"),
+            grade=body.get("grade"),
+            share_analytics=body.get("share_analytics", False),
+            share_rank=body.get("share_rank", False),
         )
-        upsert_item("classes", new_class.model_dump())
-        return func.HttpResponse(
-            new_class.model_dump_json(),
-            status_code=201,
-            mimetype="application/json",
-        )
-    except (KeyError, ValueError) as e:
-        return func.HttpResponse(
-            f'{{"error": "Invalid request: {e}"}}',
-            status_code=400,
-            mimetype="application/json",
-        )
+        await upsert_item("classes", new_class.model_dump(mode="json"))
+        return _ok(new_class.model_dump(mode="json"), status=201)
+    except (KeyError, ValueError) as exc:
+        return _err(f"Invalid request: {exc}")
 
 
-def _get_teacher_id(req: func.HttpRequest) -> str | None:
-    """Extract and validate teacher_id from JWT in Authorization header."""
-    # TODO: implement JWT validation using APP_JWT_SECRET
-    # TODO: return None if token is missing, expired, or invalid
-    return req.headers.get("X-Teacher-Id")  # placeholder — replace with real JWT validation
+# ── PUT /api/classes/{class_id} ───────────────────────────────────────────────
+
+async def handle_class_update(req: func.HttpRequest) -> func.HttpResponse:
+    """Update mutable fields on a class.
+
+    PUT /api/classes/{class_id}
+    Requires: Authorization: Bearer <teacher_jwt>
+    Body (all optional): { name, subject, grade, share_analytics, share_rank }
+    """
+    try:
+        user = require_role(req, "teacher")
+    except ValueError as exc:
+        return _err(str(exc), status=401)
+
+    class_id: str = req.route_params.get("class_id", "").strip()
+    if not class_id:
+        return _err("class_id is required in the URL path")
+
+    try:
+        body = req.get_json()
+    except Exception:
+        return _err("Invalid JSON body")
+
+    results = await query_items(
+        "classes",
+        "SELECT * FROM c WHERE c.id = @id AND c.teacher_id = @tid",
+        [{"name": "@id", "value": class_id}, {"name": "@tid", "value": user["id"]}],
+        partition_key=user["id"],
+    )
+    if not results:
+        return _err("Class not found.", status=404)
+
+    class_doc = results[0]
+
+    for field in ("name", "subject", "grade", "share_analytics", "share_rank"):
+        if field in body:
+            class_doc[field] = body[field]
+
+    await upsert_item("classes", class_doc)
+    return _ok(class_doc)
+
+
+# ── DELETE /api/classes/{class_id} ───────────────────────────────────────────
+
+async def handle_class_delete(req: func.HttpRequest) -> func.HttpResponse:
+    """Delete a class.
+
+    DELETE /api/classes/{class_id}
+    Requires: Authorization: Bearer <teacher_jwt>
+    """
+    try:
+        user = require_role(req, "teacher")
+    except ValueError as exc:
+        return _err(str(exc), status=401)
+
+    class_id: str = req.route_params.get("class_id", "").strip()
+    if not class_id:
+        return _err("class_id is required in the URL path")
+
+    results = await query_items(
+        "classes",
+        "SELECT c.id FROM c WHERE c.id = @id AND c.teacher_id = @tid",
+        [{"name": "@id", "value": class_id}, {"name": "@tid", "value": user["id"]}],
+        partition_key=user["id"],
+    )
+    if not results:
+        return _err("Class not found.", status=404)
+
+    await delete_item("classes", class_id, user["id"])
+    return _ok({"success": True, "message": "Class deleted."})
+
+
+# ── GET /api/classes/join/{code} ──────────────────────────────────────────────
+
+async def handle_class_join_info(req: func.HttpRequest) -> func.HttpResponse:
+    """Look up class info by join code — no auth required.
+
+    GET /api/classes/join/{code}
+    Response 200: { id, name, subject, education_level, teacher: { first_name, surname } }
+    """
+    code: str = req.route_params.get("code", "").strip().upper()
+    if not code:
+        return _err("code is required in the URL path")
+
+    results = await query_items(
+        "classes",
+        "SELECT * FROM c WHERE c.join_code = @code",
+        [{"name": "@code", "value": code}],
+    )
+    if not results:
+        return _err("Class not found. Please check the code.", status=404)
+
+    cls = results[0]
+
+    teacher: dict = {}
+    if cls.get("teacher_id"):
+        t_results = await query_items(
+            "teachers",
+            "SELECT c.first_name, c.surname FROM c WHERE c.id = @id",
+            [{"name": "@id", "value": cls["teacher_id"]}],
+        )
+        teacher = t_results[0] if t_results else {}
+
+    return _ok({
+        "id": cls["id"],
+        "name": cls.get("name", ""),
+        "subject": cls.get("subject"),
+        "education_level": cls.get("education_level"),
+        "teacher": {
+            "first_name": teacher.get("first_name", ""),
+            "surname": teacher.get("surname", ""),
+        },
+    })
+
+
+# ── POST /api/classes/join ────────────────────────────────────────────────────
+
+async def handle_class_join(req: func.HttpRequest) -> func.HttpResponse:
+    """Confirm a student is enrolled in the class identified by join code.
+
+    POST /api/classes/join
+    Requires: Authorization: Bearer <student_jwt>
+    Body: { "class_join_code": "A7B3K2", "student_id": "uuid" }
+
+    Returns 200 if the student is already in this class (idempotent).
+    Returns 409 if the student belongs to a different class.
+
+    Note: class_id is the Cosmos partition key and cannot be changed after
+    student creation. Use POST /api/auth/student/register to enrol a new student.
+    """
+    try:
+        user = require_role(req, "student")
+    except ValueError as exc:
+        return _err(str(exc), status=401)
+
+    try:
+        body = req.get_json()
+    except Exception:
+        return _err("Invalid JSON body")
+
+    join_code: str = (body.get("class_join_code") or "").strip().upper()
+    student_id: str = (body.get("student_id") or "").strip()
+
+    if not join_code:
+        return _err("class_join_code is required")
+    if not student_id:
+        return _err("student_id is required")
+    if student_id != user["id"]:
+        return _err("student_id does not match authenticated user.", status=403)
+
+    class_results = await query_items(
+        "classes",
+        "SELECT c.id, c.name FROM c WHERE c.join_code = @code",
+        [{"name": "@code", "value": join_code}],
+    )
+    if not class_results:
+        return _err("Invalid class code. Please check the code and try again.")
+
+    cls = class_results[0]
+
+    student_results = await query_items(
+        "students",
+        "SELECT c.id, c.class_id FROM c WHERE c.id = @id",
+        [{"name": "@id", "value": student_id}],
+    )
+    if not student_results:
+        return _err("Student not found.", status=404)
+
+    student_class_id = student_results[0].get("class_id", "")
+
+    if student_class_id == cls["id"]:
+        return _ok({"class_id": cls["id"], "class_name": cls.get("name", "")})
+
+    return _err(
+        "You are already enrolled in a different class. "
+        "Contact your teacher to be moved.",
+        status=409,
+    )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _generate_unique_join_code(max_attempts: int = 5) -> str:
+    chars = string.ascii_uppercase + string.digits
+    code = ""
+    for _ in range(max_attempts):
+        code = "".join(random.choices(chars, k=6))
+        existing = await query_items(
+            container_name="classes",
+            query="SELECT c.id FROM c WHERE c.join_code = @code",
+            parameters=[{"name": "@code", "value": code}],
+        )
+        if not existing:
+            return code
+    logger.warning("_generate_unique_join_code: exhausted %d attempts, using last code", max_attempts)
+    return code

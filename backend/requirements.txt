@@ -15,3 +15,7 @@ pdfplumber
 python-docx
 reportlab
 azure-communication-email
+azure-communication-sms
+PyJWT
+twilio
+bcrypt

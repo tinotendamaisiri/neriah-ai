@@ -36,7 +36,17 @@ async def handle_submissions(req: func.HttpRequest) -> func.HttpResponse:
 # ── GET — list submissions ────────────────────────────────────────────────────
 
 async def list_submissions(req: func.HttpRequest) -> func.HttpResponse:
-    """List submissions for a teacher, with optional status and class_id filters."""
+    """List submissions for a teacher, with optional status, class_id, and type filters.
+
+    Query params:
+        teacher_id  — required
+        status      — optional: pending | graded (primary) / draft | approved | released (tertiary)
+        class_id    — optional
+        type        — optional: primary | tertiary | all (default: all)
+                      primary   = homework marking results (marks container, source=student_submission)
+                      tertiary  = typed documents (submissions container, PDF/DOCX)
+                      all       = primary (homework marks) — tertiary has its own approval UI
+    """
     teacher_id = req.params.get("teacher_id")
     if not teacher_id:
         return func.HttpResponse(
@@ -47,24 +57,104 @@ async def list_submissions(req: func.HttpRequest) -> func.HttpResponse:
 
     status_filter = req.params.get("status")
     class_id_filter = req.params.get("class_id")
+    type_filter = (req.params.get("type") or "all").lower()
 
-    query = "SELECT * FROM c WHERE c.teacher_id = @teacher_id"
-    parameters: list[dict] = [{"name": "@teacher_id", "value": teacher_id}]
+    # ── Tertiary: query submissions container (typed documents) ───────────────────
+    if type_filter == "tertiary":
+        query = "SELECT * FROM c WHERE c.teacher_id = @teacher_id"
+        parameters: list[dict] = [{"name": "@teacher_id", "value": teacher_id}]
+        if status_filter:
+            query += " AND c.status = @status"
+            parameters.append({"name": "@status", "value": status_filter})
+        if class_id_filter:
+            query += " AND c.class_id = @class_id"
+            parameters.append({"name": "@class_id", "value": class_id_filter})
+        query += " AND (c.document_type = 'pdf' OR c.document_type = 'docx')"
+        results = await query_items("submissions", query, parameters)
+        return func.HttpResponse(
+            json.dumps(results, default=str), status_code=200, mimetype="application/json"
+        )
 
-    if status_filter:
-        query += " AND c.status = @status"
-        parameters.append({"name": "@status", "value": status_filter})
+    # ── Primary / all: query marks container for student homework submissions ─────
+    # These are created by student_submissions.py and teacher marking pipeline.
+    query = (
+        "SELECT * FROM c "
+        "WHERE c.teacher_id = @teacher_id "
+        "AND c.source = 'student_submission'"
+    )
+    parameters = [{"name": "@teacher_id", "value": teacher_id}]
+
     if class_id_filter:
         query += " AND c.class_id = @class_id"
         parameters.append({"name": "@class_id", "value": class_id_filter})
 
-    results = await query_items(
-        container_name="submissions",
-        query=query,
-        parameters=parameters,
-    )
+    if status_filter == "pending":
+        query += " AND (NOT IS_DEFINED(c.approved) OR c.approved = false)"
+    elif status_filter == "graded":
+        query += " AND c.approved = true"
+
+    marks = await query_items("marks", query, parameters)
+
+    # Enrich: batch-load student names
+    student_ids = list({m["student_id"] for m in marks if m.get("student_id")})
+    student_names: dict[str, str] = {}
+    for sid in student_ids:
+        try:
+            sr = await query_items(
+                "students",
+                "SELECT c.id, c.first_name, c.surname FROM c WHERE c.id = @id",
+                [{"name": "@id", "value": sid}],
+            )
+            if sr:
+                s = sr[0]
+                student_names[sid] = f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
+        except Exception:
+            pass
+
+    # Enrich: batch-load answer key titles
+    ak_ids = list({m["answer_key_id"] for m in marks if m.get("answer_key_id")})
+    ak_titles: dict[str, str] = {}
+    for ak_id in ak_ids:
+        try:
+            ar = await query_items(
+                "answer_keys",
+                "SELECT c.id, c.title, c.subject FROM c WHERE c.id = @id",
+                [{"name": "@id", "value": ak_id}],
+            )
+            if ar:
+                ak = ar[0]
+                ak_titles[ak_id] = ak.get("title") or ak.get("subject", "")
+        except Exception:
+            pass
+
+    # Shape into TeacherSubmission format expected by the mobile app
+    result: list[dict] = []
+    for m in marks:
+        approved: bool = m.get("approved", False)
+        result.append({
+            "id": m["id"],
+            "mark_id": m["id"],
+            "student_id": m.get("student_id", ""),
+            "student_name": student_names.get(m.get("student_id", ""), ""),
+            "class_id": m.get("class_id", ""),
+            "answer_key_id": m.get("answer_key_id", ""),
+            "answer_key_title": ak_titles.get(m.get("answer_key_id", ""), ""),
+            "status": "graded" if approved else "pending",
+            "submitted_at": m.get("timestamp", ""),
+            "graded_at": m.get("timestamp") if approved else None,
+            # Score/max always included so teacher can see auto-graded result before approving
+            "score": m.get("score"),
+            "max_score": m.get("max_score"),
+            "marked_image_url": m.get("marked_image_url"),
+            "source": m.get("source", "student_submission"),
+            # Feedback fields
+            "verdicts": m.get("verdicts", []),
+            "overall_feedback": m.get("feedback"),   # mark.feedback = overall teacher comment
+            "manually_edited": m.get("manually_edited", False),
+        })
+
     return func.HttpResponse(
-        json.dumps(results, default=str),
+        json.dumps(result, default=str),
         status_code=200,
         mimetype="application/json",
     )
@@ -171,13 +261,23 @@ async def create_submission(req: func.HttpRequest) -> func.HttpResponse:
             teacher_doc = await get_item("teachers", teacher_id, teacher_id)
         except Exception:
             teacher_doc = {}
-        lecturer_name = teacher_doc.get("name", "Lecturer")
+        # Build lecturer display name — supports both old single-name docs and new first_name/surname docs
+        lecturer_name = (
+            teacher_doc.get("name")
+            or f"{teacher_doc.get('first_name', '')} {teacher_doc.get('surname', '')}".strip()
+            or "Lecturer"
+        )
 
         try:
             student_doc = await get_item("students", student_id, class_id)
         except Exception:
             student_doc = {}
-        student_name = student_doc.get("name", "Student")
+        # Build student display name — supports both old single-name docs and new first_name/surname docs
+        student_name = (
+            student_doc.get("name")
+            or f"{student_doc.get('first_name', '')} {student_doc.get('surname', '')}".strip()
+            or "Student"
+        )
 
         feedback_pdf_bytes = generate_feedback_pdf(
             student_name=student_name,

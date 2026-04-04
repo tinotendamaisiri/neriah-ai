@@ -12,12 +12,12 @@ resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   }
 }
 
-resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
+resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
   parent: openaiAccount
-  name: 'gpt-4o-mini'
+  name: 'gpt-4o'
   sku: { name: 'Standard', capacity: 10 }
   properties: {
-    model: { format: 'OpenAI', name: 'gpt-4o-mini', version: '2024-07-18' }
+    model: { format: 'OpenAI', name: 'gpt-4o', version: '2024-11-20' }
   }
 }
 

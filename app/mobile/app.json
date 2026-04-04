@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0D7377"
     },
     "ios": {
       "supportsTablet": false,
@@ -22,16 +22,24 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0D7377"
       },
       "package": "app.neriah.mobile",
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE"]
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiBaseUrl": "https://neriah-apim-dev.azure-api.net/api"
-    }
+      "apiBaseUrl": "https://neriah-func-dev.azurewebsites.net/api"
+    },
+    "plugins": [
+      "expo-mail-composer",
+      "expo-secure-store",
+      "expo-localization"
+    ]
   }
 }

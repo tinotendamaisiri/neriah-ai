@@ -90,7 +90,7 @@ async def send_feedback_to_student(
         f"Please find your detailed feedback report attached.\n\n"
         f"Submission reference: {submission_code}\n\n"
         f"Neriah Assessment System\n"
-        f"neriah.africa"
+        f"neriah.ai"
     )
     try:
         return _send(
@@ -137,7 +137,7 @@ async def send_draft_to_lecturer(
         f"{approve_url}\n\n"
         f"Or log in to the Neriah App to review and approve.\n\n"
         f"Neriah Assessment System\n"
-        f"neriah.africa"
+        f"neriah.ai"
     )
     try:
         return _send(
@@ -168,7 +168,7 @@ async def send_welcome_email(
             f"student's work to our WhatsApp number or via the Neriah App.\n\n"
             f"Need help? Reply to this email or WhatsApp us.\n\n"
             f"Neriah Assessment System\n"
-            f"neriah.africa"
+            f"neriah.ai"
         )
     else:  # admin
         body = (
@@ -177,7 +177,7 @@ async def send_welcome_email(
             f"Your teachers can now start marking. You will receive weekly\n"
             f"performance summaries every Monday.\n\n"
             f"Neriah Assessment System\n"
-            f"neriah.africa"
+            f"neriah.ai"
         )
 
     try:
@@ -208,7 +208,7 @@ async def send_weekly_report(
         f"Open the attached PDF for a full breakdown of marking activity, "
         f"scores, and class performance for the week.\n\n"
         f"Neriah Assessment System\n"
-        f"neriah.africa"
+        f"neriah.ai"
     )
     try:
         return _send(

@@ -4,6 +4,7 @@
 import React from 'react';
 import { View, Text, Image, ScrollView, StyleSheet } from 'react-native';
 import { MarkResult, Student, GradingVerdictEnum } from '../types';
+import { COLORS } from '../constants/colors';
 
 interface MarkResultProps {
   result: MarkResult;
@@ -11,9 +12,9 @@ interface MarkResultProps {
 }
 
 const VERDICT_COLOUR: Record<GradingVerdictEnum, string> = {
-  correct: '#15803d',
-  incorrect: '#dc2626',
-  partial: '#ea580c',
+  correct: COLORS.success,
+  incorrect: COLORS.error,
+  partial: COLORS.warning,
 };
 
 const VERDICT_LABEL: Record<GradingVerdictEnum, string> = {
@@ -23,17 +24,27 @@ const VERDICT_LABEL: Record<GradingVerdictEnum, string> = {
 };
 
 export default function MarkResultComponent({ result, student }: MarkResultProps) {
-  // TODO: add pinch-to-zoom on the annotated image (react-native-zoom-able)
-  // TODO: add share button to export the annotated image to camera roll or share sheet
-  // TODO: add "Re-mark" button to re-submit if teacher thinks result is wrong
+  const displayName = `${student.first_name} ${student.surname}`;
+
+  const pctColour =
+    result.percentage >= 75
+      ? COLORS.success
+      : result.percentage >= 50
+      ? COLORS.warning
+      : COLORS.error;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.studentName}>{student.name}</Text>
+      <Text style={styles.studentName}>{displayName}</Text>
 
+      {/* Score badge */}
       <View style={styles.scoreBadge}>
-        <Text style={styles.scoreNumber}>{result.score}/{result.max_score}</Text>
-        <Text style={styles.scorePercent}>{result.percentage}%</Text>
+        <Text style={styles.scoreNumber}>
+          {result.score}/{result.max_score}
+        </Text>
+        <Text style={[styles.scorePercent, { color: pctColour }]}>
+          {result.percentage}%
+        </Text>
       </View>
 
       {/* Annotated image */}
@@ -41,39 +52,50 @@ export default function MarkResultComponent({ result, student }: MarkResultProps
         source={{ uri: result.marked_image_url }}
         style={styles.annotatedImage}
         resizeMode="contain"
-        // TODO: add loading indicator while image loads
       />
 
       {/* Per-question breakdown */}
-      <Text style={styles.breakdownHeading}>Question Breakdown</Text>
-      {result.verdicts.map((verdict) => (
-        <View key={verdict.question_number} style={styles.verdictRow}>
-          <Text style={styles.questionNum}>Q{verdict.question_number}</Text>
-          <Text style={[styles.verdictIcon, { color: VERDICT_COLOUR[verdict.verdict] }]}>
-            {VERDICT_LABEL[verdict.verdict]}
-          </Text>
-          <Text style={styles.marks}>{verdict.awarded_marks} mark{verdict.awarded_marks !== 1 ? 's' : ''}</Text>
-          {verdict.feedback && (
-            <Text style={styles.feedback}>{verdict.feedback}</Text>
-          )}
-        </View>
-      ))}
+      {result.verdicts.length > 0 && (
+        <>
+          <Text style={styles.breakdownHeading}>Question Breakdown</Text>
+          {result.verdicts.map((verdict) => (
+            <View key={verdict.question_number} style={styles.verdictRow}>
+              <Text style={styles.questionNum}>Q{verdict.question_number}</Text>
+              <Text style={[styles.verdictIcon, { color: VERDICT_COLOUR[verdict.verdict] }]}>
+                {VERDICT_LABEL[verdict.verdict]}
+              </Text>
+              <Text style={styles.marks}>
+                {verdict.awarded_marks}/{verdict.max_marks}
+              </Text>
+              {verdict.feedback && (
+                <Text style={styles.feedback}>{verdict.feedback}</Text>
+              )}
+            </View>
+          ))}
+        </>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 16 },
-  studentName: { fontSize: 22, fontWeight: 'bold', marginBottom: 8 },
-  scoreBadge: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 16 },
-  scoreNumber: { fontSize: 36, fontWeight: 'bold', color: '#111' },
-  scorePercent: { fontSize: 20, color: '#666' },
-  annotatedImage: { width: '100%', height: 400, borderRadius: 8, backgroundColor: '#f0f0f0', marginBottom: 20 },
-  breakdownHeading: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
-  verdictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  questionNum: { width: 32, fontSize: 14, color: '#555' },
+  container: { flex: 1, backgroundColor: COLORS.white },
+  content: { padding: 16, paddingBottom: 32 },
+  studentName: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
+  scoreBadge: { flexDirection: 'row', alignItems: 'baseline', gap: 10, marginBottom: 16 },
+  scoreNumber: { fontSize: 36, fontWeight: 'bold', color: COLORS.text },
+  scorePercent: { fontSize: 20, fontWeight: '600' },
+  annotatedImage: {
+    width: '100%', height: 420, borderRadius: 8,
+    backgroundColor: COLORS.background, marginBottom: 24,
+  },
+  breakdownHeading: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 8 },
+  verdictRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  questionNum: { width: 32, fontSize: 14, color: COLORS.gray500 },
   verdictIcon: { width: 20, fontSize: 18, fontWeight: 'bold' },
-  marks: { fontSize: 13, color: '#444' },
-  feedback: { fontSize: 12, color: '#888', marginLeft: 8, flex: 1 },
+  marks: { fontSize: 13, color: COLORS.text, minWidth: 44 },
+  feedback: { fontSize: 12, color: COLORS.textLight, marginLeft: 4, flex: 1 },
 });

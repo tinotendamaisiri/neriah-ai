@@ -5,18 +5,54 @@
 # This file implements the full WhatsApp conversation state machine.
 # States: IDLE → CLASS_SETUP → AWAITING_REGISTER → AWAITING_ANSWER_KEY → MARKING_ACTIVE
 # See CLAUDE.md Section 5 for the full state machine specification.
+#
+# Student submissions are handled separately from the teacher state machine:
+#   - Structured format:  "NERIAH SUBMISSION\nClass: CODE\nStudent: Name\nAssignment: Title"
+#   - Simple format:      "First Surname - Assignment Title"  (image + text, phone matched)
 
 from __future__ import annotations
 
 import logging
+import re
+from uuid import uuid4
 
 import azure.functions as func
+import httpx
 
-from shared.cosmos_client import get_session, save_session
-from shared.models import Session, SessionContext, WhatsAppState
-from shared.whatsapp_client import send_text, send_image
+from shared.cosmos_client import get_session, query_items, save_session, upsert_item
+from shared.models import Session, SessionContext, Student, WhatsAppState
+from shared.whatsapp_client import send_image, send_text
 
 logger = logging.getLogger(__name__)
+
+# ── WhatsApp media download ───────────────────────────────────────────────────
+
+async def _download_wa_media(media_id: str) -> bytes | None:
+    """Download image bytes from WhatsApp Cloud API using a media ID."""
+    from shared.config import settings
+    headers = {"Authorization": f"Bearer {settings.whatsapp_access_token}"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Step 1: get download URL
+            r = await client.get(
+                f"https://graph.facebook.com/v19.0/{media_id}",
+                headers=headers,
+            )
+            if r.status_code != 200:
+                logger.error("_download_wa_media: URL fetch failed %d", r.status_code)
+                return None
+            url = r.json().get("url")
+            if not url:
+                return None
+            # Step 2: download bytes
+            r2 = await client.get(url, headers=headers)
+            if r2.status_code != 200:
+                logger.error("_download_wa_media: download failed %d", r2.status_code)
+                return None
+            return r2.content
+    except Exception as exc:
+        logger.error("_download_wa_media error: %s", exc)
+        return None
 
 bp = func.Blueprint()
 
@@ -30,13 +66,13 @@ async def handle_verification(req: func.HttpRequest) -> func.HttpResponse:
 
 async def handle_webhook(req: func.HttpRequest) -> func.HttpResponse:
     """POST /api/whatsapp — inbound WhatsApp messages."""
-    return _handle_message(req)
+    return await _handle_message(req)
 
 
 # ── HTTP trigger ──────────────────────────────────────────────────────────────
 
 @bp.route(route="whatsapp", methods=["GET", "POST"])
-def whatsapp_webhook(req: func.HttpRequest) -> func.HttpResponse:
+async def whatsapp_webhook(req: func.HttpRequest) -> func.HttpResponse:
     """
     Entry point for all inbound WhatsApp messages.
     GET:  webhook verification (Meta sends hub.challenge, we echo it back)
@@ -44,7 +80,7 @@ def whatsapp_webhook(req: func.HttpRequest) -> func.HttpResponse:
     """
     if req.method == "GET":
         return _handle_verification(req)
-    return _handle_message(req)
+    return await _handle_message(req)
 
 
 # ── Webhook verification ──────────────────────────────────────────────────────
@@ -70,25 +106,24 @@ def _handle_verification(req: func.HttpRequest) -> func.HttpResponse:
 
 # ── Message routing ───────────────────────────────────────────────────────────
 
-def _handle_message(req: func.HttpRequest) -> func.HttpResponse:
+async def _handle_message(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Parse the inbound message payload, load the teacher's session from Cosmos,
-    and dispatch to the correct state handler.
+    Parse the inbound message payload.
+    First checks if the message is a student submission; if not, routes through
+    the teacher state machine.
+    Always returns 200 to prevent WhatsApp retries.
     """
-    # TODO: parse req.get_json() — validate it's a real message (not status update, delivery receipt)
-    # TODO: extract phone, message_type (text/image), and message body/media_id
-    # TODO: load or create session document from Cosmos (sessions container, partition key = phone)
-    # TODO: dispatch to state handler based on session.state
-    # TODO: always return HTTP 200 immediately — WhatsApp will retry on non-200 responses
-
     try:
         body = req.get_json()
-        # TODO: implement full parsing of WhatsApp webhook payload structure
         phone = _extract_phone(body)
         message = _extract_message(body)
 
         if not phone or not message:
-            return func.HttpResponse("OK", status_code=200)  # ignore non-message events
+            return func.HttpResponse("OK", status_code=200)
+
+        # Student submissions are intercepted before the teacher state machine
+        if await _try_student_submission(phone, message):
+            return func.HttpResponse("OK", status_code=200)
 
         session_doc = get_session(phone)
         if session_doc:
@@ -101,7 +136,334 @@ def _handle_message(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logger.exception("Unhandled error in whatsapp_webhook: %s", e)
-        return func.HttpResponse("OK", status_code=200)  # still 200 — prevent WhatsApp retries
+        return func.HttpResponse("OK", status_code=200)
+
+
+async def _try_student_submission(phone: str, message: dict) -> bool:
+    """
+    Intercept inbound messages that look like student homework submissions.
+    Returns True if the message was handled as a submission (caller should not process further).
+
+    Two formats accepted:
+      Structured: caption starts with "NERIAH SUBMISSION"
+      Simple:     image with "First Surname - Assignment Title" caption, phone registered as student
+    """
+    msg_type = message.get("type")
+    if msg_type != "image":
+        return False
+
+    caption: str = (message.get("image", {}).get("caption") or "").strip()
+    media_id: str = message.get("image", {}).get("id", "")
+
+    # ── Structured format ─────────────────────────────────────────────────────
+    if caption.upper().startswith("NERIAH SUBMISSION"):
+        return await _handle_structured_submission(phone, caption, media_id)
+
+    # ── Simple format: phone must be a registered student ─────────────────────
+    student_docs = await query_items(
+        "students",
+        "SELECT * FROM c WHERE c.phone = @phone",
+        [{"name": "@phone", "value": phone}],
+    )
+    if not student_docs:
+        return False  # not a registered student — let teacher state machine handle
+
+    # Need "Name - Assignment" format
+    dash_match = re.match(r"^(.+?)\s+-\s+(.+)$", caption)
+    if not dash_match:
+        return False  # can't parse assignment, fall through to teacher flow
+
+    student = student_docs[0]
+    assignment_title = dash_match.group(2).strip()
+    return await _process_student_submission(
+        phone=phone,
+        student=student,
+        assignment_title=assignment_title,
+        media_id=media_id,
+    )
+
+
+async def _handle_structured_submission(
+    phone: str, caption: str, media_id: str
+) -> bool:
+    """Parse and process a NERIAH SUBMISSION structured caption."""
+    lines = {
+        k.strip().lower(): v.strip()
+        for line in caption.splitlines()
+        if ":" in line
+        for k, v in [line.split(":", 1)]
+    }
+    join_code = lines.get("class", "").upper()
+    student_name = lines.get("student", "")
+    assignment_title = lines.get("assignment", "")
+
+    # Validate we have all fields
+    name_parts = student_name.split()
+    if len(name_parts) < 2:
+        send_text(phone, _bad_format_reply())
+        return True
+
+    if not join_code or not assignment_title:
+        send_text(phone, _bad_format_reply())
+        return True
+
+    # Look up class by join code
+    class_docs = await query_items(
+        "classes",
+        "SELECT * FROM c WHERE c.join_code = @code",
+        [{"name": "@code", "value": join_code}],
+    )
+    if not class_docs:
+        send_text(phone, _bad_format_reply("Invalid class code. Check your code and try again."))
+        return True
+    cls = class_docs[0]
+
+    # Match student: phone first, then name fuzzy match, then auto-create
+    student = await _resolve_student(phone, student_name, cls)
+    if student is None:
+        send_text(phone, _bad_format_reply("Could not match your name to a student in this class."))
+        return True
+
+    return await _process_student_submission(
+        phone=phone,
+        student=student,
+        assignment_title=assignment_title,
+        media_id=media_id,
+        class_override=cls,
+        notify_teacher_new_student=student.get("_auto_created", False),
+    )
+
+
+async def _resolve_student(
+    phone: str, full_name: str, cls: dict
+) -> dict | None:
+    """
+    Match a student in the class by:
+      1. Phone number match
+      2. Case-insensitive first_name + surname match
+      3. Auto-create with the provided name (flagged for teacher review)
+    """
+    class_id = cls["id"]
+
+    # 1. Phone match
+    phone_match = await query_items(
+        "students",
+        "SELECT * FROM c WHERE c.class_id = @cid AND c.phone = @phone",
+        [{"name": "@cid", "value": class_id}, {"name": "@phone", "value": phone}],
+        partition_key=class_id,
+    )
+    if phone_match:
+        return phone_match[0]
+
+    # 2. Name match (case-insensitive)
+    name_parts = full_name.strip().split()
+    first = name_parts[0].lower()
+    surname = " ".join(name_parts[1:]).lower()
+    class_students = await query_items(
+        "students",
+        "SELECT * FROM c WHERE c.class_id = @cid",
+        [{"name": "@cid", "value": class_id}],
+        partition_key=class_id,
+    )
+    for s in class_students:
+        if (
+            s.get("first_name", "").lower() == first
+            and s.get("surname", "").lower() == surname
+        ):
+            return s
+
+    # 3. Auto-create
+    new_id = str(uuid4())
+    new_student = Student(
+        id=new_id,
+        class_id=class_id,
+        first_name=name_parts[0],
+        surname=" ".join(name_parts[1:]),
+        phone=phone,
+    )
+    doc = new_student.model_dump(mode="json")
+    doc["_auto_created"] = True  # ephemeral flag for push notification
+    await upsert_item("students", doc)
+
+    # Add to class student_ids
+    class_doc = dict(cls)
+    student_ids: list = class_doc.get("student_ids") or []
+    if new_id not in student_ids:
+        student_ids.append(new_id)
+        class_doc["student_ids"] = student_ids
+        await upsert_item("classes", class_doc)
+
+    logger.info("_resolve_student: auto-created student %s for class %s", new_id, class_id)
+    return doc
+
+
+async def _process_student_submission(
+    phone: str,
+    student: dict,
+    assignment_title: str,
+    media_id: str,
+    class_override: dict | None = None,
+    notify_teacher_new_student: bool = False,
+) -> bool:
+    """
+    Run the marking pipeline for a WhatsApp student submission.
+    Sets source="whatsapp", approved=False (teacher must review).
+    Returns True (always — message was handled regardless of outcome).
+    """
+    from datetime import datetime
+
+    from shared.annotator import annotate_image
+    from shared.blob_client import generate_sas_url, upload_bytes, upload_marked
+    from shared.config import settings
+    from shared.models import Mark
+    from shared.ocr_client import run_ocr
+    from shared.openai_client import check_image_quality, grade_submission
+    from shared.push_client import send_push_notification
+
+    class_id = student.get("class_id", "")
+    student_id = student.get("id", "")
+    student_name = f"{student.get('first_name', '')} {student.get('surname', '')}".strip()
+
+    # Load class if not provided
+    if class_override:
+        cls = class_override
+    else:
+        class_docs = await query_items(
+            "classes",
+            "SELECT * FROM c WHERE c.id = @id",
+            [{"name": "@id", "value": class_id}],
+        )
+        cls = class_docs[0] if class_docs else {}
+
+    teacher_id = cls.get("teacher_id", "")
+    education_level = cls.get("education_level", "grade_7")
+
+    # Find the answer key by title (fuzzy, case-insensitive)
+    answer_keys = await query_items(
+        "answer_keys",
+        "SELECT * FROM c WHERE c.class_id = @cid AND c.open_for_submission = true",
+        [{"name": "@cid", "value": class_id}],
+        partition_key=class_id,
+    )
+    matched_ak = None
+    title_lower = assignment_title.lower()
+    for ak in answer_keys:
+        ak_title = (ak.get("title") or ak.get("subject") or "").lower()
+        if title_lower in ak_title or ak_title in title_lower:
+            matched_ak = ak
+            break
+
+    if not matched_ak:
+        send_text(
+            phone,
+            f"Assignment '{assignment_title}' was not found or is not accepting submissions. "
+            "Check the assignment title and try again.",
+        )
+        return True
+
+    # Download image
+    image_bytes = await _download_wa_media(media_id)
+    if not image_bytes:
+        send_text(phone, "Could not download your image. Please try sending it again.")
+        return True
+
+    # Quality gate
+    try:
+        quality = await check_image_quality(image_bytes)
+        if not quality.pass_check:
+            send_text(phone, quality.suggestion or "The photo quality is too low. Please retake and resubmit.")
+            return True
+    except Exception as exc:
+        logger.warning("_process_student_submission: quality gate error: %s", exc)
+
+    try:
+        # Upload raw scan
+        scan_blob = f"{teacher_id}/{class_id}/{student_id}/wa_{uuid4()}.jpg"
+        await upload_bytes(image_bytes, scan_blob, container_name=settings.azure_storage_container_scans)
+
+        # OCR
+        ocr_result = await run_ocr(image_bytes)
+        ocr_text = ocr_result.full_text if hasattr(ocr_result, "full_text") else str(ocr_result)
+        bounding_boxes = ocr_result.bounding_boxes if hasattr(ocr_result, "bounding_boxes") else None
+
+        # Grade
+        from shared.models import AnswerKey
+        answer_key = AnswerKey(**matched_ak)
+        verdicts = await grade_submission(ocr_text, answer_key, education_level)
+
+        # Annotate
+        annotated_bytes = None
+        if bounding_boxes:
+            try:
+                annotated_bytes = await annotate_image(image_bytes, bounding_boxes, verdicts)
+            except Exception as exc:
+                logger.warning("_process_student_submission: annotation failed: %s", exc)
+
+        # Upload annotated
+        marked_image_url = None
+        if annotated_bytes:
+            marked_blob = f"{teacher_id}/{class_id}/{student_id}/wa_marked_{uuid4()}.jpg"
+            await upload_marked(annotated_bytes, marked_blob)
+            marked_image_url = generate_sas_url(
+                settings.azure_storage_container_marked, marked_blob, expiry_hours=24 * 365
+            )
+
+        score = sum(v.awarded_marks for v in verdicts)
+        max_score = sum(q.max_marks for q in answer_key.questions)
+
+        mark = Mark(
+            teacher_id=teacher_id,
+            student_id=student_id,
+            answer_key_id=matched_ak["id"],
+            class_id=class_id,
+            score=score,
+            max_score=max_score,
+            percentage=round(score / max_score * 100, 2) if max_score else None,
+            marked_image_url=marked_image_url,
+            raw_ocr_text=ocr_text,
+            source="whatsapp",
+            approved=False,
+        )
+        await upsert_item("marks", mark.model_dump(mode="json"))
+
+        send_text(
+            phone,
+            "Submission received! Your teacher will review and grade it. "
+            "You'll be notified when your results are ready.",
+        )
+
+        # Notify teacher
+        teacher_docs = await query_items(
+            "teachers",
+            "SELECT c.push_token, c.first_name FROM c WHERE c.id = @id",
+            [{"name": "@id", "value": teacher_id}],
+        )
+        if teacher_docs and teacher_docs[0].get("push_token"):
+            ak_title = matched_ak.get("title") or matched_ak.get("subject", "assignment")
+            msg = f"New submission" if not notify_teacher_new_student else "New student auto-registered"
+            await send_push_notification(
+                teacher_docs[0]["push_token"],
+                title=msg,
+                body=f"{student_name} submitted {ak_title}",
+                data={"mark_id": mark.id, "class_id": class_id},
+            )
+
+    except Exception as exc:
+        logger.exception("_process_student_submission: pipeline error: %s", exc)
+        send_text(phone, "There was an error processing your submission. Please try again.")
+
+    return True
+
+
+def _bad_format_reply(reason: str = "") -> str:
+    prefix = f"{reason}\n\n" if reason else ""
+    return (
+        f"{prefix}Please resend your photo with this caption:\n\n"
+        "NERIAH SUBMISSION\n"
+        "Class: YOUR-CLASS-CODE\n"
+        "Student: FirstName Surname\n"
+        "Assignment: Assignment-Title"
+    )
 
 
 def _dispatch(session: Session, message: dict) -> None:
@@ -362,7 +724,7 @@ def _handle_error(session: Session, message: dict) -> None:
     phone = session.phone
     session.state = WhatsAppState.IDLE
     session.context = SessionContext()
-    upsert_session(session.model_dump())
+    save_session(session.model_dump())
     send_text(phone, "Something went wrong. I've reset your session. Type 'menu' to start over or 'help' for options.")
 
 

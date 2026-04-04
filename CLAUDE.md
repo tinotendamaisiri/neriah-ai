@@ -69,43 +69,61 @@ neriah/
 │   ├── shared/
 │   │   ├── __init__.py                ← empty package init
 │   │   ├── config.py                  ← env var loading via pydantic BaseSettings
-│   │   ├── models.py                  ← Pydantic models: Teacher, Student, Class, Mark, AnswerKey, etc.
+│   │   ├── models.py                  ← Pydantic models: Teacher, Student, Class, Mark, AnswerKey, OTPVerification, etc.
+│   │   ├── auth.py                    ← JWT (HS256) + OTP utilities: create_jwt, decode_jwt, require_role, generate_otp
 │   │   ├── cosmos_client.py           ← CosmosDB CRUD helpers (upsert, get, query, delete)
 │   │   ├── blob_client.py             ← Blob upload/download helpers
 │   │   ├── ocr_client.py              ← Azure Document Intelligence wrapper — returns text + bounding boxes
 │   │   ├── openai_client.py           ← Azure OpenAI: grading, scheme generation, image quality check
 │   │   ├── annotator.py               ← Pillow pipeline: draws ticks, crosses, scores onto original photo
-│   │   └── whatsapp_client.py         ← WhatsApp Cloud API send-message helper
-│   ├── function_app.py                ← Azure Functions v2 entry point — registers all function blueprints
+│   │   ├── whatsapp_client.py         ← WhatsApp Cloud API send-message helper
+│   │   ├── sms_client.py              ← Azure ACS SMS — sends OTP codes; logs to stdout if no number configured
+│   │   ├── push_client.py             ← Expo push notifications: send_push_notification, send_push_batch
+│   │   ├── document_extractor.py      ← Detect doc type + extract text from PDF/DOCX/image
+│   │   ├── feedback_generator.py      ← Generate PDF feedback report from grading verdicts
+│   │   └── email_client.py            ← Azure ACS Email: send draft to lecturer, feedback to student, welcome email
+│   ├── function_app.py                ← Azure Functions v2 entry point — registers all 34 routes
 │   └── functions/
-│       ├── whatsapp_webhook.py        ← POST /api/whatsapp — receive + route WA messages, full state machine
+│       ├── whatsapp_webhook.py        ← GET+POST /api/whatsapp — WA verification + full state machine
 │       ├── mark.py                    ← POST /api/mark — full marking pipeline (App channel)
-│       ├── classes.py                 ← GET/POST /api/classes
-│       ├── students.py                ← GET/POST /api/students
-│       ├── answer_keys.py             ← GET/POST /api/answer-keys
-│       └── analytics.py              ← GET /api/analytics — per-class and per-student stats
+│       ├── marks.py                   ← PUT /api/marks/{mark_id} — teacher review + approve student submission
+│       ├── classes.py                 ← GET/POST /api/classes, PUT/DELETE /api/classes/{id}, GET+POST /api/classes/join
+│       ├── students.py                ← GET/POST /api/students, PUT/DELETE /api/students/{id}, POST /api/students/batch
+│       ├── answer_keys.py             ← GET/POST /api/answer-keys, PUT/DELETE /api/answer-keys/{id}
+│       ├── analytics.py               ← GET /api/analytics — per-class and per-student stats
+│       ├── assignments.py             ← GET /api/assignments — open assignments for student (student JWT)
+│       ├── student_submissions.py     ← POST/GET/DELETE /api/submissions/student, GET /api/marks/student/{id}
+│       ├── submissions.py             ← GET/POST /api/submissions (tertiary), POST /api/submissions/{id}/approve
+│       ├── auth.py                    ← POST /api/auth/register|login|verify|resend-otp, GET /api/auth/me
+│       ├── student_auth.py            ← POST /api/auth/student/lookup|activate|register
+│       ├── push.py                    ← POST /api/push/register — store Expo push token
+│       └── email_webhook.py           ← POST /api/email-webhook — inbound email via Event Grid
 
 ├── app/
-│   ├── mobile/                        ← React Native (Expo)
-│   │   ├── package.json
-│   │   ├── app.json
-│   │   ├── App.tsx                    ← root navigator
+│   ├── mobile/                        ← React Native (Expo SDK 51)
+│   │   ├── package.json               ← deps: expo-notifications, expo-constants, netinfo, vector-icons
+│   │   ├── app.json                   ← extra.apiBaseUrl points to APIM dev endpoint
+│   │   ├── App.tsx                    ← auth gate: AuthStack if no JWT, RootStack+MainTabs if authenticated
 │   │   └── src/
+│   │       ├── context/
+│   │       │   └── AuthContext.tsx    ← JWT + user state, login/logout, push token registration on login
 │   │       ├── screens/
-│   │       │   ├── HomeScreen.tsx     ← class list + quick-mark entry point
-│   │       │   ├── ClassSetupScreen.tsx← create/edit class + add students
-│   │       │   ├── MarkingScreen.tsx  ← camera capture + real-time result
-│   │       │   ├── AnalyticsScreen.tsx← per-class score charts
-│   │       │   └── SettingsScreen.tsx ← profile, subscription, answer keys
+│   │       │   ├── PhoneScreen.tsx    ← phone entry → login OTP or register flow (auto-detects new user)
+│   │       │   ├── OTPScreen.tsx      ← 6-digit OTP input, auto-submit, resend with cooldown
+│   │       │   ├── HomeScreen.tsx     ← class list, pull-to-refresh, FAB → ClassSetup modal
+│   │       │   ├── ClassSetupScreen.tsx← create class: name, education level picker
+│   │       │   ├── MarkingScreen.tsx  ← student + answer key pickers, ScanButton, MarkResult
+│   │       │   ├── AnalyticsScreen.tsx← placeholder (out of MVP scope)
+│   │       │   └── SettingsScreen.tsx ← profile display, subscription status, logout
 │   │       ├── components/
-│   │       │   ├── ScanButton.tsx     ← camera with frame guide overlay
-│   │       │   ├── StudentCard.tsx    ← student name + latest score
-│   │       │   └── MarkResult.tsx     ← annotated image + score breakdown
+│   │       │   ├── ScanButton.tsx     ← camera capture via expo-image-picker, frame guide overlay
+│   │       │   ├── StudentCard.tsx    ← first_name + surname display, latest score with colour coding
+│   │       │   └── MarkResult.tsx     ← annotated image + per-question verdict breakdown
 │   │       ├── services/
-│   │       │   ├── api.ts             ← typed fetch wrapper for all backend endpoints
-│   │       │   └── offlineQueue.ts    ← offline scan queue backed by AsyncStorage
+│   │       │   ├── api.ts             ← axios client: all endpoints, JWT interceptor, 401 → logout handler
+│   │       │   └── offlineQueue.ts    ← AsyncStorage queue: enqueue, replayQueue, startNetworkListener
 │   │       └── types/
-│   │           └── index.ts           ← shared TypeScript types mirroring backend Pydantic models
+│   │           └── index.ts           ← TypeScript types mirroring backend models + navigation param lists
 │   └── web/
 │       ├── package.json
 │       ├── vite.config.ts
@@ -131,16 +149,22 @@ neriah/
 
 ## 4. Cosmos DB Containers
 
-| Container | Partition Key | Purpose |
-|---|---|---|
-| `teachers` | `/phone` | Teacher accounts. Phone is the primary identity. |
-| `classes` | `/teacher_id` | Class records owned by a teacher. |
-| `students` | `/class_id` | Students belonging to a class. Phone number (E.164) is the primary unique identifier. |
-| `answer_keys` | `/class_id` | Answer keys (manual upload or auto-generated) for a class. |
-| `marks` | `/student_id` | Individual marking results per student per submission. |
-| `sessions` | `/phone` | WhatsApp conversation state. One document per phone number. TTL: 24 h. |
+| Container | Partition Key | TTL | Purpose |
+|---|---|---|---|
+| `teachers` | `/phone` | none | Teacher accounts. Phone is the primary identity. |
+| `classes` | `/teacher_id` | none | Class records owned by a teacher. |
+| `students` | `/class_id` | none | Students belonging to a class. **class_id is immutable** — partition key cannot change after creation. |
+| `answer_keys` | `/class_id` | none | Answer keys (manual upload or auto-generated) for a class. |
+| `marks` | `/student_id` | none | Individual marking results per student per submission. `source` field: `teacher_scan` or `student_submission`. `approved` field gates student visibility. |
+| `sessions` | `/phone` | 24 h | WhatsApp conversation state. One document per phone number. |
+| `rubrics` | `/class_id` | none | Tertiary assessment rubrics. |
+| `submissions` | `/student_id` | none | Tertiary document submissions (PDF/DOCX). |
+| `submission_codes` | `/class_id` | none | One-time submission access codes for tertiary assignments. |
+| `otp_verifications` | `/phone` | 10 min | OTP documents for phone verification. SHA-256 hashed code, auto-deleted by TTL. |
 
 > **Partition key rationale:** Queries almost always filter by the parent entity (e.g. "give me all marks for student X"), so co-locating child documents with their parent partition keeps RU costs low.
+>
+> **Cross-partition queries:** Used when the partition key is unknown at query time — e.g. finding a student by `id` only, or a class by `join_code`. These are more expensive (RU-wise) and should be reserved for cases where the partition key genuinely cannot be known.
 
 ---
 
@@ -339,47 +363,227 @@ Without it you will get `ModuleNotFoundError: No module named 'azure.cosmos'`.
 
 ## Current Build State
 
-Last updated: March 27 2026
+Last updated: 2026-04-02
 
-### Completed backend files (signed off in order)
-- `shared/models.py` — includes all school + tertiary models
-- `shared/cosmos_client.py`
-- `shared/blob_client.py` — includes `upload_bytes()`
-- `shared/openai_client.py` — includes `check_image_quality`, `grade_submission`, `generate_marking_scheme`, `grade_document`, `generate_rubric`
-- `shared/ocr_client.py`
-- `shared/annotator.py`
-- `shared/whatsapp_client.py`
-- `shared/document_extractor.py`
-- `shared/feedback_generator.py`
-- `shared/email_client.py`
-- `functions/mark.py`
-- `functions/whatsapp_webhook.py`
-- `functions/classes.py`
-- `functions/students.py`
-- `functions/answer_keys.py`
-- `functions/analytics.py`
-- `functions/submissions.py`
-- `functions/email_webhook.py`
-- `function_app.py`
+---
 
-### Azure infrastructure (live)
-- Resource group: `neriah-dev-rg` (southafricanorth)
-- Cosmos DB: `neriah-cosmos-dev` (southafricanorth)
-  Containers: `teachers`, `classes`, `students`, `answer_keys`, `marks`, `sessions`, `rubrics`, `submissions`, `submission_codes`
-- Blob Storage: `neriahstordev` (southafricanorth)
-  Containers: `scans`, `marked`, `submissions`
-- Document Intelligence: `neriah-docint-dev` (southafricanorth)
-- Azure OpenAI: `neriah-openai-dev` (eastus) — GPT-4o-mini + GPT-4o deployed
-- Azure Functions: `neriah-func-dev` (southafricanorth)
-- Azure Communication Services: `neriah-comms-dev`
-  Domain: `neriah.africa` — Domain verified, DKIM verified, SPF functionally correct
+### Infrastructure — DONE
 
-### Pending
-- Event Grid subscription — wire inbound email to `/api/email-webhook`
-- Redeploy backend with all tertiary module changes
-- WhatsApp end-to-end test (waiting on Meta business verification)
-- App (React Native + Web dashboard)
+- [x] Backend: 42 Azure Functions deployed at `neriah-func-dev.azurewebsites.net`
+- [x] Domain: `neriah.ai` (primary), `neriah.africa` redirects
+- [x] Cosmos DB: `neriah-cosmos-dev` (southafricanorth) — containers: `teachers`, `classes`, `students`, `answer_keys`, `marks`, `sessions`, `rubrics`, `submissions`, `submission_codes`, `otp_verifications`, `schools`
+- [x] Blob Storage: `neriahstordev` — containers: `scans`, `marked`, `submissions`
+- [x] Document Intelligence: `neriah-docint-dev` (southafricanorth)
+- [x] Azure OpenAI: `neriah-openai-dev` (eastus) — GPT-4o (2024-11-20) deployed
+- [x] Azure Functions: `neriah-func-dev` (southafricanorth)
+- [x] Azure Communication Services: `neriah-comms-dev` — domain `neriah.africa` verified, DKIM verified, SPF correct
+- [x] Zoho Mail: tinotenda@, admin@, support@, mark@neriah.ai
+- [x] Resend: noreply@send.neriah.ai for contact form
+- [x] Google OAuth: updated for neriah.ai
 
-### Environment variables
-All Azure keys in `neriah/backend/.env` and pushed to Function App settings.
-Remaining placeholder: `AZURE_STORAGE_CONTAINER_SUBMISSIONS=submissions` (add to `.env` and push to Function App)
+---
+
+### Auth System — DONE
+
+- [x] OTP-based phone auth (no email, no passwords)
+- [x] Persistent sessions: 365-day JWT with `token_version` for invalidation
+- [x] OTP fires ONCE at registration only (not recurring)
+- [x] WhatsApp OTP: primary channel (code ready, waiting on Meta business verification)
+- [x] Twilio SMS: fallback channel (live, working)
+  - US numbers (+1): Twilio Verify API (handles 10DLC compliance)
+  - Non-US numbers: Twilio Messages API with alphanumeric sender ID "Neriah"
+- [x] Twilio credentials set in Azure Function App settings (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER=+15186083556`, `TWILIO_VERIFY_SID`)
+- [x] `debug_otp` removed from API responses (OTP only in function logs)
+- [x] Account recovery: OTP → `token_version` increment → invalidates all old sessions
+- [x] Optional 4-digit PIN: local app lock (SecureStore + server bcrypt backup); locks after 5 wrong attempts; cleared on recovery
+- [x] Auth middleware checks `token_version` against Cosmos
+- [x] `/api/auth/verify` handles both Twilio Verify (US) and self-managed OTP (international)
+- [x] All OTP endpoints accept `channel_preference: "whatsapp" | "sms"` and return `channel` in response
+
+---
+
+### Mobile App — IN PROGRESS
+
+#### Brand & UI
+- [x] Brand: Neriah teal `#0D7377`, amber `#F5A623` palette
+- [x] `colors.ts` constants file with full palette
+- [x] App icons: icon.png, adaptive-icon.png, splash.png, favicon.png
+- [x] Replace "N" placeholder on auth screens with actual logo image
+- [x] Country code selector on all phone inputs (African countries + US)
+- [x] Auto-detect country from device locale, default to ZW
+
+#### Auth Flow
+- [x] Persistent session: app opens → token exists → straight to dashboard
+- [x] Role selection first (Teacher/Student), then registration form
+- [x] Login: phone → OTP → dashboard (role auto-detected)
+- [x] "Already have an account? Sign in" on registration screens
+- [x] 409 "Phone already registered" → specific message + "Sign in instead" button
+- [x] OTP screen shows "Check your WhatsApp" or "Check your SMS" based on channel
+- [x] "Send via SMS instead" button on OTP screen (resendOtp with channel_preference wired)
+
+#### Teacher Flow
+- [x] Dashboard/Classes screen with class cards
+- [x] Class creation with education level dropdown (Grade 1–7, Form 1–4, Form 5–6 A-Level, College/University)
+- [x] Education level inherited by all homework under the class
+- [x] Homework cards under each class (title, created date, submissions count, status badge)
+- [x] "Add Homework" button under each class
+- [x] "Upload Answer Key" amber badge on homework cards (when no key uploaded)
+- [x] "Manage" link under student count on class cards
+- [x] Mark tab removed from bottom nav — marking accessed from Homework Detail screen
+- [x] Bottom tabs: Classes, Analytics, Settings
+- [x] Homework Detail screen with "Mark Students" button (only when answer key exists)
+- [x] File upload supports: camera, gallery, PDF, Word, images (`expo-document-picker`)
+- [x] Education level drives AI grading intensity in LLM prompt (grading + scheme generation)
+- [x] AI scheme generation calibrated per level (Grade 1–3 lenient → College/University academic)
+- [x] Education level badge on Homework Detail screen
+- [x] "View Grading" button on homework card (appears after grading done)
+- [x] Unlabeled homework: auto-created when submissions arrive without homework entry
+- [x] Rename unlabeled homework + upload answer key flow
+
+#### Student Flow
+- [x] Student registration with auto-match or join code
+- [x] Student dashboard
+- [x] 3-channel submission (app, WhatsApp, email)
+- [x] Results with feedback
+- [x] Student analytics
+
+#### Settings
+- [x] Profile section: name, phone, role badge (dynamic from `user.role`)
+- [x] School name display (from registration)
+- [x] School picker on registration (searchable modal, seeded with fictional schools)
+- [x] Set PIN / Reset PIN
+- [x] Language selector: English, Shona, Ndebele
+- [x] Log out button
+- [x] Version and backend info
+
+#### Internationalization (i18n)
+- [x] `src/i18n/translations.ts` — en/sn/nd, 148 keys, all 3 languages in sync
+- [x] `LanguageProvider` context wrapping app (above `AuthProvider`)
+- [x] `useLanguage()` hook with `t(key)`, `language`, `setLanguage`
+- [x] Language persisted in SecureStore under key `neriah_language`
+- [x] Language switch takes effect immediately, no restart needed
+- [x] All screens wired: HomeScreen, SettingsScreen, HomeworkDetailScreen, GradingResultsScreen, PhoneScreen, OTPScreen, RoleSelectScreen, TeacherRegisterScreen, ClassSetupScreen, MarkingScreen
+
+#### Performance
+- [x] Navigation animations removed (`animation: 'none'` on TeacherStack + StudentRootStack)
+- [x] Tab screens: `lazy={true}`, `freezeOnBlur: true`
+- [x] Class list items wrapped in `React.memo` (`ClassGroupItem` component)
+- [x] All FlatList navigation handlers wrapped in `useCallback`
+- [x] FlatList: `removeClippedSubviews`, `maxToRenderPerBatch={10}`, `windowSize={5}`
+- [x] HomeScreen stale check: skip refetch if data < 30 s old (prevents loading spinner on back navigation)
+
+---
+
+### Bug Fixes Applied
+
+- [x] Wrong OTP returns 400 (not 401) — no longer triggers logout via axios interceptor
+- [x] OTPScreen error handling uses `err.status` (not `err.response?.status`)
+- [x] `GradingVerdict` model has `max_marks` field in backend + frontend
+- [x] `getMe()` typed as `Promise<Teacher | Student>`
+- [x] `resendOtp` passes `channel_preference`
+- [x] SettingsScreen role badge uses `user.role` dynamically
+- [x] SMS body updated: "Hi, your Neriah verification code is…"
+- [x] Homework Detail error fixed (`getTeacherSubmissions` was missing `teacher_id` param)
+- [x] `getTeacherSubmissions` now passes `teacher_id` on HomeScreen and HomeworkDetailScreen
+- [x] Education level labels updated: "Form 5 (A-Level)", "Form 6 (A-Level)", "College/University"
+- [x] `LEVEL_DISPLAY` map in HomeScreen matches new labels
+
+---
+
+### API Surface (42 routes)
+
+| Method | Route | Auth | Handler |
+|---|---|---|---|
+| GET | /api/whatsapp | — | whatsapp_verify |
+| POST | /api/whatsapp | — | whatsapp_webhook |
+| POST | /api/auth/register | — | auth_register |
+| POST | /api/auth/login | — | auth_login |
+| POST | /api/auth/verify | — | auth_verify |
+| POST | /api/auth/resend-otp | — | auth_resend_otp |
+| GET | /api/auth/me | teacher/student JWT | auth_me |
+| POST | /api/auth/recover | — | auth_recover |
+| POST | /api/auth/pin/set | any JWT | auth_pin_set |
+| POST | /api/auth/pin/verify | any JWT | auth_pin_verify |
+| DELETE | /api/auth/pin | any JWT | auth_pin_delete |
+| POST | /api/auth/student/lookup | — | auth_student_lookup |
+| POST | /api/auth/student/activate | — | auth_student_activate |
+| POST | /api/auth/student/register | — | auth_student_register |
+| POST | /api/push/register | any JWT | push_register |
+| GET | /api/classes | teacher JWT | classes |
+| POST | /api/classes | teacher JWT | classes |
+| PUT | /api/classes/{class_id} | teacher JWT | class_update |
+| DELETE | /api/classes/{class_id} | teacher JWT | class_delete |
+| GET | /api/classes/join/{code} | — | class_join_info |
+| POST | /api/classes/join | student JWT | class_join |
+| GET | /api/students | teacher JWT | students |
+| POST | /api/students | teacher JWT | students |
+| POST | /api/students/batch | teacher JWT | students_batch |
+| PUT | /api/students/{student_id} | teacher JWT | student_update |
+| DELETE | /api/students/{student_id} | teacher JWT | student_delete |
+| GET | /api/answer-keys | teacher JWT | answer_keys |
+| POST | /api/answer-keys | teacher JWT | answer_keys |
+| PUT | /api/answer-keys/{answer_key_id} | teacher JWT | answer_key_update |
+| DELETE | /api/answer-keys/{answer_key_id} | teacher JWT | answer_key_delete |
+| POST | /api/mark | teacher JWT (form) | mark |
+| PUT | /api/marks/{mark_id} | teacher JWT | mark_update |
+| GET | /api/marks/student/{student_id} | student JWT | student_marks_list |
+| GET | /api/assignments | student JWT | assignments |
+| POST | /api/submissions/student | student JWT | student_submission_create |
+| GET | /api/submissions/student/{id} | student JWT | student_submissions_list |
+| DELETE | /api/submissions/student/{id} | student JWT | student_submission_delete |
+| GET | /api/analytics | teacher JWT | analytics |
+| GET | /api/submissions | teacher JWT | submissions |
+| POST | /api/submissions | — | submissions |
+| POST | /api/submissions/{submission_id}/approve | — | submission_approve |
+| POST | /api/email-webhook | — | email_webhook |
+
+---
+
+### Environment Variables (Function App settings)
+
+```
+APP_JWT_SECRET=<set>
+TWILIO_ACCOUNT_SID=<set>
+TWILIO_AUTH_TOKEN=<set>
+TWILIO_PHONE_NUMBER=+15186083556
+TWILIO_VERIFY_SID=<set>
+AZURE_COMMUNICATION_CONNECTION_STRING=<set>
+WHATSAPP_ACCESS_TOKEN=<empty — pending Meta business verification>
+WHATSAPP_PHONE_NUMBER_ID=<empty — pending Meta business verification>
+```
+
+All Azure service keys (`AZURE_COSMOS_*`, `AZURE_STORAGE_*`, `AZURE_OPENAI_*`, `AZURE_DOC_INTELLIGENCE_*`) are set in Function App settings.
+
+---
+
+### Backlog (not yet built)
+
+- [ ] Bulk scanning — photograph multiple student books in rapid succession
+- [ ] Student identification from cover scan (register number, fuzzy name match)
+- [ ] Editable marks — teacher overrides AI grade
+- [ ] Class performance summaries on demand
+- [ ] Push notifications for new student submissions
+- [ ] Offline scan-and-sync queue (queue exists in app code, not fully wired)
+- [ ] Automated report card generation (PDF)
+- [ ] Parent notification system
+- [ ] ZIMSEC syllabus integration (per-subject, per-level LLM context)
+- [ ] EcoCash payment integration
+- [ ] Meta WhatsApp business verification (unblocks WhatsApp OTP + bot)
+- [ ] WhatsApp OTP template "neriah_otp" — submit for Meta approval post-verification
+- [ ] Event Grid subscription — wire inbound email to `/api/email-webhook`
+- [ ] IndexNow automatic blog indexing (update domain to neriah.ai)
+- [ ] Web dashboard (app/web/) — stubs only, not started
+
+---
+
+### Key Architecture Decisions
+
+- **SMS provider:** Twilio. US (+1): Verify API (10DLC compliant). International: Messages API with sender ID "Neriah".
+- **OTP strategy:** Once at registration + account recovery only. No recurring SMS cost.
+- **Session:** 365-day JWT, `token_version` for invalidation, no token blacklist needed.
+- **PIN:** On-device primary (SecureStore), server backup (bcrypt hash). Locks after 5 wrong attempts.
+- **Education level:** Set at class creation, inherited by all homework, drives both grading intensity and scheme generation calibration in LLM prompts.
+- **File uploads:** Camera, gallery, PDF, Word, images via `expo-document-picker`. Non-image files stored in blob without OCR/grading pipeline; mark created with score=0 pending teacher review.
+- **i18n:** English (default), Shona, Ndebele — context-based (`LanguageProvider`), immediate switch, persisted to SecureStore under `neriah_language`.
+- **Unlabeled homework:** Auto-created when a student submits without a pre-existing homework entry. Teacher renames and uploads answer key afterwards.
+- **Production principle:** No throwaway tools. Every decision built for production from day one.

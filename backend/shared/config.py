@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Azure OpenAI
     azure_openai_endpoint: str
     azure_openai_key: str
-    azure_openai_deployment: str = "gpt-4o-mini"
+    azure_openai_deployment: str = "gpt-4o"
     azure_openai_deployment_gpt4o: str = "gpt-4o"
 
     # Azure AI Document Intelligence
@@ -42,7 +42,16 @@ class Settings(BaseSettings):
 
     # Azure Communication Services (email)
     azure_communication_connection_string: str = ""
-    neriah_email_from_address: str = "mark@neriah.africa"
+    neriah_email_from_address: str = "mark@neriah.ai"
+
+    # Azure Communication Services (SMS — legacy, replaced by Twilio)
+    azure_sms_from_number: str = ""         # kept for backward compat — no longer used for OTP
+
+    # Twilio (SMS OTP — primary SMS channel)
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""           # used for non-US Programmable SMS if needed
+    twilio_verify_sid: str = ""             # Verify Service SID (VAxxxxxxx) — required for US (+1) numbers
 
     # Function App (used to build approval links in emails)
     function_app_url: str = "https://neriah-func-dev.azurewebsites.net"

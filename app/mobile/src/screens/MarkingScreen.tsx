@@ -1,58 +1,142 @@
 // src/screens/MarkingScreen.tsx
-// Camera capture + real-time marking result.
-// Teacher selects a class, selects a student, captures a photo, sees annotated result.
+// Core teacher marking flow:
+//   1. Class is pre-selected (from HomeScreen) or teacher picks one
+//   2. Teacher selects a student from the class list
+//   3. Teacher selects an answer key
+//   4. Camera capture → upload → annotated result
 
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Image } from 'react-native';
-import { useRoute } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
-import { submitMark } from '../services/api';
-import { MarkResult, Student, AnswerKey } from '../types';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  ScrollView,
+} from 'react-native';
+import { useRoute, useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
+import { listStudents, listAnswerKeys, submitMark } from '../services/api';
+import { showError } from '../utils/showError';
+import { retryWithBackoff } from '../utils/retry';
+import { useAuth } from '../context/AuthContext';
+import { Student, AnswerKey, MarkResult, RootStackParamList, EducationLevel } from '../types';
 import ScanButton from '../components/ScanButton';
 import MarkResultComponent from '../components/MarkResult';
+import { COLORS } from '../constants/colors';
+
+type RouteParams = RootStackParamList['Mark'];
 
 export default function MarkingScreen() {
   const route = useRoute<any>();
-  const class_id = route.params?.class_id;
+  const { user } = useAuth();
 
+  const routeClassId: string | undefined = route.params?.class_id;
+  const routeClassName: string | undefined = route.params?.class_name;
+  const routeEdLevel: EducationLevel | undefined = route.params?.education_level;
+  const routeAnswerKeyId: string | undefined = route.params?.answer_key_id;
+
+  const [students, setStudents] = useState<Student[]>([]);
+  const [answerKeys, setAnswerKeys] = useState<AnswerKey[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [selectedAnswerKey, setSelectedAnswerKey] = useState<AnswerKey | null>(null);
   const [result, setResult] = useState<MarkResult | null>(null);
   const [marking, setMarking] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
+
+  // Modal state for pickers
+  const [studentPickerVisible, setStudentPickerVisible] = useState(false);
+  const [answerKeyPickerVisible, setAnswerKeyPickerVisible] = useState(false);
+
+  const classId = routeClassId;
+  const className = routeClassName ?? 'Select class';
+  const educationLevel = routeEdLevel ?? 'grade_7';
+
+  // Load students + answer keys when class changes
+  useFocusEffect(
+    useCallback(() => {
+      if (!classId) return;
+      setSelectedStudent(null);
+      setSelectedAnswerKey(null);
+      setResult(null);
+      loadClassData(classId);
+    }, [classId]),
+  );
+
+  const loadClassData = async (cid: string) => {
+    setLoadingData(true);
+    try {
+      const [studs, keys] = await Promise.all([
+        listStudents(cid),
+        listAnswerKeys(cid),
+      ]);
+      setStudents(studs);
+      setAnswerKeys(keys);
+      // Pre-select answer key if navigated from HomeworkDetail
+      if (routeAnswerKeyId) {
+        const preSelected = keys.find(k => k.id === routeAnswerKeyId) ?? null;
+        if (preSelected) setSelectedAnswerKey(preSelected);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to load class data.');
+    } finally {
+      setLoadingData(false);
+    }
+  };
 
   const handleCapture = async (imageUri: string) => {
-    // TODO: validate student and answer key are selected before submitting
-    if (!selectedStudent || !selectedAnswerKey) {
-      Alert.alert('Setup needed', 'Please select a student and answer key first.');
+    if (!classId) {
+      Alert.alert('Select class', 'Go to the Home tab and tap a class first.');
       return;
     }
+    if (!selectedStudent) {
+      Alert.alert('Select student', 'Please select a student before scanning.');
+      return;
+    }
+    if (!selectedAnswerKey) {
+      Alert.alert('Select answer key', 'Please select an answer key before scanning.');
+      return;
+    }
+    if (!user) return;
 
     setMarking(true);
     try {
-      // TODO: if offline, enqueue(scan) instead of calling submitMark
-      const markResult = await submitMark({
+      const payload = {
         image_uri: imageUri,
+        teacher_id: user.id,
         student_id: selectedStudent.id,
+        class_id: classId,
         answer_key_id: selectedAnswerKey.id,
-      });
+        education_level: educationLevel,
+      };
+      const markResult = await retryWithBackoff(() => submitMark(payload));
       setResult(markResult);
-    } catch (e) {
-      Alert.alert('Marking failed', 'Could not mark the book. Please try again.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      showError(err);
     } finally {
       setMarking(false);
     }
   };
 
   const handleNextStudent = () => {
-    // TODO: advance to next student in the class list automatically
-    setSelectedStudent(null);
+    // Advance to next student in the sorted list
+    if (selectedStudent && students.length > 0) {
+      const idx = students.findIndex((s) => s.id === selectedStudent.id);
+      const next = students[idx + 1] ?? null;
+      setSelectedStudent(next);
+    }
     setResult(null);
   };
 
-  if (result) {
+  if (result && selectedStudent) {
     return (
       <View style={styles.container}>
-        <MarkResultComponent result={result} student={selectedStudent!} />
+        <MarkResultComponent result={result} student={selectedStudent} />
         <TouchableOpacity style={styles.nextButton} onPress={handleNextStudent}>
           <Text style={styles.nextButtonText}>Next Student</Text>
         </TouchableOpacity>
@@ -62,41 +146,177 @@ export default function MarkingScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.heading}>Mark Books</Text>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.heading}>Mark Books</Text>
+        {className && <Text style={styles.subheading}>{className}</Text>}
+      </View>
 
-      {/* TODO: student selector — show class list, let teacher pick student */}
-      <TouchableOpacity style={styles.selector} onPress={() => {}}>
-        <Text style={styles.selectorText}>
-          {selectedStudent ? selectedStudent.name : 'Select Student'}
-        </Text>
-      </TouchableOpacity>
-
-      {/* TODO: answer key selector */}
-      <TouchableOpacity style={styles.selector} onPress={() => {}}>
-        <Text style={styles.selectorText}>
-          {selectedAnswerKey ? selectedAnswerKey.subject : 'Select Answer Key'}
-        </Text>
-      </TouchableOpacity>
-
-      {marking ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#22c55e" />
-          <Text style={styles.loadingText}>Marking...</Text>
+      {!classId ? (
+        <View style={styles.noClass}>
+          <Text style={styles.noClassText}>
+            Go to the Home tab and tap a class to start marking.
+          </Text>
         </View>
+      ) : loadingData ? (
+        <ActivityIndicator style={styles.centre} size="large" color={COLORS.teal500} />
       ) : (
-        <ScanButton onCapture={handleCapture} />
+        <>
+          {/* Student picker */}
+          <TouchableOpacity
+            style={[styles.selector, !selectedStudent && styles.selectorRequired]}
+            onPress={() => setStudentPickerVisible(true)}
+          >
+            <Text style={styles.selectorLabel}>Student</Text>
+            <Text style={styles.selectorValue}>
+              {selectedStudent
+                ? `${selectedStudent.first_name} ${selectedStudent.surname}`
+                : 'Select student'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Answer key picker */}
+          <TouchableOpacity
+            style={[styles.selector, !selectedAnswerKey && styles.selectorRequired]}
+            onPress={() => setAnswerKeyPickerVisible(true)}
+          >
+            <Text style={styles.selectorLabel}>Answer Key</Text>
+            <Text style={styles.selectorValue}>
+              {selectedAnswerKey
+                ? selectedAnswerKey.title ?? selectedAnswerKey.subject
+                : 'Select answer key'}
+            </Text>
+          </TouchableOpacity>
+
+          {marking ? (
+            <View style={styles.centre}>
+              <ActivityIndicator size="large" color={COLORS.teal500} />
+              <Text style={styles.markingText}>Marking...</Text>
+            </View>
+          ) : (
+            <ScanButton
+              onCapture={handleCapture}
+              disabled={!selectedStudent || !selectedAnswerKey}
+            />
+          )}
+        </>
       )}
+
+      {/* Student picker modal */}
+      <PickerModal
+        visible={studentPickerVisible}
+        title="Select Student"
+        onClose={() => setStudentPickerVisible(false)}
+        items={students.map((s) => ({
+          id: s.id,
+          label: `${s.first_name} ${s.surname}`,
+          sublabel: s.register_number ? `#${s.register_number}` : undefined,
+        }))}
+        onSelect={(id) => {
+          setSelectedStudent(students.find((s) => s.id === id) ?? null);
+          setStudentPickerVisible(false);
+        }}
+      />
+
+      {/* Answer key picker modal */}
+      <PickerModal
+        visible={answerKeyPickerVisible}
+        title="Select Answer Key"
+        onClose={() => setAnswerKeyPickerVisible(false)}
+        items={answerKeys.map((ak) => ({
+          id: ak.id,
+          label: ak.title ?? ak.subject,
+          sublabel: ak.total_marks != null ? `${ak.total_marks} marks` : undefined,
+        }))}
+        onSelect={(id) => {
+          setSelectedAnswerKey(answerKeys.find((ak) => ak.id === id) ?? null);
+          setAnswerKeyPickerVisible(false);
+        }}
+      />
     </View>
   );
 }
 
+// ── Picker modal ──────────────────────────────────────────────────────────────
+
+interface PickerItem {
+  id: string;
+  label: string;
+  sublabel?: string;
+}
+
+function PickerModal({
+  visible, title, items, onSelect, onClose,
+}: {
+  visible: boolean;
+  title: string;
+  items: PickerItem[];
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <View style={modal.header}>
+            <Text style={modal.title}>{title}</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Text style={modal.close}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={items}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={modal.item} onPress={() => onSelect(item.id)}>
+                <Text style={modal.itemLabel}>{item.label}</Text>
+                {item.sublabel && <Text style={modal.itemSub}>{item.sublabel}</Text>}
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              <Text style={modal.empty}>Nothing here yet.</Text>
+            }
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: '#fff' },
-  heading: { fontSize: 24, fontWeight: 'bold', marginBottom: 16 },
-  selector: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 14, marginBottom: 12 },
-  selectorText: { fontSize: 15, color: '#333' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { marginTop: 12, fontSize: 16, color: '#666' },
-  nextButton: { backgroundColor: '#22c55e', borderRadius: 8, padding: 16, alignItems: 'center', margin: 16 },
-  nextButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  container: { flex: 1, backgroundColor: COLORS.white },
+  header: {
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: COLORS.white,
+  },
+  heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text },
+  subheading: { fontSize: 13, color: COLORS.gray500, marginTop: 2 },
+  centre: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  noClass: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  noClassText: { textAlign: 'center', fontSize: 15, color: COLORS.gray500, lineHeight: 22 },
+  selector: {
+    marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: COLORS.gray200,
+    borderRadius: 10, padding: 14,
+  },
+  selectorRequired: { borderColor: COLORS.amber100, backgroundColor: COLORS.amber50 },
+  selectorLabel: { fontSize: 11, color: COLORS.textLight, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
+  selectorValue: { fontSize: 15, color: COLORS.text },
+  markingText: { marginTop: 12, fontSize: 16, color: COLORS.gray500 },
+  nextButton: {
+    backgroundColor: COLORS.teal500, margin: 16, borderRadius: 10,
+    padding: 16, alignItems: 'center',
+  },
+  nextButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+});
+
+const modal = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: COLORS.white, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '70%' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  title: { fontSize: 17, fontWeight: '600', color: COLORS.text },
+  close: { fontSize: 20, color: COLORS.gray500 },
+  item: { padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.background },
+  itemLabel: { fontSize: 16, color: COLORS.text },
+  itemSub: { fontSize: 13, color: COLORS.textLight, marginTop: 2 },
+  empty: { padding: 24, textAlign: 'center', color: COLORS.textLight },
 });
