@@ -2,7 +2,7 @@
 // Teacher's class list with per-class homework sections.
 // Speed-dial FAB for "New Class" and "Add Homework".
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,6 @@ import { AnswerKey, Class, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
-const STALE_MS = 30_000; // don't refetch if data is younger than 30 s
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -50,7 +49,7 @@ interface ClassGroupItemProps {
   submCountByKey: Record<string, number>;
   gradedCountByKey: Record<string, number>;
   t: (key: any) => string;
-  onManage: (cls: Class) => void;
+  onCardPress: (cls: Class) => void;
   onAddHomework: (cls: Class) => void;
   onHomeworkPress: (ak: AnswerKey, cls: Class) => void;
   onViewGrading: (ak: AnswerKey, cls: Class) => void;
@@ -58,35 +57,38 @@ interface ClassGroupItemProps {
 
 const ClassGroupItem = React.memo(function ClassGroupItem({
   cls, answerKeys, submCountByKey, gradedCountByKey, t,
-  onManage, onAddHomework, onHomeworkPress, onViewGrading,
+  onCardPress, onAddHomework, onHomeworkPress, onViewGrading,
 }: ClassGroupItemProps) {
   return (
     <View style={styles.classGroup}>
-      <View style={styles.classCard}>
+      <TouchableOpacity
+        style={styles.classCard}
+        onPress={() => onCardPress(cls)}
+        activeOpacity={0.7}
+      >
         <View style={styles.classCardMain}>
           <View style={styles.classInfo}>
             <Text style={styles.className}>{cls.name}</Text>
             <Text style={styles.classMeta}>
               {LEVEL_DISPLAY[cls.education_level] ?? cls.education_level}
-              {cls.subject ? ` · ${cls.subject}` : ''}
             </Text>
           </View>
-          <View style={styles.studentCount}>
-            <Text style={styles.studentCountText}>{cls.student_ids?.length ?? 0}</Text>
-            <Text style={styles.studentCountLabel}>{t('students')}</Text>
-            <TouchableOpacity
-              style={styles.manageLink}
-              onPress={() => onManage(cls)}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Text style={styles.manageLinkText}>{t('manage')}</Text>
-            </TouchableOpacity>
+          <View style={styles.cardStats}>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{cls.student_count ?? 0}</Text>
+              <Text style={styles.statLabel}>{t('students')}</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{answerKeys.filter(k => k.open_for_submission === true).length}</Text>
+              <Text style={styles.statLabel}>{t('homework')}</Text>
+            </View>
           </View>
         </View>
-      </View>
+      </TouchableOpacity>
 
       <View style={styles.homeworkSection}>
-        {answerKeys.map(ak => {
+        {answerKeys.filter(k => k.open_for_submission === true).map(ak => {
           const subCount = submCountByKey[ak.id] ?? 0;
           const gradedCount = gradedCountByKey[ak.id] ?? 0;
           const isPendingSetup = ak.status === 'pending_setup';
@@ -100,7 +102,7 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
               activeOpacity={0.75}
             >
               <View style={styles.homeworkCardLeft}>
-                <Text style={styles.homeworkTitle}>{ak.title ?? ak.subject}</Text>
+                <Text style={styles.homeworkTitle}>{ak.title}</Text>
                 <Text style={styles.homeworkMeta}>{t('created')} {fmtDate(ak.created_at)}</Text>
                 {ak.due_date && (
                   <Text style={styles.homeworkDue}>{t('due_date')} {fmtDate(ak.due_date)}</Text>
@@ -114,7 +116,7 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
                   </View>
                 ) : !hasScheme ? (
                   <View style={styles.statusBadgeAmber}>
-                    <Text style={styles.statusBadgeAmberText}>{t('upload_answer_key')}</Text>
+                    <Text style={styles.statusBadgeAmberText}>Add Scheme</Text>
                   </View>
                 ) : hasGraded ? (
                   <TouchableOpacity
@@ -156,7 +158,6 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
-  const lastFetchRef = useRef(0);
 
   const load = useCallback(async () => {
     setError(null);
@@ -217,16 +218,15 @@ export default function HomeScreen() {
       setAnswerKeysByClass(keyMap);
     }
 
-    lastFetchRef.current = Date.now();
     setLoading(false);
     setRefreshing(false);
   }, [user]);
 
   useFocusEffect(
     useCallback(() => {
-      // Skip refetch if data is fresh (navigating back from a detail screen)
-      if (Date.now() - lastFetchRef.current < STALE_MS) return;
-      setLoading(true);
+      // Always refetch on focus so student_count is fresh after ClassSetup/ClassDetail.
+      // Only show the full loading spinner on cold start (no data yet).
+      if (classes.length === 0) setLoading(true);
       load();
     }, [load]),
   );
@@ -246,7 +246,7 @@ export default function HomeScreen() {
   }, [navigation]);
 
   const handleAddHomeworkForClass = useCallback((cls: Class) => {
-    navigation.navigate('AddHomework', { class_id: cls.id, class_name: cls.name });
+    navigation.navigate('AddHomework', { class_id: cls.id, class_name: cls.name, education_level: cls.education_level });
   }, [navigation]);
 
   const handleAddHomeworkFab = useCallback(() => {
@@ -267,7 +267,7 @@ export default function HomeScreen() {
       answer_key_id: ak.id,
       class_id: cls.id,
       class_name: cls.name,
-      answer_key_title: ak.title ?? ak.subject,
+      answer_key_title: ak.title,
     });
   }, [navigation]);
 
@@ -333,7 +333,7 @@ export default function HomeScreen() {
             submCountByKey={submCountByKey}
             gradedCountByKey={gradedCountByKey}
             t={t}
-            onManage={handleManageClass}
+            onCardPress={handleManageClass}
             onAddHomework={handleAddHomeworkForClass}
             onHomeworkPress={handleHomeworkPress}
             onViewGrading={handleViewGrading}
@@ -410,12 +410,11 @@ const styles = StyleSheet.create({
   classInfo: { flex: 1 },
   className: { fontSize: 17, fontWeight: '600', color: COLORS.text },
   classMeta: { fontSize: 13, color: COLORS.gray500, marginTop: 3 },
-  studentCount: { alignItems: 'center', minWidth: 52 },
-  studentCountText: { fontSize: 20, fontWeight: 'bold', color: COLORS.teal500 },
-  studentCountLabel: { fontSize: 11, color: COLORS.textLight },
-  manageLink: { marginTop: 6 },
-  manageLinkText: { fontSize: 12, color: COLORS.teal500, fontWeight: '600' },
-
+  cardStats: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statItem: { alignItems: 'center', minWidth: 44 },
+  statValue: { fontSize: 18, fontWeight: 'bold', color: COLORS.teal500 },
+  statLabel: { fontSize: 10, color: COLORS.textLight, marginTop: 1 },
+  statDivider: { width: 1, height: 28, backgroundColor: COLORS.border, marginHorizontal: 4 },
   // ── Homework section ─────────────────────────────────────────────────────────
   homeworkSection: {
     marginTop: 4, marginLeft: 12,

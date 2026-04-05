@@ -46,7 +46,6 @@ export interface Class {
   name: string;
   education_level: EducationLevel;
   curriculum?: 'zimsec' | 'cambridge';
-  subject?: string;
   grade?: string;
   join_code?: string;
   share_analytics: boolean;
@@ -76,8 +75,7 @@ export interface Question {
 export interface AnswerKey {
   id: string;
   class_id: string;
-  subject: string;
-  title?: string;
+  title: string;
   teacher_id?: string;
   education_level?: EducationLevel;
   questions: Question[];
@@ -372,9 +370,9 @@ export type RootStackParamList = {
   ClassDetail: { class_id: string; class_name: string; education_level: EducationLevel; curriculum?: 'zimsec' | 'cambridge' };
   TeacherInbox: undefined;
   HomeworkDetail: { answer_key_id: string; class_id: string; class_name: string };
-  AddHomework: { class_id?: string; class_name?: string };
+  AddHomework: { class_id?: string; class_name?: string; education_level?: string };
   SetPin: undefined;
-  GradingResults: { answer_key_id: string; class_id: string; class_name: string; answer_key_title: string };
+  GradingResults: { answer_key_id?: string; class_id: string; class_name: string; answer_key_title?: string };
   GradingDetail: { mark_id: string; student_name: string; class_name: string; answer_key_title: string };
   Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;
   TeacherClassAnalytics: { class_id: string; class_name: string };

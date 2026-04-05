@@ -102,9 +102,14 @@ class AnswerKey(BaseModel):
     class_id: str
     teacher_id: str
     title: str
-    education_level: str
+    education_level: str = ""
+    subject: Optional[str] = None
     questions: list[AnswerKeyQuestion] = []
     total_marks: float = 0.0
+    open_for_submission: bool = False
+    generated: bool = False
+    status: Optional[str] = None
+    due_date: Optional[str] = None
     created_at: str = Field(default_factory=lambda: _now().isoformat())
 
 

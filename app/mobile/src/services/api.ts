@@ -172,7 +172,6 @@ export const listClasses = async (): Promise<Class[]> => {
 export const createClass = async (payload: {
   name: string;
   education_level: string;
-  subject?: string;
   grade?: string;
   curriculum?: string;
 }): Promise<Class> => {
@@ -182,7 +181,7 @@ export const createClass = async (payload: {
 
 export const updateClass = async (
   class_id: string,
-  payload: Partial<Pick<Class, 'name' | 'subject' | 'grade' | 'share_analytics' | 'share_rank'>>,
+  payload: Partial<Pick<Class, 'name' | 'grade' | 'share_analytics' | 'share_rank'>>,
 ): Promise<Class> => {
   const res: AxiosResponse<Class> = await client.put(`/classes/${class_id}`, payload);
   return res.data;
@@ -251,8 +250,7 @@ export const listAnswerKeys = async (class_id: string): Promise<AnswerKey[]> => 
 
 export const createAnswerKey = async (payload: {
   class_id: string;
-  subject: string;
-  title?: string;
+  title: string;
   education_level?: string;
   open_for_submission?: boolean;
   due_date?: string;
@@ -266,7 +264,7 @@ export const createAnswerKey = async (payload: {
 
 export const updateAnswerKey = async (
   answer_key_id: string,
-  payload: Partial<Pick<AnswerKey, 'title' | 'subject' | 'open_for_submission' | 'education_level' | 'total_marks' | 'due_date'>> & {
+  payload: Partial<Pick<AnswerKey, 'title' | 'open_for_submission' | 'education_level' | 'total_marks' | 'due_date'>> & {
     questions?: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>;
     auto_generate?: boolean;
     question_paper_text?: string;
@@ -527,6 +525,26 @@ export const joinClass = async (join_code: string): Promise<{ class_id: string; 
  * Upload a file (PDF, Word, or image) as the answer key question paper.
  * Backend extracts text and auto-generates the marking scheme.
  */
+export const createAnswerKeyWithFile = async (
+  payload: { class_id: string; title: string; education_level?: string; subject?: string },
+  fileUri: string,
+  filename: string,
+  mimeType: string,
+): Promise<AnswerKey> => {
+  const formData = new FormData();
+  formData.append('class_id', payload.class_id);
+  formData.append('title', payload.title);
+  if (payload.education_level) formData.append('education_level', payload.education_level);
+  if (payload.subject) formData.append('subject', payload.subject);
+  formData.append('file', { uri: fileUri, name: filename, type: mimeType } as any);
+  const res: AxiosResponse<AnswerKey> = await client.post(
+    '/answer-keys',
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 },
+  );
+  return res.data;
+};
+
 export const uploadAnswerKeyFile = async (
   answer_key_id: string,
   fileUri: string,
