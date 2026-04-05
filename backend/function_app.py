@@ -30,6 +30,7 @@ from functions.classes import (
     handle_class_join_info,
     handle_class_update,
     handle_classes,
+    handle_classes_by_school,
 )
 
 # Students
@@ -195,6 +196,11 @@ async def class_join_info(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="classes/join", methods=["POST"])
 async def class_join(req: func.HttpRequest) -> func.HttpResponse:
     return await handle_class_join(req)
+
+
+@app.route(route="classes/school/{school_id}", methods=["GET"])
+async def classes_by_school(req: func.HttpRequest) -> func.HttpResponse:
+    return await handle_classes_by_school(req)
 
 
 # ── Students ──────────────────────────────────────────────────────────────────

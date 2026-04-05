@@ -266,6 +266,52 @@ async def handle_class_join(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
+# ── GET /api/classes/school/{school_id} ──────────────────────────────────────
+
+async def handle_classes_by_school(req: func.HttpRequest) -> func.HttpResponse:
+    """Return all classes belonging to teachers at a given school — no auth required.
+
+    GET /api/classes/school/{school_id}
+    Response 200: [ { id, name, education_level, subject, teacher: { first_name, surname } } ]
+    """
+    school_id: str = req.route_params.get("school_id", "").strip()
+    if not school_id:
+        return _err("school_id is required in the URL path")
+
+    # Find all teachers at this school (cross-partition — school_id is not the partition key)
+    teacher_results = await query_items(
+        "teachers",
+        "SELECT c.id, c.first_name, c.surname FROM c WHERE c.school_id = @school_id",
+        [{"name": "@school_id", "value": school_id}],
+    )
+    if not teacher_results:
+        return _ok([])
+
+    classes: list[dict] = []
+    for teacher in teacher_results:
+        cls_list = await query_items(
+            "classes",
+            "SELECT * FROM c WHERE c.teacher_id = @tid ORDER BY c.name ASC",
+            [{"name": "@tid", "value": teacher["id"]}],
+            partition_key=teacher["id"],
+        )
+        for cls in cls_list:
+            classes.append({
+                "id": cls["id"],
+                "name": cls.get("name", ""),
+                "education_level": cls.get("education_level", ""),
+                "subject": cls.get("subject"),
+                "teacher": {
+                    "first_name": teacher.get("first_name", ""),
+                    "surname": teacher.get("surname", ""),
+                },
+            })
+
+    # Sort by name for consistent display
+    classes.sort(key=lambda c: c["name"])
+    return _ok(classes)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _generate_unique_join_code(max_attempts: int = 5) -> str:

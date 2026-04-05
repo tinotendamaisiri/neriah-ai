@@ -1,11 +1,11 @@
 // src/screens/StudentRegisterScreen.tsx
-// Student onboarding — 3-step flow:
-//   Step 1 (details)       → enter name + phone → POST /auth/student/lookup
-//   Step 2a (match_single) → confirm single match → POST /auth/student/activate → OTPScreen
-//   Step 2b (match_multi)  → pick from list      → POST /auth/student/activate → OTPScreen
-//   Step 2c (join_code)    → enter class code    → POST /auth/student/register  → OTPScreen
+// Student registration — 4-step wizard:
+//   Step 1 (phone)      → enter phone number
+//   Step 2 (school)     → search & pick school from list
+//   Step 3 (class_list) → pick class from the selected school
+//   Step 4 (name)       → enter first name + surname → POST /auth/student/register → OTPScreen
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -17,13 +17,15 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  Modal,
+  SectionList,
+  SafeAreaView,
+  FlatList,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PENDING_JOIN_CODE_KEY } from '../constants';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { studentLookup, studentActivate, studentRegister, getClassJoinInfo } from '../services/api';
-import { AuthStackParamList, ClassJoinInfo, StudentMatch } from '../types';
+import { studentRegister, getSchools, getClassesBySchool } from '../services/api';
+import { AuthStackParamList, School } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput from '../components/PhoneInput';
 
@@ -31,131 +33,181 @@ const E164_RE = /^\+[1-9]\d{9,14}$/;
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'StudentRegister'>;
 
-type Step = 'details' | 'match_single' | 'match_multi' | 'join_code';
+type Step = 'phone' | 'school' | 'class_list' | 'name';
+
+interface ClassOption {
+  id: string;
+  name: string;
+  education_level: string;
+  subject?: string;
+  teacher: { first_name: string; surname: string };
+}
+
+const LEVEL_LABELS: Record<string, string> = {
+  grade_1: 'Grade 1', grade_2: 'Grade 2', grade_3: 'Grade 3',
+  grade_4: 'Grade 4', grade_5: 'Grade 5', grade_6: 'Grade 6', grade_7: 'Grade 7',
+  form_1: 'Form 1', form_2: 'Form 2', form_3: 'Form 3', form_4: 'Form 4',
+  form_5: 'Form 5 (A-Level)', form_6: 'Form 6 (A-Level)',
+  tertiary: 'College / University',
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  primary: COLORS.teal50,
+  secondary: COLORS.amber50,
+  tertiary: '#EDE9FE',
+  college: '#EDE9FE',
+};
+const TYPE_TEXT_COLORS: Record<string, string> = {
+  primary: COLORS.teal700,
+  secondary: COLORS.amber700,
+  tertiary: '#5B21B6',
+  college: '#5B21B6',
+};
 
 export default function StudentRegisterScreen() {
   const navigation = useNavigation<Nav>();
 
-  // ── Step state ──────────────────────────────────────────────────────────────
-  const [step, setStep] = useState<Step>('details');
+  const [step, setStep] = useState<Step>('phone');
 
-  // ── Details form ────────────────────────────────────────────────────────────
-  const [firstName, setFirstName] = useState('');
-  const [surname, setSurname] = useState('');
+  // Step 1
   const [phone, setPhone] = useState('');
 
-  // ── Match results ───────────────────────────────────────────────────────────
-  const [matches, setMatches] = useState<StudentMatch[]>([]);
+  // Step 2 — school picker
+  const [schools, setSchools] = useState<School[]>([]);
+  const [schoolsLoading, setSchoolsLoading] = useState(false);
+  const [schoolQuery, setSchoolQuery] = useState('');
+  const [selectedSchoolId, setSelectedSchoolId] = useState('');
+  const [selectedSchoolName, setSelectedSchoolName] = useState('');
+  const [schoolModalVisible, setSchoolModalVisible] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customSchool, setCustomSchool] = useState('');
 
-  // ── Join code ───────────────────────────────────────────────────────────────
-  const [joinCode, setJoinCode] = useState('');
-  const [joinInfo, setJoinInfo] = useState<ClassJoinInfo | null>(null);
-  const [codeError, setCodeError] = useState('');
-  const [codeValidating, setCodeValidating] = useState(false);
-  const joinCodeRef = useRef<TextInput>(null);
+  // Step 3 — class list
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedClassName, setSelectedClassName] = useState('');
 
-  // ── Loading ─────────────────────────────────────────────────────────────────
+  // Step 4 — name
+  const [firstName, setFirstName] = useState('');
+  const [surname, setSurname] = useState('');
+
   const [loading, setLoading] = useState(false);
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-  const goToOTP = (verification_id: string, debug_otp?: string) => {
-    navigation.navigate('OTP', {
-      phone,
-      verification_id,
-      ...(debug_otp ? { debug_otp } : {}),
+  // ── Load schools on mount ───────────────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      setSchoolsLoading(true);
+      try {
+        const r = await getSchools();
+        setSchools(Array.isArray(r) ? r : []);
+      } catch {
+        // silently fail — user can still use custom school
+      } finally {
+        setSchoolsLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  // ── School picker sections ──────────────────────────────────────────────────
+  const schoolSections = useMemo(() => {
+    const q = schoolQuery.trim().toLowerCase();
+    const filtered = q
+      ? schools.filter(
+          (s) => s.name.toLowerCase().includes(q) || s.city?.toLowerCase().includes(q),
+        )
+      : schools;
+    const byCity: Record<string, School[]> = {};
+    filtered.forEach((s) => {
+      const city = s.city || 'Other';
+      if (!byCity[city]) byCity[city] = [];
+      byCity[city].push(s);
     });
+    return Object.entries(byCity)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([city, data]) => ({ title: city, data }));
+  }, [schools, schoolQuery]);
+
+  const handleSelectSchool = async (school: School) => {
+    setSelectedSchoolId(school.id);
+    setSelectedSchoolName(school.name);
+    setSchoolModalVisible(false);
+    setShowCustomInput(false);
+    setSchoolQuery('');
+    setStep('class_list');
+    await loadClassesForSchool(school.id);
   };
 
-  const activate = async (student_id: string) => {
-    setLoading(true);
+  const handleCustomSchoolConfirm = async () => {
+    const name = customSchool.trim();
+    if (!name) {
+      Alert.alert('School name required', 'Please enter your school name.');
+      return;
+    }
+    setSelectedSchoolId('');
+    setSelectedSchoolName(name);
+    setSchoolModalVisible(false);
+    setShowCustomInput(false);
+    setSchoolQuery('');
+    setStep('class_list');
+    // Custom school: no class list from server, skip to name entry
+    setClasses([]);
+  };
+
+  // ── Load classes for selected school ───────────────────────────────────────
+  const loadClassesForSchool = async (school_id: string) => {
+    if (!school_id) {
+      setClasses([]);
+      return;
+    }
+    setClassesLoading(true);
     try {
-      const res = await studentActivate({ student_id, phone });
-      goToOTP(res.verification_id, res.debug_otp);
-    } catch (err: any) {
-      Alert.alert('Error', err.response?.data?.error ?? 'Could not send OTP. Please try again.');
+      const result = await getClassesBySchool(school_id);
+      setClasses(result);
+    } catch {
+      setClasses([]);
     } finally {
-      setLoading(false);
+      setClassesLoading(false);
     }
   };
 
-  // ── Step 1: Lookup ──────────────────────────────────────────────────────────
-  const handleLookup = async () => {
+  const handleSelectClass = (cls: ClassOption) => {
+    setSelectedClassId(cls.id);
+    setSelectedClassName(cls.name);
+    setStep('name');
+  };
+
+  // ── Final registration ──────────────────────────────────────────────────────
+  const handleRegister = async () => {
     const fn = firstName.trim();
     const sn = surname.trim();
-    const ph = phone.trim();
 
     if (!fn || !sn) {
       Alert.alert('Name required', 'Please enter your first name and surname.');
       return;
     }
-    if (!ph || !E164_RE.test(ph)) {
-      Alert.alert('Invalid number', 'Please enter a valid phone number.');
+    if (!selectedClassId) {
+      Alert.alert('Class required', 'Please select your class.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await studentLookup({ first_name: fn, surname: sn, phone: ph });
-      const found = res.matches;
-
-      if (found.length === 0) {
-        setStep('join_code');
-      } else if (found.length === 1) {
-        setMatches(found);
-        setStep('match_single');
-      } else {
-        setMatches(found);
-        setStep('match_multi');
-      }
-    } catch {
-      Alert.alert('Error', 'Could not search for your account. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Step 2c: Join code validation ───────────────────────────────────────────
-  const handleCodeChange = async (text: string) => {
-    const upper = text.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-    setJoinCode(upper);
-    setCodeError('');
-    setJoinInfo(null);
-
-    if (upper.length === 6) {
-      setCodeValidating(true);
-      try {
-        const info = await getClassJoinInfo(upper);
-        setJoinInfo(info);
-      } catch (err: any) {
-        if (err.response?.status === 404) {
-          setCodeError('Code not found. Check with your teacher and try again.');
-        } else {
-          setCodeError('Could not validate code. Please try again.');
-        }
-        setJoinCode('');
-        setTimeout(() => joinCodeRef.current?.focus(), 100);
-      } finally {
-        setCodeValidating(false);
-      }
-    }
-  };
-
-  const handleJoin = async () => {
-    if (!joinInfo) return;
-    setLoading(true);
-    try {
       const res = await studentRegister({
-        first_name: firstName.trim(),
-        surname: surname.trim(),
+        first_name: fn,
+        surname: sn,
         phone: phone.trim(),
-        class_join_code: joinCode,
+        class_id: selectedClassId,
       });
-      // Store join_code so AuthContext can attach it to AuthUser after OTP verify
-      await AsyncStorage.setItem(PENDING_JOIN_CODE_KEY, joinCode).catch(() => {});
-      goToOTP(res.verification_id, res.debug_otp);
+      navigation.navigate('OTP', {
+        phone: phone.trim(),
+        verification_id: res.verification_id,
+        ...(res.debug_otp ? { debug_otp: res.debug_otp } : {}),
+      });
     } catch (err: any) {
-      const msg: string = err.response?.data?.error ?? '';
-      if (err.response?.status === 409) {
+      const msg: string = err.message ?? err.response?.data?.error ?? '';
+      if (err.status === 409 || err.response?.status === 409) {
         Alert.alert(
           'Already registered',
           'This phone number already has an account.',
@@ -164,57 +216,193 @@ export default function StudentRegisterScreen() {
             { text: 'Sign in instead', onPress: () => navigation.navigate('Phone') },
           ],
         );
-      } else if (msg.toLowerCase().includes('invalid class code')) {
-        setCodeError('That code is no longer valid. Ask your teacher for a new one.');
-        setJoinInfo(null);
-        setJoinCode('');
       } else {
-        Alert.alert('Error', 'Could not register. Please try again.');
+        Alert.alert('Error', msg || 'Could not register. Please try again.');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Back handler per step ───────────────────────────────────────────────────
+  // ── Back handler ────────────────────────────────────────────────────────────
   const handleBack = () => {
-    if (step === 'details') {
+    if (step === 'phone') {
       navigation.goBack();
-    } else if (step === 'match_single' || step === 'match_multi') {
-      setStep('details');
-    } else if (step === 'join_code') {
-      // Go back to match step if we had matches, else details
-      if (matches.length > 0) {
-        setStep(matches.length === 1 ? 'match_single' : 'match_multi');
+    } else if (step === 'school') {
+      setStep('phone');
+    } else if (step === 'class_list') {
+      setStep('school');
+      setSelectedClassId('');
+      setSelectedClassName('');
+    } else if (step === 'name') {
+      // If there were classes to pick from, go back to class list; else go to school
+      if (classes.length > 0 || classesLoading) {
+        setStep('class_list');
       } else {
-        setStep('details');
+        setStep('school');
       }
-      setJoinCode('');
-      setJoinInfo(null);
-      setCodeError('');
     }
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const stepNumber = step === 'phone' ? 1 : step === 'school' ? 2 : step === 'class_list' ? 3 : 4;
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+
+        {/* Back */}
         <TouchableOpacity style={styles.back} onPress={handleBack}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
 
-        {/* ── Step 1: Details ─────────────────────────────────────────────── */}
-        {step === 'details' && (
+        {/* Step indicator */}
+        <View style={styles.stepRow}>
+          {[1, 2, 3, 4].map((n) => (
+            <View key={n} style={[styles.stepDot, n <= stepNumber && styles.stepDotActive]} />
+          ))}
+        </View>
+
+        {/* ── Step 1: Phone ─────────────────────────────────────────────────── */}
+        {step === 'phone' && (
           <>
             <Text style={styles.heading}>Join your class</Text>
+            <Text style={styles.subheading}>Enter your phone number to get started.</Text>
+
+            <View style={styles.form}>
+              <Text style={styles.label}>Phone number</Text>
+              <PhoneInput onChangePhone={setPhone} disabled={false} />
+
+              <TouchableOpacity
+                style={[styles.button, !phone && styles.buttonDisabled]}
+                onPress={() => {
+                  const ph = phone.trim();
+                  if (!ph || !E164_RE.test(ph)) {
+                    Alert.alert('Invalid number', 'Please enter a valid phone number including country code.');
+                    return;
+                  }
+                  setStep('school');
+                }}
+                disabled={!phone}
+              >
+                <Text style={styles.buttonText}>Continue</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity style={styles.altLink} onPress={() => navigation.navigate('Phone')}>
+              <Text style={styles.altLinkText}>Already have an account? Sign in</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* ── Step 2: School ────────────────────────────────────────────────── */}
+        {step === 'school' && (
+          <>
+            <Text style={styles.heading}>Select your school</Text>
+            <Text style={styles.subheading}>Search for your school or enter it manually.</Text>
+
+            {selectedSchoolName && !schoolModalVisible ? (
+              <TouchableOpacity style={styles.selectedCard} onPress={() => setSchoolModalVisible(true)}>
+                <Text style={styles.selectedCardLabel}>School</Text>
+                <Text style={styles.selectedCardValue}>{selectedSchoolName}</Text>
+                <Text style={styles.selectedCardChange}>Change</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.pickerButton}
+                onPress={() => {
+                  if (schools.length === 0 && !schoolsLoading) {
+                    getSchools().then(setSchools).catch(() => {});
+                  }
+                  setSchoolModalVisible(true);
+                }}
+              >
+                {schoolsLoading
+                  ? <ActivityIndicator color={COLORS.teal500} />
+                  : <Text style={styles.pickerButtonText}>Search schools…</Text>
+                }
+              </TouchableOpacity>
+            )}
+
+            {selectedSchoolName && (
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => {
+                  setStep('class_list');
+                  if (selectedSchoolId && classes.length === 0 && !classesLoading) {
+                    loadClassesForSchool(selectedSchoolId);
+                  }
+                }}
+              >
+                <Text style={styles.buttonText}>Continue</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+
+        {/* ── Step 3: Class list ────────────────────────────────────────────── */}
+        {step === 'class_list' && (
+          <>
+            <Text style={styles.heading}>Select your class</Text>
             <Text style={styles.subheading}>
-              Enter your details and we'll find your account.
+              {selectedSchoolName ? `Classes at ${selectedSchoolName}` : 'Tap your class to continue.'}
+            </Text>
+
+            {classesLoading ? (
+              <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 32 }} />
+            ) : classes.length === 0 ? (
+              <>
+                <Text style={styles.emptyText}>
+                  No classes found for this school yet.{'\n'}Your teacher needs to set up their class first.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.button, { marginTop: 24 }]}
+                  onPress={() => {
+                    setSelectedClassId('');
+                    setSelectedClassName('');
+                    setStep('name');
+                  }}
+                >
+                  <Text style={styles.buttonText}>Continue anyway</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                {classes.map((cls) => (
+                  <TouchableOpacity
+                    key={cls.id}
+                    style={[
+                      styles.classCard,
+                      selectedClassId === cls.id && styles.classCardSelected,
+                    ]}
+                    onPress={() => handleSelectClass(cls)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.className}>{cls.name}</Text>
+                    {cls.subject && (
+                      <Text style={styles.classSubject}>{cls.subject}</Text>
+                    )}
+                    <Text style={styles.classTeacher}>
+                      {cls.teacher.first_name} {cls.teacher.surname}
+                      {cls.education_level ? `  ·  ${LEVEL_LABELS[cls.education_level] ?? cls.education_level}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── Step 4: Name ──────────────────────────────────────────────────── */}
+        {step === 'name' && (
+          <>
+            <Text style={styles.heading}>Your name</Text>
+            <Text style={styles.subheading}>
+              {selectedClassName
+                ? `Joining ${selectedClassName} at ${selectedSchoolName}`
+                : `Joining ${selectedSchoolName}`}
             </Text>
 
             <View style={styles.form}>
@@ -236,184 +424,117 @@ export default function StudentRegisterScreen() {
                 onChangeText={setSurname}
                 autoCapitalize="words"
                 autoCorrect={false}
-                returnKeyType="next"
-              />
-              <Text style={styles.label}>Phone number</Text>
-              <PhoneInput
-                onChangePhone={setPhone}
-                disabled={loading}
+                returnKeyType="done"
+                onSubmitEditing={handleRegister}
               />
 
               <TouchableOpacity
-                style={[styles.button, styles.buttonStudent, loading && styles.buttonDisabled]}
-                onPress={handleLookup}
+                style={[styles.button, loading && styles.buttonDisabled]}
+                onPress={handleRegister}
                 disabled={loading}
               >
                 {loading
                   ? <ActivityIndicator color={COLORS.white} />
-                  : <Text style={styles.buttonText}>Continue</Text>
+                  : <Text style={styles.buttonText}>Join class</Text>
                 }
               </TouchableOpacity>
             </View>
-
-            <TouchableOpacity
-              style={styles.altLink}
-              onPress={() => navigation.navigate('Phone')}
-            >
-              <Text style={styles.altLinkText}>Already have an account? Sign in</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {/* ── Step 2a: Single match ────────────────────────────────────────── */}
-        {step === 'match_single' && matches.length > 0 && (
-          <>
-            <Text style={styles.heading}>Are you this student?</Text>
-            <Text style={styles.subheading}>
-              We found a matching account. Is this you?
-            </Text>
-
-            <MatchCard match={matches[0]} />
-
-            <TouchableOpacity
-              style={[styles.button, styles.buttonStudent, loading && styles.buttonDisabled]}
-              onPress={() => activate(matches[0].student.id)}
-              disabled={loading}
-            >
-              {loading
-                ? <ActivityIndicator color={COLORS.white} />
-                : <Text style={styles.buttonText}>Yes, that's me</Text>
-              }
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => setStep('join_code')}
-            >
-              <Text style={styles.secondaryButtonText}>No, that's not me</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {/* ── Step 2b: Multiple matches ────────────────────────────────────── */}
-        {step === 'match_multi' && (
-          <>
-            <Text style={styles.heading}>We found your name in multiple classes</Text>
-            <Text style={styles.subheading}>Tap the class you belong to.</Text>
-
-            {matches.map((m) => (
-              <TouchableOpacity
-                key={m.student.id}
-                onPress={() => activate(m.student.id)}
-                disabled={loading}
-                activeOpacity={0.8}
-              >
-                <MatchCard match={m} />
-              </TouchableOpacity>
-            ))}
-
-            <TouchableOpacity
-              style={styles.altLink}
-              onPress={() => setStep('join_code')}
-            >
-              <Text style={styles.altLinkText}>None of these are me →</Text>
-            </TouchableOpacity>
-
-            {loading && (
-              <ActivityIndicator color={COLORS.amber300} style={{ marginTop: 16 }} />
-            )}
-          </>
-        )}
-
-        {/* ── Step 2c: Join code ───────────────────────────────────────────── */}
-        {step === 'join_code' && (
-          <>
-            <Text style={styles.heading}>Enter your class code</Text>
-            <Text style={styles.subheading}>
-              Your teacher will give you this code.
-            </Text>
-
-            <TextInput
-              ref={joinCodeRef}
-              style={[
-                styles.codeInput,
-                codeError ? styles.codeInputError : undefined,
-                joinInfo ? styles.codeInputValid : undefined,
-              ]}
-              value={joinCode}
-              onChangeText={handleCodeChange}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={6}
-              placeholder="A1B2C3"
-              placeholderTextColor={COLORS.gray200}
-              textAlign="center"
-              editable={!codeValidating && !loading}
-            />
-
-            {codeValidating && (
-              <ActivityIndicator color={COLORS.amber300} style={{ marginTop: 8 }} />
-            )}
-
-            {codeError ? (
-              <Text style={styles.codeError}>{codeError}</Text>
-            ) : null}
-
-            {joinInfo && (
-              <>
-                <View style={styles.joinInfoCard}>
-                  <Text style={styles.joinInfoClass}>
-                    {joinInfo.name}{joinInfo.subject ? ` — ${joinInfo.subject}` : ''}
-                  </Text>
-                  <Text style={styles.joinInfoTeacher}>
-                    Teacher: {joinInfo.teacher.first_name} {joinInfo.teacher.surname}
-                  </Text>
-                  {joinInfo.education_level && (
-                    <Text style={styles.joinInfoLevel}>
-                      Level: {joinInfo.education_level.replace(/_/g, ' ')}
-                    </Text>
-                  )}
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.button, styles.buttonStudent, loading && styles.buttonDisabled]}
-                  onPress={handleJoin}
-                  disabled={loading}
-                >
-                  {loading
-                    ? <ActivityIndicator color={COLORS.white} />
-                    : <Text style={styles.buttonText}>Join this class</Text>
-                  }
-                </TouchableOpacity>
-              </>
-            )}
           </>
         )}
       </ScrollView>
+
+      {/* ── School picker modal ──────────────────────────────────────────────── */}
+      <Modal visible={schoolModalVisible} animationType="slide" presentationStyle="pageSheet">
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select school</Text>
+            <TouchableOpacity onPress={() => { setSchoolModalVisible(false); setSchoolQuery(''); }}>
+              <Text style={styles.modalClose}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search by name or city…"
+            value={schoolQuery}
+            onChangeText={setSchoolQuery}
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+          />
+
+          {showCustomInput ? (
+            <View style={styles.customInputContainer}>
+              <Text style={styles.label}>School name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your school name"
+                value={customSchool}
+                onChangeText={setCustomSchool}
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={handleCustomSchoolConfirm}
+              />
+              <TouchableOpacity style={styles.button} onPress={handleCustomSchoolConfirm}>
+                <Text style={styles.buttonText}>Confirm</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.secondaryButton, { marginTop: 8 }]}
+                onPress={() => setShowCustomInput(false)}
+              >
+                <Text style={styles.secondaryButtonText}>Back to list</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <SectionList
+                sections={schoolSections}
+                keyExtractor={(item) => item.id}
+                renderSectionHeader={({ section }) => (
+                  <Text style={styles.sectionHeader}>{section.title}</Text>
+                )}
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={styles.schoolItem} onPress={() => handleSelectSchool(item)}>
+                    <View style={styles.schoolItemLeft}>
+                      <Text style={styles.schoolName}>{item.name}</Text>
+                      <Text style={styles.schoolCity}>{item.city}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.schoolTypeBadge,
+                        { backgroundColor: TYPE_COLORS[item.type] ?? COLORS.teal50 },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.schoolTypeText,
+                          { color: TYPE_TEXT_COLORS[item.type] ?? COLORS.teal700 },
+                        ]}
+                      >
+                        {item.type}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.emptyText}>No schools match your search.</Text>
+                }
+                contentContainerStyle={{ paddingBottom: 100 }}
+              />
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.customSchoolButton}
+                  onPress={() => { setShowCustomInput(true); setSchoolQuery(''); }}
+                >
+                  <Text style={styles.customSchoolButtonText}>My school isn't listed →</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </SafeAreaView>
+      </Modal>
     </KeyboardAvoidingView>
-  );
-}
-
-// ── MatchCard component ───────────────────────────────────────────────────────
-
-function MatchCard({ match }: { match: StudentMatch }) {
-  return (
-    <View style={styles.matchCard}>
-      <Text style={styles.matchName}>
-        {match.student.first_name} {match.student.surname}
-        {match.student.register_number ? ` (#${match.student.register_number})` : ''}
-      </Text>
-      <Text style={styles.matchClass}>
-        {match.class.name}
-        {match.class.subject ? ` — ${match.class.subject}` : ''}
-      </Text>
-      <Text style={styles.matchTeacher}>
-        Teacher: {match.teacher.first_name} {match.teacher.surname}
-      </Text>
-      {match.school && (
-        <Text style={styles.matchSchool}>{match.school}</Text>
-      )}
-    </View>
   );
 }
 
@@ -422,12 +543,20 @@ function MatchCard({ match }: { match: StudentMatch }) {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.white },
   container: { flexGrow: 1, padding: 24, paddingTop: 48 },
-  back: { marginBottom: 24 },
+
+  back: { marginBottom: 16 },
   backText: { fontSize: 16, color: COLORS.gray500 },
+
+  stepRow: { flexDirection: 'row', gap: 6, marginBottom: 24 },
+  stepDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: COLORS.gray200,
+  },
+  stepDotActive: { backgroundColor: COLORS.amber300 },
+
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
   subheading: { fontSize: 14, color: COLORS.gray500, marginBottom: 24, lineHeight: 20 },
 
-  // Details form
   form: { gap: 8 },
   label: { fontSize: 14, fontWeight: '600', color: COLORS.gray900, marginTop: 8 },
   input: {
@@ -435,47 +564,95 @@ const styles = StyleSheet.create({
     padding: 14, fontSize: 16, color: COLORS.text,
   },
 
-  // Buttons
   button: {
     marginTop: 20, borderRadius: 10, padding: 16, alignItems: 'center',
+    backgroundColor: COLORS.amber300,
   },
-  buttonStudent: { backgroundColor: COLORS.amber300 },
-  buttonDisabled: { opacity: 0.6 },
+  buttonDisabled: { opacity: 0.5 },
   buttonText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+
   secondaryButton: {
     marginTop: 12, padding: 14, alignItems: 'center',
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
   },
   secondaryButtonText: { fontSize: 15, color: COLORS.gray900, fontWeight: '500' },
+
   altLink: { marginTop: 24, alignItems: 'center' },
   altLinkText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
 
-  // Match card
-  matchCard: {
-    borderWidth: 1, borderColor: COLORS.border, borderRadius: 12,
-    padding: 16, marginBottom: 12, backgroundColor: COLORS.background,
+  // School picker button
+  pickerButton: {
+    borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
+    padding: 16, alignItems: 'center', backgroundColor: COLORS.background,
   },
-  matchName: { fontSize: 17, fontWeight: 'bold', color: COLORS.text, marginBottom: 4 },
-  matchClass: { fontSize: 14, color: COLORS.gray900, marginBottom: 2 },
-  matchTeacher: { fontSize: 13, color: COLORS.gray500, marginBottom: 2 },
-  matchSchool: { fontSize: 12, color: COLORS.textLight },
+  pickerButtonText: { fontSize: 16, color: COLORS.gray500 },
 
-  // Join code
-  codeInput: {
-    fontSize: 32, fontWeight: 'bold', letterSpacing: 8,
-    borderWidth: 2, borderColor: COLORS.gray200, borderRadius: 12,
-    paddingVertical: 16, marginTop: 8, color: COLORS.text,
+  selectedCard: {
+    borderWidth: 1, borderColor: COLORS.teal500, borderRadius: 10,
+    padding: 14, backgroundColor: COLORS.teal50,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
   },
-  codeInputError: { borderColor: COLORS.error },
-  codeInputValid: { borderColor: COLORS.teal500 },
-  codeError: {
-    marginTop: 8, fontSize: 13, color: COLORS.error, textAlign: 'center',
+  selectedCardLabel: { fontSize: 12, color: COLORS.teal700, fontWeight: '600', flex: 0 },
+  selectedCardValue: { fontSize: 15, color: COLORS.text, fontWeight: '600', flex: 1 },
+  selectedCardChange: { fontSize: 13, color: COLORS.teal700, fontWeight: '600' },
+
+  // Class cards
+  classCard: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 12,
+    padding: 16, marginBottom: 10, backgroundColor: COLORS.background,
   },
-  joinInfoCard: {
-    marginTop: 16, borderWidth: 1, borderColor: COLORS.teal500, borderRadius: 12,
-    padding: 16, backgroundColor: COLORS.teal50,
+  classCardSelected: {
+    borderColor: COLORS.amber300, backgroundColor: COLORS.amber50,
   },
-  joinInfoClass: { fontSize: 16, fontWeight: 'bold', color: COLORS.text, marginBottom: 4 },
-  joinInfoTeacher: { fontSize: 14, color: COLORS.gray900, marginBottom: 2 },
-  joinInfoLevel: { fontSize: 13, color: COLORS.gray500 },
+  className: { fontSize: 17, fontWeight: '700', color: COLORS.text, marginBottom: 2 },
+  classSubject: { fontSize: 14, color: COLORS.teal700, marginBottom: 2 },
+  classTeacher: { fontSize: 13, color: COLORS.gray500 },
+
+  emptyText: {
+    textAlign: 'center', color: COLORS.gray500, fontSize: 14,
+    marginTop: 32, lineHeight: 22, paddingHorizontal: 16,
+  },
+
+  // Modal
+  modalContainer: { flex: 1, backgroundColor: COLORS.white },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  modalClose: { fontSize: 16, color: COLORS.amber300, fontWeight: '600' },
+
+  searchInput: {
+    margin: 16, borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
+    padding: 12, fontSize: 16, color: COLORS.text,
+  },
+
+  sectionHeader: {
+    fontSize: 12, fontWeight: '700', color: COLORS.gray500, textTransform: 'uppercase',
+    letterSpacing: 0.5, paddingHorizontal: 20, paddingVertical: 6,
+    backgroundColor: COLORS.background,
+  },
+  schoolItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  schoolItemLeft: { flex: 1, marginRight: 12 },
+  schoolName: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 2 },
+  schoolCity: { fontSize: 13, color: COLORS.gray500 },
+  schoolTypeBadge: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+  },
+  schoolTypeText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
+
+  modalFooter: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    padding: 20, backgroundColor: COLORS.white,
+    borderTopWidth: 1, borderTopColor: COLORS.border,
+  },
+  customSchoolButton: { alignItems: 'center', padding: 12 },
+  customSchoolButtonText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
+
+  customInputContainer: { padding: 20, gap: 4 },
 });

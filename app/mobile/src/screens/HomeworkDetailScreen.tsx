@@ -433,7 +433,7 @@ export default function HomeworkDetailScreen() {
             onPress={handlePickFile}
             activeOpacity={0.85}
           >
-            <Text style={styles.uploadBtnText}>📄  {t('upload_answer_key')}</Text>
+            <Text style={styles.uploadBtnText}>📄  Set Up Marking Scheme</Text>
           </TouchableOpacity>
         )}
       </View>

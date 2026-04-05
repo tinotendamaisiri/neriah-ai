@@ -196,6 +196,18 @@ export const getClassJoinInfo = async (code: string): Promise<ClassJoinInfo> => 
   return res.data;
 };
 
+/** Public: fetch all classes for a school (no auth required). */
+export const getClassesBySchool = async (school_id: string): Promise<Array<{
+  id: string;
+  name: string;
+  education_level: string;
+  subject?: string;
+  teacher: { first_name: string; surname: string };
+}>> => {
+  const res = await client.get(`/classes/school/${school_id}`);
+  return res.data;
+};
+
 // ── Students ──────────────────────────────────────────────────────────────────
 
 export const listStudents = async (class_id: string): Promise<Student[]> => {
@@ -442,12 +454,13 @@ export const studentActivate = async (data: {
   return res.data;
 };
 
-/** Self-register as a new student by providing name, phone, and a class join code. */
+/** Self-register as a new student. Provide class_id (new flow) or class_join_code (legacy). */
 export const studentRegister = async (data: {
   first_name: string;
   surname: string;
   phone: string;
-  class_join_code: string;
+  class_id?: string;
+  class_join_code?: string;
 }): Promise<OtpSentResponse> => {
   const res = await client.post('/auth/student/register', data);
   return res.data;

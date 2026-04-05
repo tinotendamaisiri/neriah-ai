@@ -52,11 +52,14 @@ export default function GradingResultsScreen() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const { answer_key_id, class_id, class_name, answer_key_title } = route.params as {
-    answer_key_id: string;
+    answer_key_id?: string;
     class_id: string;
     class_name: string;
-    answer_key_title: string;
+    answer_key_title?: string;
   };
+
+  // When answer_key_id is absent we're showing all marked homework for the class.
+  const isClassView = !answer_key_id;
 
   const [submissions, setSubmissions] = useState<TeacherSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,13 +69,17 @@ export default function GradingResultsScreen() {
     setLoading(true);
     try {
       const subs = await getTeacherSubmissions({ class_id, teacher_id: user?.id });
-      setSubmissions(subs.filter(s => s.answer_key_id === answer_key_id));
+      setSubmissions(
+        isClassView
+          ? subs.filter(s => s.status === 'graded' || s.status === 'pending')
+          : subs.filter(s => s.answer_key_id === answer_key_id),
+      );
     } catch (err: any) {
       Alert.alert('Error', err.message ?? 'Could not load grading results.');
     } finally {
       setLoading(false);
     }
-  }, [answer_key_id, class_id, user?.id]);
+  }, [answer_key_id, class_id, isClassView, user?.id]);
 
   useFocusEffect(
     useCallback(() => { loadData(); }, [loadData]),
@@ -126,7 +133,9 @@ export default function GradingResultsScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backText}>← {class_name}</Text>
         </TouchableOpacity>
-        <Text style={styles.heading}>{answer_key_title}</Text>
+        <Text style={styles.heading}>
+          {isClassView ? 'Marked Homework' : (answer_key_title ?? '')}
+        </Text>
         <Text style={styles.subheading}>{t('grading_results')}</Text>
       </View>
 
@@ -210,6 +219,9 @@ export default function GradingResultsScreen() {
                         <Text style={styles.commentIcon}>💬</Text>
                       )}
                     </View>
+                    {isClassView && s.answer_key_title && (
+                      <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
+                    )}
                     <Text style={styles.submittedDate}>{fmtDate(s.submitted_at)}</Text>
                   </View>
                   <View style={styles.rowRight}>
@@ -243,6 +255,9 @@ export default function GradingResultsScreen() {
                 >
                   <View style={styles.rowLeft}>
                     <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
+                    {isClassView && s.answer_key_title && (
+                      <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
+                    )}
                     <Text style={styles.submittedDate}>{fmtDate(s.submitted_at)}</Text>
                   </View>
                   <View style={[styles.pendingBadge]}>
@@ -310,6 +325,7 @@ const styles = StyleSheet.create({
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   studentName: { fontSize: 15, fontWeight: '600', color: COLORS.text },
   commentIcon: { fontSize: 13 },
+  homeworkLabel: { fontSize: 12, color: COLORS.teal500, fontWeight: '600', marginTop: 1 },
   submittedDate: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
   score: { fontSize: 16, fontWeight: 'bold' },
   scorePct: { fontSize: 12, marginTop: 2 },

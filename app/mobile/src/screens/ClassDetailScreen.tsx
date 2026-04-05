@@ -1,6 +1,6 @@
 // src/screens/ClassDetailScreen.tsx
-// Manage a class: view students, add students, view / toggle answer keys.
-// Accessible from HomeScreen "Manage" button and after ClassSetup.
+// Manage a class: view students, add individual students.
+// Answer keys (homework) are created and managed via the Homework flow.
 
 import React, { useCallback, useState } from 'react';
 import {
@@ -13,18 +13,10 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
-  SectionList,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
-import {
-  listStudents,
-  createStudent,
-  deleteStudent,
-  listAnswerKeys,
-  createAnswerKey,
-  updateAnswerKey,
-} from '../services/api';
-import { Student, AnswerKey } from '../types';
+import { listStudents, createStudent, deleteStudent } from '../services/api';
+import { Student } from '../types';
 import { COLORS } from '../constants/colors';
 
 export default function ClassDetailScreen() {
@@ -38,30 +30,22 @@ export default function ClassDetailScreen() {
   };
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [answerKeys, setAnswerKeys] = useState<AnswerKey[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Modals
   const [addStudentVisible, setAddStudentVisible] = useState(false);
-  const [addKeyVisible, setAddKeyVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
-      loadAll();
+      loadStudents();
     }, [class_id]),
   );
 
-  const loadAll = async () => {
+  const loadStudents = async () => {
     setLoading(true);
     try {
-      const [studs, keys] = await Promise.all([
-        listStudents(class_id),
-        listAnswerKeys(class_id),
-      ]);
+      const studs = await listStudents(class_id);
       setStudents(studs);
-      setAnswerKeys(keys);
     } catch {
-      Alert.alert('Error', 'Failed to load class data.');
+      Alert.alert('Error', 'Failed to load students.');
     } finally {
       setLoading(false);
     }
@@ -89,97 +73,78 @@ export default function ClassDetailScreen() {
     );
   };
 
-  const handleToggleOpen = async (ak: AnswerKey) => {
-    try {
-      const updated = await updateAnswerKey(ak.id, {
-        open_for_submission: !ak.open_for_submission,
-      });
-      setAnswerKeys((prev) => prev.map((k) => (k.id === ak.id ? updated : k)));
-    } catch {
-      Alert.alert('Error', 'Could not update answer key.');
-    }
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.centre}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-      </View>
-    );
-  }
-
-  const sections = [
-    {
-      title: `Students (${students.length})`,
-      data: students as any[],
-      type: 'students',
-    },
-    {
-      title: `Answer Keys (${answerKeys.length})`,
-      data: answerKeys as any[],
-      type: 'keys',
-    },
-  ];
-
   const curriculumLabel = curriculum === 'cambridge' ? 'Cambridge' : 'ZIMSEC';
 
   return (
     <View style={styles.container}>
-      <SectionList
-        sections={sections}
+      <FlatList
+        data={students}
         keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <View style={styles.classHeader}>
-            <Text style={styles.classHeaderName}>{class_name}</Text>
-            <View style={[
-              styles.curriculumBadge,
-              curriculum === 'cambridge' && styles.curriculumBadgeCambridge,
-            ]}>
-              <Text style={[
-                styles.curriculumBadgeText,
-                curriculum === 'cambridge' && styles.curriculumBadgeTextCambridge,
-              ]}>
-                {curriculumLabel}
-              </Text>
+          <>
+            <View style={styles.classHeader}>
+              <View style={styles.classHeaderLeft}>
+                <Text style={styles.classHeaderName}>{class_name}</Text>
+                <View style={[
+                  styles.curriculumBadge,
+                  curriculum === 'cambridge' && styles.curriculumBadgeCambridge,
+                ]}>
+                  <Text style={[
+                    styles.curriculumBadgeText,
+                    curriculum === 'cambridge' && styles.curriculumBadgeTextCambridge,
+                  ]}>
+                    {curriculumLabel}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.markedBtn}
+                onPress={() => navigation.navigate('GradingResults', {
+                  class_id,
+                  class_name,
+                })}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.markedBtnText}>Marked Homework</Text>
+              </TouchableOpacity>
             </View>
-          </View>
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Students ({students.length})</Text>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => setAddStudentVisible(true)}
+              >
+                <Text style={styles.addButtonText}>+ Add</Text>
+              </TouchableOpacity>
+            </View>
+
+            {loading && (
+              <ActivityIndicator
+                size="small"
+                color={COLORS.teal500}
+                style={{ marginTop: 20 }}
+              />
+            )}
+          </>
         }
-        renderSectionHeader={({ section }) => (
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{section.title}</Text>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() =>
-                section.type === 'students'
-                  ? setAddStudentVisible(true)
-                  : setAddKeyVisible(true)
-              }
-            >
-              <Text style={styles.addButtonText}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
+        renderItem={({ item }) => (
+          <StudentRow
+            student={item}
+            onPress={() => navigation.navigate('TeacherStudentAnalytics', {
+              student_id: item.id,
+              student_name: `${item.first_name} ${item.surname}`,
+              class_id,
+              class_name,
+            })}
+            onDelete={() => handleDeleteStudent(item)}
+          />
         )}
-        renderItem={({ item, section }) =>
-          section.type === 'students' ? (
-            <StudentRow
-              student={item as Student}
-              onDelete={() => handleDeleteStudent(item as Student)}
-            />
-          ) : (
-            <AnswerKeyRow
-              answerKey={item as AnswerKey}
-              onToggleOpen={() => handleToggleOpen(item as AnswerKey)}
-            />
-          )
-        }
-        renderSectionFooter={({ section }) =>
-          section.data.length === 0 ? (
+        ListEmptyComponent={
+          !loading ? (
             <Text style={styles.emptySection}>
-              {section.type === 'students'
-                ? 'No students yet. Tap + Add to add students.'
-                : 'No answer keys yet. Tap + Add to create one.'}
+              No students yet. Tap + Add to add students.
             </Text>
           ) : null
         }
@@ -194,17 +159,6 @@ export default function ClassDetailScreen() {
           setAddStudentVisible(false);
         }}
       />
-
-      <AddAnswerKeyModal
-        visible={addKeyVisible}
-        classId={class_id}
-        educationLevel={education_level}
-        onClose={() => setAddKeyVisible(false)}
-        onAdded={(key) => {
-          setAnswerKeys((prev) => [...prev, key]);
-          setAddKeyVisible(false);
-        }}
-      />
     </View>
   );
 }
@@ -213,13 +167,15 @@ export default function ClassDetailScreen() {
 
 function StudentRow({
   student,
+  onPress,
   onDelete,
 }: {
   student: Student;
+  onPress: () => void;
   onDelete: () => void;
 }) {
   return (
-    <View style={row.container}>
+    <TouchableOpacity style={row.container} onPress={onPress} activeOpacity={0.7}>
       <View style={row.avatar}>
         <Text style={row.avatarText}>{student.first_name[0].toUpperCase()}</Text>
       </View>
@@ -229,51 +185,15 @@ function StudentRow({
           <Text style={row.sub}>#{student.register_number}</Text>
         )}
       </View>
-      <TouchableOpacity style={row.deleteButton} onPress={onDelete}>
+      <TouchableOpacity
+        style={row.deleteButton}
+        onPress={onDelete}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Text style={row.deleteText}>✕</Text>
       </TouchableOpacity>
-    </View>
-  );
-}
-
-// ── Answer key row ────────────────────────────────────────────────────────────
-
-function AnswerKeyRow({
-  answerKey,
-  onToggleOpen,
-}: {
-  answerKey: AnswerKey;
-  onToggleOpen: () => void;
-}) {
-  const title = answerKey.title ?? answerKey.subject;
-  return (
-    <View style={row.container}>
-      <View style={row.info}>
-        <Text style={row.name}>{title}</Text>
-        <Text style={row.sub}>
-          {answerKey.total_marks != null ? `${answerKey.total_marks} marks` : ''}
-          {answerKey.questions.length > 0
-            ? `  ·  ${answerKey.questions.length} questions`
-            : ''}
-        </Text>
-      </View>
-      <TouchableOpacity
-        style={[
-          row.badge,
-          answerKey.open_for_submission ? row.badgeOpen : row.badgeClosed,
-        ]}
-        onPress={onToggleOpen}
-      >
-        <Text
-          style={[
-            row.badgeText,
-            answerKey.open_for_submission ? row.badgeTextOpen : row.badgeTextClosed,
-          ]}
-        >
-          {answerKey.open_for_submission ? 'Open' : 'Closed'}
-        </Text>
-      </TouchableOpacity>
-    </View>
+      <Text style={row.chevron}>›</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -381,127 +301,17 @@ function AddStudentModal({
   );
 }
 
-// ── Add answer key modal ──────────────────────────────────────────────────────
-
-function AddAnswerKeyModal({
-  visible,
-  classId,
-  educationLevel,
-  onClose,
-  onAdded,
-}: {
-  visible: boolean;
-  classId: string;
-  educationLevel: string;
-  onClose: () => void;
-  onAdded: (key: AnswerKey) => void;
-}) {
-  const [title, setTitle] = useState('');
-  const [subject, setSubject] = useState('');
-  const [questionText, setQuestionText] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!subject.trim()) {
-      Alert.alert('Required', 'Subject is required.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const key = await createAnswerKey({
-        class_id: classId,
-        subject: subject.trim(),
-        title: title.trim() || undefined,
-        education_level: educationLevel,
-        open_for_submission: false,
-        // Auto-generate from question paper text if provided
-        ...(questionText.trim()
-          ? { auto_generate: true, question_paper_text: questionText.trim() }
-          : {}),
-      });
-      setTitle('');
-      setSubject('');
-      setQuestionText('');
-      onAdded(key);
-    } catch {
-      Alert.alert('Error', 'Could not create answer key. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={modalS.overlay}>
-        <View style={modalS.sheet}>
-          <View style={modalS.header}>
-            <Text style={modalS.title}>New Answer Key</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={modalS.close}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={modalS.body}>
-            <Text style={modalS.label}>Subject *</Text>
-            <TextInput
-              style={modalS.input}
-              value={subject}
-              onChangeText={setSubject}
-              placeholder="e.g. Mathematics"
-              autoCapitalize="words"
-            />
-            <Text style={modalS.label}>Title (optional)</Text>
-            <TextInput
-              style={modalS.input}
-              value={title}
-              onChangeText={setTitle}
-              placeholder="e.g. Term 1 Test"
-              autoCapitalize="words"
-            />
-            <Text style={modalS.label}>Question paper text (optional — auto-generates marking scheme)</Text>
-            <TextInput
-              style={[modalS.input, modalS.multiline]}
-              value={questionText}
-              onChangeText={setQuestionText}
-              placeholder="Paste your question paper here and AI will generate the answer key..."
-              multiline
-              numberOfLines={5}
-              autoCapitalize="sentences"
-            />
-
-            {saving && (
-              <Text style={modalS.hint}>
-                {questionText.trim() ? 'Generating marking scheme...' : 'Saving...'}
-              </Text>
-            )}
-
-            <TouchableOpacity
-              style={[modalS.button, saving && modalS.buttonDisabled]}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={modalS.buttonText}>
-                {saving ? 'Creating...' : 'Create Answer Key'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  centre: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content: { paddingBottom: 32 },
   classHeader: {
-    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4,
     backgroundColor: COLORS.background,
   },
+  classHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' },
   classHeaderName: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   curriculumBadge: {
     backgroundColor: COLORS.teal50, borderRadius: 8,
@@ -510,6 +320,11 @@ const styles = StyleSheet.create({
   curriculumBadgeCambridge: { backgroundColor: '#EEF2FF' },
   curriculumBadgeText: { fontSize: 11, fontWeight: '700', color: COLORS.teal500 },
   curriculumBadgeTextCambridge: { color: '#4F46E5' },
+  markedBtn: {
+    borderWidth: 1, borderColor: COLORS.teal500, borderRadius: 12,
+    paddingHorizontal: 10, paddingVertical: 5, marginLeft: 8,
+  },
+  markedBtnText: { fontSize: 12, color: COLORS.teal500, fontWeight: '600' },
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8,
@@ -540,14 +355,7 @@ const row = StyleSheet.create({
   sub: { fontSize: 12, color: COLORS.textLight, marginTop: 1 },
   deleteButton: { padding: 6 },
   deleteText: { fontSize: 14, color: COLORS.gray200 },
-  badge: {
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-  },
-  badgeOpen: { backgroundColor: COLORS.teal50 },
-  badgeClosed: { backgroundColor: COLORS.background },
-  badgeText: { fontSize: 12, fontWeight: '600' },
-  badgeTextOpen: { color: COLORS.teal500 },
-  badgeTextClosed: { color: COLORS.gray500 },
+  chevron: { fontSize: 20, color: COLORS.gray200, marginLeft: 4 },
 });
 
 const modalS = StyleSheet.create({
@@ -565,8 +373,6 @@ const modalS = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 8,
     padding: 12, fontSize: 15, color: COLORS.text,
   },
-  multiline: { height: 100, textAlignVertical: 'top' },
-  hint: { fontSize: 13, color: COLORS.gray500, textAlign: 'center', marginTop: 8 },
   button: {
     marginTop: 20, backgroundColor: COLORS.teal500, borderRadius: 10,
     padding: 14, alignItems: 'center',

@@ -259,7 +259,11 @@ async def handle_student_activate(req: func.HttpRequest) -> func.HttpResponse:
 # ── POST /api/auth/student/register ──────────────────────────────────────────
 
 async def handle_student_self_register(req: func.HttpRequest) -> func.HttpResponse:
-    """Student self-registers by providing a class join code.
+    """Student self-registers by providing a class_id directly, or a class join code.
+
+    Accepts either:
+      - class_id (new preferred flow — student picks class from school list)
+      - class_join_code (legacy flow — teacher gives student a 6-char code)
 
     A new Student document is created in Cosmos when the OTP is verified
     (handled in POST /api/auth/verify with purpose="student_register").
@@ -269,7 +273,9 @@ async def handle_student_self_register(req: func.HttpRequest) -> func.HttpRespon
           "first_name": "Tendai",
           "surname": "Moyo",
           "phone": "+263771234567",
-          "class_join_code": "A7B3K2"
+          "class_id": "uuid"            ← preferred
+          // OR:
+          "class_join_code": "A7B3K2"  ← legacy
         }
 
     Response 200:
@@ -280,27 +286,40 @@ async def handle_student_self_register(req: func.HttpRequest) -> func.HttpRespon
     except Exception:
         return _err("Invalid JSON body")
 
-    required = ["first_name", "surname", "phone", "class_join_code"]
-    missing = [f for f in required if not body.get(f)]
-    if missing:
-        return _err(f"Missing required fields: {missing}")
+    first_name: str = (body.get("first_name") or "").strip()
+    surname: str = (body.get("surname") or "").strip()
+    phone: str = (body.get("phone") or "").strip()
+    class_id_direct: str = (body.get("class_id") or "").strip()
+    join_code: str = (body.get("class_join_code") or "").strip().upper()
 
-    first_name: str = body["first_name"].strip()
-    surname: str = body["surname"].strip()
-    phone: str = body["phone"].strip()
-    join_code: str = body["class_join_code"].strip().upper()
-
+    if not first_name or not surname:
+        return _err("first_name and surname are required")
+    if not phone:
+        return _err("phone is required")
     if not _is_valid_phone(phone):
         return _err("phone must be in E.164 format, e.g. +263771234567")
+    if not class_id_direct and not join_code:
+        return _err("class_id or class_join_code is required")
 
-    # Validate join code — find matching class (cross-partition)
-    class_results = await query_items(
-        container_name="classes",
-        query="SELECT * FROM c WHERE c.join_code = @code",
-        parameters=[{"name": "@code", "value": join_code}],
-    )
-    if not class_results:
-        return _err("Invalid class code. Please check the code and try again.", status=400)
+    # Resolve class document
+    if class_id_direct:
+        # New flow: class_id provided directly
+        class_results = await query_items(
+            container_name="classes",
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": class_id_direct}],
+        )
+        if not class_results:
+            return _err("Class not found.", status=404)
+    else:
+        # Legacy flow: resolve via join code (cross-partition)
+        class_results = await query_items(
+            container_name="classes",
+            query="SELECT * FROM c WHERE c.join_code = @code",
+            parameters=[{"name": "@code", "value": join_code}],
+        )
+        if not class_results:
+            return _err("Invalid class code. Please check the code and try again.", status=400)
 
     class_doc: dict = class_results[0]
 
