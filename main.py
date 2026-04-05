@@ -27,6 +27,7 @@ from functions.answer_keys import answer_keys_bp
 from functions.auth import auth_bp
 from functions.classes import classes_bp
 from functions.mark import mark_bp
+from functions.push import push_bp
 from functions.schools import schools_bp
 from functions.students import students_bp
 from functions.whatsapp import whatsapp_bp
@@ -49,6 +50,7 @@ app.register_blueprint(classes_bp,     url_prefix=_API)
 app.register_blueprint(students_bp,    url_prefix=_API)
 app.register_blueprint(answer_keys_bp, url_prefix=_API)
 app.register_blueprint(mark_bp,        url_prefix=_API)
+app.register_blueprint(push_bp,        url_prefix=_API)
 app.register_blueprint(schools_bp,     url_prefix=_API)
 app.register_blueprint(whatsapp_bp,    url_prefix=_API)
 app.register_blueprint(analytics_bp,   url_prefix=_API)

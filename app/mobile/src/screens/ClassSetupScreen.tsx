@@ -161,7 +161,7 @@ export default function ClassSetupScreen() {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       quality: 0.85,
     });
     if (result.canceled || !result.assets?.[0]) return;

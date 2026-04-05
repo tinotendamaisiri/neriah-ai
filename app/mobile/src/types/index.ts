@@ -76,6 +76,7 @@ export interface AnswerKey {
   id: string;
   class_id: string;
   title: string;
+  subject?: string;
   teacher_id?: string;
   education_level?: EducationLevel;
   questions: Question[];

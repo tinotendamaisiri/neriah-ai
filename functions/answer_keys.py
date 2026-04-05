@@ -6,9 +6,13 @@ import csv
 import io
 import logging
 
+import google.auth
+import google.auth.transport.requests
+import requests as http
 from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
+from shared.config import settings
 from shared.firestore_client import delete_doc, get_doc, query, upsert
 from shared.gemma_client import (
     extract_answer_key_from_image,
@@ -266,6 +270,77 @@ def update_answer_key(key_id: str):
 
     upsert("answer_keys", key_id, updates)
     return jsonify({**key, **updates}), 200
+
+
+@answer_keys_bp.post("/answer-keys/<key_id>/close")
+def close_answer_key(key_id: str):
+    """
+    Close submissions for an answer key and trigger the Cloud Run batch grading job.
+    POST /api/answer-keys/{id}/close
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    key = get_doc("answer_keys", key_id)
+    if not key:
+        return jsonify({"error": "Answer key not found"}), 404
+    if key["teacher_id"] != teacher_id:
+        return jsonify({"error": "forbidden"}), 403
+
+    # Close submissions
+    upsert("answer_keys", key_id, {"open_for_submission": False})
+
+    # Count pending student submissions
+    pending = query("student_submissions", [
+        ("answer_key_id", "==", key_id),
+        ("status", "==", "pending"),
+    ])
+    pending_count = len(pending)
+
+    if pending_count > 0:
+        _trigger_batch_grading_job(key_id)
+
+    return jsonify({
+        "message": "Submissions closed, grading started" if pending_count > 0 else "Submissions closed",
+        "pending_count": pending_count,
+    }), 200
+
+
+def _trigger_batch_grading_job(answer_key_id: str) -> None:
+    """Trigger the Cloud Run Job via the GCP REST API, injecting ANSWER_KEY_ID as an env override."""
+    try:
+        creds, project = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+
+        job_name = (
+            f"projects/{settings.GCP_PROJECT_ID}"
+            f"/locations/{settings.GCP_REGION}"
+            f"/jobs/{settings.CLOUD_RUN_JOB_NAME}"
+        )
+        url = f"https://run.googleapis.com/v2/{job_name}:run"
+
+        payload = {
+            "overrides": {
+                "containerOverrides": [{
+                    "env": [{"name": "ANSWER_KEY_ID", "value": answer_key_id}],
+                }],
+            },
+        }
+
+        resp = http.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        logger.info("Batch grading job triggered for answer_key_id=%s", answer_key_id)
+    except Exception:
+        logger.exception("Failed to trigger batch grading job for answer_key_id=%s", answer_key_id)
 
 
 @answer_keys_bp.delete("/answer-keys/<key_id>")

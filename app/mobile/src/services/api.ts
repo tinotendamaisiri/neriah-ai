@@ -263,6 +263,7 @@ export const listAnswerKeys = async (class_id: string): Promise<AnswerKey[]> => 
 export const createAnswerKey = async (payload: {
   class_id: string;
   title: string;
+  subject?: string;
   education_level?: string;
   open_for_submission?: boolean;
   due_date?: string;
@@ -288,6 +289,13 @@ export const updateAnswerKey = async (
 
 export const deleteAnswerKey = async (answer_key_id: string): Promise<void> => {
   await client.delete(`/answer-keys/${answer_key_id}`);
+};
+
+export const closeAndGrade = async (
+  answer_key_id: string,
+): Promise<{ message: string; pending_count: number }> => {
+  const res = await client.post(`/answer-keys/${answer_key_id}/close`);
+  return res.data;
 };
 
 // ── Roster extraction ─────────────────────────────────────────────────────────

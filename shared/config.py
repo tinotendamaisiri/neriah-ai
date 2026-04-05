@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_DAYS: int = 365
 
+    # Cloud Run batch job
+    CLOUD_RUN_JOB_NAME: str = "neriah-batch-grading"
+
     # Runtime
     ENVIRONMENT: str = "dev"
 

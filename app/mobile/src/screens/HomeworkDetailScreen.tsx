@@ -20,6 +20,7 @@ import {
   updateAnswerKey,
   uploadAnswerKeyFile,
   getTeacherSubmissions,
+  closeAndGrade,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -62,6 +63,7 @@ export default function HomeworkDetailScreen() {
   const [submissions, setSubmissions] = useState<TeacherSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [togglingOpen, setTogglingOpen] = useState(false);
+  const [closingAndGrading, setClosingAndGrading] = useState(false);
 
   // Rename state (for pending_setup / Unlabeled homework)
   const [editingTitle, setEditingTitle] = useState(false);
@@ -209,6 +211,36 @@ export default function HomeworkDetailScreen() {
       education_level: answerKey.education_level ?? 'grade_7',
       answer_key_id: answerKey.id,
     });
+  };
+
+  const handleCloseAndGrade = () => {
+    if (!answerKey || pendingCount === 0) return;
+    Alert.alert(
+      'Close & Grade All',
+      `Close submissions and grade all ${pendingCount} pending submission${pendingCount !== 1 ? 's' : ''}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Grade All',
+          style: 'destructive',
+          onPress: async () => {
+            setClosingAndGrading(true);
+            try {
+              const result = await closeAndGrade(answerKey.id);
+              setAnswerKey(prev => prev ? { ...prev, open_for_submission: false } : prev);
+              Alert.alert(
+                'Grading in progress',
+                `${result.pending_count} submission${result.pending_count !== 1 ? 's' : ''} queued for grading. You'll receive a notification when done.`,
+              );
+            } catch (err: any) {
+              Alert.alert(t('error'), err.message ?? 'Could not start grading. Please try again.');
+            } finally {
+              setClosingAndGrading(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -420,13 +452,33 @@ export default function HomeworkDetailScreen() {
       {/* Bottom action button */}
       <View style={styles.bottomBar}>
         {hasQuestions ? (
-          <TouchableOpacity
-            style={styles.markBtn}
-            onPress={handleMarkStudents}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.markBtnText}>📷  {t('mark_students')}</Text>
-          </TouchableOpacity>
+          <>
+            {answerKey.open_for_submission && pendingCount > 0 && (
+              <TouchableOpacity
+                style={[styles.gradeAllBtn, closingAndGrading && styles.btnDisabled]}
+                onPress={handleCloseAndGrade}
+                disabled={closingAndGrading}
+                activeOpacity={0.85}
+              >
+                {closingAndGrading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <Text style={styles.gradeAllBtnText}>
+                    ✨  Close & Grade All ({pendingCount})
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.markBtn, (answerKey.open_for_submission && pendingCount > 0) && styles.markBtnSecondary]}
+              onPress={handleMarkStudents}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.markBtnText, (answerKey.open_for_submission && pendingCount > 0) && styles.markBtnTextSecondary]}>
+                📷  {t('mark_students')}
+              </Text>
+            </TouchableOpacity>
+          </>
         ) : (
           <TouchableOpacity
             style={styles.uploadBtn}
@@ -607,11 +659,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: COLORS.border,
     padding: 16, paddingBottom: 32,
   },
+  gradeAllBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12,
+    padding: 16, alignItems: 'center', marginBottom: 10,
+  },
+  gradeAllBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+  btnDisabled: { opacity: 0.6 },
   markBtn: {
     backgroundColor: COLORS.teal500, borderRadius: 12,
     padding: 16, alignItems: 'center',
   },
+  markBtnSecondary: {
+    backgroundColor: COLORS.white, borderWidth: 1.5, borderColor: COLORS.teal500,
+  },
   markBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+  markBtnTextSecondary: { color: COLORS.teal500 },
   uploadBtn: {
     backgroundColor: COLORS.amber50, borderRadius: 12,
     padding: 16, alignItems: 'center',

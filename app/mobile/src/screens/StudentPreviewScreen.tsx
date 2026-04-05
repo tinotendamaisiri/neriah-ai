@@ -42,7 +42,7 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       quality: 0.85,
       allowsEditing: false,
     });

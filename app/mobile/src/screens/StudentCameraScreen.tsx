@@ -35,7 +35,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
     setCapturing(true);
     try {
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         quality: 0.85,
         allowsEditing: false,
       });

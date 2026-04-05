@@ -68,7 +68,7 @@ async function fromCamera(): Promise<PickedFile | null> {
     return null;
   }
   const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: 'images',
     quality: 0.85,
   });
   if (result.canceled || !result.assets[0]) return null;
@@ -89,7 +89,7 @@ async function fromGallery(): Promise<PickedFile | null> {
     return null;
   }
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: 'images',
     quality: 0.85,
   });
   if (result.canceled || !result.assets[0]) return null;

@@ -1,12 +1,16 @@
 """
 WhatsApp webhook — GET verification + POST state machine.
 
-States: IDLE → CLASS_SETUP → AWAITING_REGISTER → AWAITING_ANSWER_KEY → MARKING_ACTIVE → ERROR
+Teacher states : IDLE → CLASS_SETUP → AWAITING_REGISTER → AWAITING_ANSWER_KEY → MARKING_ACTIVE → ERROR
+Student states : IDLE → STUDENT_ONBOARDING_SCHOOL → STUDENT_ONBOARDING_CLASS
+                      → STUDENT_ONBOARDING_NAME   → STUDENT_ONBOARDING_CONFIRM → IDLE
+
 Session documents live in Firestore collection 'sessions'.
 """
 
 from __future__ import annotations
 
+import difflib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -15,7 +19,7 @@ from flask import Blueprint, jsonify, request
 
 from shared.annotator import annotate_image
 from shared.config import settings
-from shared.firestore_client import get_doc, query_single, upsert
+from shared.firestore_client import get_doc, increment_field, query, query_single, upsert
 from shared.gcs_client import upload_bytes
 from shared.gemma_client import (
     check_image_quality,
@@ -37,6 +41,31 @@ _HELP_MENU = (
     "3. *answer key* — upload or generate an answer key\n"
     "4. *help* — show this menu"
 )
+
+# Minimal seed school list used when Firestore 'schools' collection is empty.
+# Kept in sync with functions/schools.py _SEED_SCHOOLS.
+_SEED_SCHOOLS = [
+    {"id": "zw-001", "name": "Prince Edward School",       "city": "Harare"},
+    {"id": "zw-002", "name": "St George's College",        "city": "Harare"},
+    {"id": "zw-003", "name": "Harare High School",         "city": "Harare"},
+    {"id": "zw-004", "name": "Girls High School",          "city": "Harare"},
+    {"id": "zw-005", "name": "Highlands Junior School",    "city": "Harare"},
+    {"id": "zw-006", "name": "Borrowdale Primary School",  "city": "Harare"},
+    {"id": "zw-007", "name": "Marlborough High School",    "city": "Harare"},
+    {"id": "zw-008", "name": "Kuwadzana Primary School",   "city": "Harare"},
+    {"id": "zw-009", "name": "Christian Brothers College", "city": "Bulawayo"},
+    {"id": "zw-010", "name": "Eveline High School",        "city": "Bulawayo"},
+    {"id": "zw-011", "name": "Mzilikazi Primary School",   "city": "Bulawayo"},
+    {"id": "zw-012", "name": "Plumtree High School",       "city": "Bulawayo"},
+    {"id": "zw-013", "name": "Townsend Primary School",    "city": "Bulawayo"},
+    {"id": "zw-014", "name": "Goromonzi High School",      "city": "Goromonzi"},
+    {"id": "zw-015", "name": "Mutare Boys High School",    "city": "Mutare"},
+    {"id": "zw-016", "name": "Marist Brothers Nyanga",     "city": "Nyanga"},
+    {"id": "zw-017", "name": "Chiredzi High School",       "city": "Chiredzi"},
+    {"id": "zw-018", "name": "Chinhoyi Primary School",    "city": "Chinhoyi"},
+    {"id": "zw-019", "name": "Gweru Technical College",    "city": "Gweru"},
+    {"id": "zw-020", "name": "Harare Polytechnic",         "city": "Harare"},
+]
 
 
 # ─── Webhook verification (GET) ───────────────────────────────────────────────
@@ -69,7 +98,6 @@ def whatsapp_webhook():
     phone = msg["from"]
     msg_type = msg.get("type", "text")
 
-    # Extract text or media ID
     text = ""
     media_id = None
     if msg_type == "text":
@@ -109,6 +137,21 @@ def _route(phone: str, state: str, context: dict, text: str, media_id: str | Non
         send_text(phone, _HELP_MENU)
         return
 
+    # ── Student onboarding states ──────────────────────────────────────────────
+    if state == WhatsAppState.STUDENT_ONBOARDING_SCHOOL:
+        _handle_onboarding_school(phone, context, text, media_id)
+        return
+    if state == WhatsAppState.STUDENT_ONBOARDING_CLASS:
+        _handle_onboarding_class(phone, context, text, media_id)
+        return
+    if state == WhatsAppState.STUDENT_ONBOARDING_NAME:
+        _handle_onboarding_name(phone, context, text, media_id)
+        return
+    if state == WhatsAppState.STUDENT_ONBOARDING_CONFIRM:
+        _handle_onboarding_confirm(phone, context, text, media_id)
+        return
+
+    # ── Teacher / IDLE states ──────────────────────────────────────────────────
     if state == WhatsAppState.IDLE:
         _handle_idle(phone, context, text_lower, media_id)
     elif state == WhatsAppState.CLASS_SETUP:
@@ -127,6 +170,41 @@ def _route(phone: str, state: str, context: dict, text: str, media_id: str | Non
 # ─── IDLE ─────────────────────────────────────────────────────────────────────
 
 def _handle_idle(phone: str, context: dict, text: str, media_id: str | None):
+    # Check if this phone is a registered teacher or student.
+    teacher = _get_teacher(phone)
+    if teacher:
+        # Registered teacher — existing command-driven flow.
+        _handle_teacher_idle(phone, context, text, media_id)
+        return
+
+    student = _get_student_by_phone(phone)
+    if student:
+        # Registered student — handle photo submission.
+        if media_id:
+            _handle_student_submission(phone, student, media_id)
+        else:
+            send_text(phone, "Hi! Send a photo of your homework to submit it. 📸")
+        return
+
+    # Unregistered phone — start student onboarding.
+    if media_id:
+        send_text(
+            phone,
+            "Hi! To submit homework you need to register first.\n"
+            "Reply *START* to begin.",
+        )
+        return
+
+    if text.lower() in ("start", "hi", "hello", "hey") or text:
+        _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_SCHOOL, {})
+        send_text(
+            phone,
+            "Welcome to Neriah! 👋\n"
+            "To get started, reply with your school name.",
+        )
+
+
+def _handle_teacher_idle(phone: str, context: dict, text: str, media_id: str | None):
     if any(k in text for k in ("setup", "class", "create")):
         _set_state(phone, WhatsAppState.CLASS_SETUP, {"step": "name"})
         send_text(phone, "Let's set up a class. What is the class name?")
@@ -136,6 +214,234 @@ def _handle_idle(phone: str, context: dict, text: str, media_id: str | None):
         send_text(phone, "To upload an answer key, please set up a class first. Type 'setup class'.")
     else:
         send_text(phone, _HELP_MENU)
+
+
+# ─── STUDENT_ONBOARDING_SCHOOL ────────────────────────────────────────────────
+
+def _handle_onboarding_school(phone: str, context: dict, text: str, media_id: str | None):
+    if not text.strip():
+        send_text(phone, "Please type your school name.")
+        return
+
+    text_lower = text.lower().strip()
+
+    # User is confirming a previously matched school.
+    if context.get("pending_school_id"):
+        if text_lower in ("yes", "y", "✅", "confirm"):
+            context["school_id"] = context.pop("pending_school_id")
+            context["school_name"] = context.pop("pending_school_name")
+
+            classes = _get_classes_for_school(context["school_id"])
+            if not classes:
+                send_text(
+                    phone,
+                    f"No classes found at {context['school_name']} yet.\n"
+                    "Ask your teacher to create a class first, then message us again.",
+                )
+                _set_state(phone, WhatsAppState.IDLE, {})
+                return
+
+            # Store class list so we can map number → class_id without another DB call.
+            context["class_options"] = [
+                {"id": c["id"], "name": c["name"], "education_level": c.get("education_level", "")}
+                for c in classes[:10]
+            ]
+            _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_CLASS, context)
+
+            lines = "\n".join(
+                f"{i + 1}. {c['name']}"
+                for i, c in enumerate(context["class_options"])
+            )
+            send_text(phone, f"Which class are you in?\n\n{lines}\n\nReply with the number of your class.")
+            return
+
+        # Not a confirmation — treat the reply as a new school name.
+        context.pop("pending_school_id", None)
+        context.pop("pending_school_name", None)
+
+    # Fuzzy match against school list.
+    matches = _fuzzy_match_school(text)
+    if not matches:
+        send_text(
+            phone,
+            "I couldn't find that school. Please try again with the full school name\n"
+            "(e.g. *Chiredzi High School*).",
+        )
+        _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_SCHOOL, context)
+        return
+
+    best = matches[0]
+    context["pending_school_id"] = best["id"]
+    context["pending_school_name"] = best["name"]
+    _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_SCHOOL, context)
+    send_text(
+        phone,
+        f"Is this your school?\n✅ *{best['name']}*\n\n"
+        "Reply *YES* to confirm or type your school name again.",
+    )
+
+
+# ─── STUDENT_ONBOARDING_CLASS ─────────────────────────────────────────────────
+
+def _handle_onboarding_class(phone: str, context: dict, text: str, media_id: str | None):
+    class_options: list[dict] = context.get("class_options", [])
+
+    try:
+        choice = int(text.strip())
+    except ValueError:
+        lines = "\n".join(f"{i + 1}. {c['name']}" for i, c in enumerate(class_options))
+        send_text(phone, f"Please reply with a number.\n\n{lines}")
+        return
+
+    if not (1 <= choice <= len(class_options)):
+        send_text(phone, f"Please reply with a number between 1 and {len(class_options)}.")
+        return
+
+    picked = class_options[choice - 1]
+    context["class_id"] = picked["id"]
+    context["class_name"] = picked["name"]
+    context.pop("class_options", None)  # no longer needed
+    _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_NAME, context)
+    send_text(phone, "What is your full name?")
+
+
+# ─── STUDENT_ONBOARDING_NAME ─────────────────────────────────────────────────
+
+def _handle_onboarding_name(phone: str, context: dict, text: str, media_id: str | None):
+    name = text.strip()
+    if not name or len(name) < 2:
+        send_text(phone, "Please type your full name.")
+        return
+
+    name = name.title()
+    parts = name.split(None, 1)
+    context["first_name"] = parts[0]
+    context["surname"] = parts[1] if len(parts) > 1 else ""
+    _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_CONFIRM, context)
+
+    send_text(
+        phone,
+        f"Welcome *{context['first_name']}*! You will be registered in "
+        f"*{context['class_name']}* at *{context['school_name']}*.\n\n"
+        "Reply *YES* to confirm or *NO* to go back.",
+    )
+
+
+# ─── STUDENT_ONBOARDING_CONFIRM ──────────────────────────────────────────────
+
+def _handle_onboarding_confirm(phone: str, context: dict, text: str, media_id: str | None):
+    text_lower = text.lower().strip()
+
+    if text_lower in ("no", "n", "back"):
+        # Go back to name entry.
+        context.pop("first_name", None)
+        context.pop("surname", None)
+        _set_state(phone, WhatsAppState.STUDENT_ONBOARDING_NAME, context)
+        send_text(phone, "No problem. What is your full name?")
+        return
+
+    if text_lower not in ("yes", "y", "✅", "confirm"):
+        send_text(
+            phone,
+            f"Reply *YES* to confirm registration in *{context['class_name']}* "
+            f"at *{context['school_name']}*, or *NO* to go back.",
+        )
+        return
+
+    # Create the student document.
+    student = Student(
+        class_id=context["class_id"],
+        first_name=context["first_name"],
+        surname=context.get("surname", ""),
+        phone=phone,
+    )
+    upsert("students", student.id, student.model_dump())
+
+    # Bump class student_count.
+    try:
+        increment_field("classes", context["class_id"], "student_count")
+    except Exception:
+        logger.warning("Could not increment student_count for class %s", context["class_id"])
+
+    _set_state(phone, WhatsAppState.IDLE, {})
+    send_text(
+        phone,
+        f"Welcome *{context['first_name']}*! 🎉 You are now registered in "
+        f"*{context['class_name']}* at *{context['school_name']}*.\n\n"
+        "Send a photo of your homework to submit it. 📸",
+    )
+
+
+# ─── Student homework submission (registered student in IDLE) ─────────────────
+
+def _handle_student_submission(phone: str, student: dict, media_id: str):
+    class_id = student.get("class_id")
+    if not class_id:
+        send_text(phone, "Your class could not be found. Please contact your teacher.")
+        return
+
+    # Find the most recent open answer key for this class.
+    answer_keys = query(
+        "answer_keys",
+        [("class_id", "==", class_id), ("open_for_submission", "==", True)],
+        order_by="created_at",
+        direction="DESCENDING",
+        limit=1,
+    )
+    if not answer_keys:
+        send_text(
+            phone,
+            "There are no open assignments for your class right now. "
+            "Check with your teacher.",
+        )
+        return
+
+    answer_key = answer_keys[0]
+    send_text(phone, "Received! Grading your homework... ✏️")
+
+    image_bytes = download_media(media_id)
+
+    quality = check_image_quality(image_bytes)
+    if not quality.get("pass", True):
+        send_text(phone, f"⚠️ {quality.get('suggestion', 'Please retake the photo and try again.')}")
+        return
+
+    education_level = answer_key.get("education_level", "Form 4")
+    raw_verdicts = grade_submission(image_bytes, answer_key, education_level)
+
+    score = sum(float(v.get("awarded_marks", 0)) for v in raw_verdicts)
+    max_score = sum(float(v.get("max_marks", 1)) for v in raw_verdicts) or float(
+        answer_key.get("total_marks", 1)
+    )
+    percentage = round(score / max_score * 100, 1) if max_score else 0.0
+
+    annotated_bytes = annotate_image(image_bytes, raw_verdicts)
+    blob_name = f"{student['id']}/{uuid.uuid4()}.jpg"
+    marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+
+    mark = Mark(
+        student_id=student["id"],
+        class_id=class_id,
+        answer_key_id=answer_key["id"],
+        teacher_id=answer_key.get("teacher_id", ""),
+        score=score,
+        max_score=max_score,
+        percentage=percentage,
+        verdicts=[],
+        marked_image_url=marked_url,
+        source="student_submission",
+        approved=False,
+    )
+    upsert("marks", mark.id, mark.model_dump())
+
+    correct = sum(1 for v in raw_verdicts if v.get("verdict") == "correct")
+    total_q = len(raw_verdicts)
+    caption = (
+        f"*Score: {score:.0f}/{max_score:.0f} ({percentage:.0f}%)*\n"
+        f"{correct}/{total_q} questions correct\n\n"
+        "Your teacher will review and confirm your mark."
+    )
+    send_image(phone, marked_url, caption)
 
 
 # ─── CLASS_SETUP ──────────────────────────────────────────────────────────────
@@ -212,7 +518,6 @@ def _handle_awaiting_register(phone: str, context: dict, text: str, media_id: st
 
     if media_id:
         send_text(phone, "Reading the register...")
-        # Use Gemma 4 to extract names from register photo
         image_bytes = download_media(media_id)
         names = extract_names_from_image(image_bytes)
     else:
@@ -230,7 +535,6 @@ def _handle_awaiting_register(phone: str, context: dict, text: str, media_id: st
         student = Student(class_id=class_id, first_name=first, surname=sur)
         upsert("students", student.id, student.model_dump())
 
-    # Update student count
     cls = get_doc("classes", class_id)
     if cls:
         upsert("classes", class_id, {"student_count": cls.get("student_count", 0) + len(names)})
@@ -272,7 +576,6 @@ def _handle_awaiting_answer_key(phone: str, context: dict, text: str, media_id: 
         if not quality.get("pass", True):
             send_text(phone, f"Image quality issue: {quality.get('suggestion', 'Please retake.')}")
             return
-        # Extract Q&A from image
         scheme = extract_answer_key_from_image(image_bytes)
         if not scheme:
             send_text(phone, "Couldn't read the answer key. Please try again or type the answers.")
@@ -281,7 +584,6 @@ def _handle_awaiting_answer_key(phone: str, context: dict, text: str, media_id: 
         return
 
     if text:
-        # Manual text Q&A entry
         scheme = generate_marking_scheme(text, education_level)
         _store_answer_key(phone, class_id, education_level, scheme, context)
         return
@@ -336,7 +638,6 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
         send_text(phone, "Please send the student's book photo, or type 'done' to end.")
         return
 
-    # ── Mark the submission ───────────────────────────────────────────────────
     answer_key_id = context.get("answer_key_id")
     answer_key = get_doc("answer_keys", answer_key_id) if answer_key_id else None
     if not answer_key:
@@ -346,7 +647,6 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     send_text(phone, "Marking...")
     image_bytes = download_media(media_id)
 
-    # Quality gate
     quality = check_image_quality(image_bytes)
     if not quality.get("pass", True):
         from functions.mark import _quality_message
@@ -362,17 +662,14 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     )
     percentage = round(score / max_score * 100, 1) if max_score else 0.0
 
-    # Annotate image
     annotated_bytes = annotate_image(image_bytes, raw_verdicts)
 
-    # Upload annotated image
     student_id = context.get("current_student_id", str(uuid.uuid4()))
     blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
     teacher = _get_teacher(phone)
     teacher_id = teacher["id"] if teacher else "unknown"
     marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
 
-    # Store mark
     mark = Mark(
         student_id=student_id,
         class_id=context.get("class_id", ""),
@@ -388,7 +685,6 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     )
     upsert("marks", mark.id, mark.model_dump())
 
-    # Build caption
     correct = sum(1 for v in raw_verdicts if v.get("verdict") == "correct")
     total_q = len(raw_verdicts)
     caption = (
@@ -399,7 +695,7 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     send_image(phone, marked_url, caption)
 
 
-# ─── Session helpers ──────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_or_create_session(phone: str) -> dict:
     doc = get_doc("sessions", phone)
@@ -418,6 +714,43 @@ def _set_state(phone: str, state: str, context: dict) -> None:
     })
 
 
-def _get_teacher(phone: str):
-    from shared.firestore_client import query_single as _qs
-    return _qs("teachers", [("phone", "==", phone)])
+def _get_teacher(phone: str) -> dict | None:
+    return query_single("teachers", [("phone", "==", phone)])
+
+
+def _get_student_by_phone(phone: str) -> dict | None:
+    return query_single("students", [("phone", "==", phone)])
+
+
+def _get_classes_for_school(school_id: str) -> list[dict]:
+    """Return all classes whose teachers belong to the given school."""
+    teachers = query("teachers", [("school_id", "==", school_id)])
+    if not teachers:
+        return []
+    classes: list[dict] = []
+    for teacher in teachers:
+        classes.extend(query("classes", [("teacher_id", "==", teacher["id"])]))
+    # Sort by education_level then name for a predictable numbered list.
+    classes.sort(key=lambda c: (c.get("education_level", ""), c.get("name", "")))
+    return classes
+
+
+def _fuzzy_match_school(text: str) -> list[dict]:
+    """Return up to 3 schools that fuzzy-match the given text."""
+    try:
+        schools = query("schools", []) or _SEED_SCHOOLS
+    except Exception:
+        schools = _SEED_SCHOOLS
+
+    names = [s["name"] for s in schools]
+    close = difflib.get_close_matches(text.title(), names, n=3, cutoff=0.35)
+
+    # Also include any school whose name contains the query as a substring.
+    text_lower = text.lower()
+    substring_matches = [
+        s["name"] for s in schools
+        if text_lower in s["name"].lower() and s["name"] not in close
+    ]
+    all_matches = close + substring_matches[:3]
+
+    return [s for s in schools if s["name"] in all_matches]

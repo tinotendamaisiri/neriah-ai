@@ -31,7 +31,7 @@ export default function ScanButton({ onCapture, disabled = false }: ScanButtonPr
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       quality: 0.9,
       // TODO: add allowsEditing: true with aspect ratio 3:4 for A4 portrait pages
     });
