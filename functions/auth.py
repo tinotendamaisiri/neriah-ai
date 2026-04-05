@@ -473,6 +473,25 @@ def auth_profile_request_otp():
     return resp
 
 
+@auth_bp.post("/auth/terms-accept")
+def auth_terms_accept():
+    """Record that the teacher has accepted the current terms version. JWT required, no OTP."""
+    user_id, _, err = require_auth(request)
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    terms_version = (body.get("terms_version") or "").strip() or "1.0"
+
+    upsert("teachers", user_id, {
+        "terms_accepted": True,
+        "terms_version": terms_version,
+        "terms_accepted_at": datetime.now(timezone.utc).isoformat(),
+    })
+    logger.info("Terms accepted: teacher_id=%s version=%s", user_id, terms_version)
+    return jsonify({"message": "Terms accepted"}), 200
+
+
 @auth_bp.patch("/auth/me")
 def auth_update_me():
     """Update teacher profile. Requires valid JWT + OTP verification."""
@@ -567,6 +586,13 @@ def auth_update_me():
         fn = first_name or teacher.get("first_name") or ""
         sn = surname or teacher.get("surname") or ""
         updates["name"] = f"{fn} {sn}".strip()
+
+    terms_accepted = body.get("terms_accepted")
+    terms_version = (body.get("terms_version") or "").strip()
+    if terms_accepted is True:
+        updates["terms_accepted"] = True
+        updates["terms_version"] = terms_version or "1.0"
+        updates["terms_accepted_at"] = datetime.now(timezone.utc).isoformat()
 
     if new_phone and new_phone != teacher.get("phone"):
         existing = query_single("teachers", [("phone", "==", new_phone)])

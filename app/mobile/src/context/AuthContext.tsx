@@ -18,6 +18,8 @@ import { AuthUser, VerifyResponse } from '../types';
 import { PENDING_JOIN_CODE_KEY } from '../constants';
 
 const PIN_SET_KEY = 'neriah_has_pin';
+const TERMS_ACCEPTED_KEY = 'neriah_terms_accepted';
+const TERMS_VERSION = '1.0';
 
 // ── Context shape ─────────────────────────────────────────────────────────────
 
@@ -28,12 +30,14 @@ interface AuthContextValue {
   hasPin: boolean;                // true if user has set a PIN (persisted)
   pinUnlocked: boolean;           // true after PIN entered or fresh OTP login
   needsPinSetup: boolean;         // true after first OTP login with no PIN set
+  termsAccepted: boolean;         // true if user has accepted current terms version
   login: (response: VerifyResponse) => Promise<void>;
   logout: () => Promise<void>;
   markPinSet: () => Promise<void>;  // call after successful PIN creation
   skipPinSetup: () => void;         // user chose "Skip for now"
   unlockWithPin: () => void;        // call after successful PIN verify on cold start
   updateUser: (updates: Partial<AuthUser>, newToken?: string) => Promise<void>; // update profile in-place
+  acceptTerms: () => Promise<void>; // call after user accepts terms agreement
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -43,12 +47,14 @@ const AuthContext = createContext<AuthContextValue>({
   hasPin: false,
   pinUnlocked: false,
   needsPinSetup: false,
+  termsAccepted: false,
   login: async () => {},
   logout: async () => {},
   markPinSet: async () => {},
   skipPinSetup: () => {},
   unlockWithPin: () => {},
   updateUser: async () => {},
+  acceptTerms: async () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -60,23 +66,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [hasPin, setHasPin] = useState(false);
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   // Restore session from SecureStore on cold start
   useEffect(() => {
     const restore = async () => {
       try {
-        const [storedToken, storedUserJson, storedPin] = await Promise.all([
+        const [storedToken, storedUserJson, storedPin, storedTermsVersion] = await Promise.all([
           SecureStore.getItemAsync(JWT_STORAGE_KEY),
           SecureStore.getItemAsync(USER_STORAGE_KEY),
           SecureStore.getItemAsync(PIN_SET_KEY),
+          SecureStore.getItemAsync(TERMS_ACCEPTED_KEY),
         ]);
         if (storedToken && storedUserJson) {
+          const stored = JSON.parse(storedUserJson) as AuthUser;
+          // Backfill surname from combined name for sessions saved before split fields existed
+          if (!stored.surname && stored.name) {
+            const parts = stored.name.trim().split(' ');
+            stored.first_name = stored.first_name || parts[0];
+            stored.surname = parts.slice(1).join(' ') || parts[0];
+          }
           setToken(storedToken);
-          setUser(JSON.parse(storedUserJson) as AuthUser);
+          setUser(stored);
         }
         if (storedPin === 'true') {
           setHasPin(true);
           // pinUnlocked stays false — user must enter PIN on cold start
+        }
+        if (storedTermsVersion === TERMS_VERSION) {
+          setTermsAccepted(true);
         }
       } catch {
         // Ignore corrupt storage — start unauthenticated
@@ -173,6 +191,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPinUnlocked(true);
   }, []);
 
+  const acceptTerms = useCallback(async () => {
+    await SecureStore.setItemAsync(TERMS_ACCEPTED_KEY, TERMS_VERSION);
+    setTermsAccepted(true);
+  }, []);
+
   const updateUser = useCallback(async (updates: Partial<AuthUser>, newToken?: string) => {
     setUser(prev => {
       if (!prev) return prev;
@@ -187,8 +210,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, token, loading, hasPin, pinUnlocked, needsPinSetup, login, logout, markPinSet, skipPinSetup, unlockWithPin, updateUser }),
-    [user, token, loading, hasPin, pinUnlocked, needsPinSetup, login, logout, markPinSet, skipPinSetup, unlockWithPin, updateUser],
+    () => ({ user, token, loading, hasPin, pinUnlocked, needsPinSetup, termsAccepted, login, logout, markPinSet, skipPinSetup, unlockWithPin, updateUser, acceptTerms }),
+    [user, token, loading, hasPin, pinUnlocked, needsPinSetup, termsAccepted, login, logout, markPinSet, skipPinSetup, unlockWithPin, updateUser, acceptTerms],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

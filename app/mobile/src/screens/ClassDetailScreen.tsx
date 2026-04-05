@@ -30,10 +30,11 @@ import { COLORS } from '../constants/colors';
 export default function ClassDetailScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-  const { class_id, class_name, education_level } = route.params as {
+  const { class_id, class_name, education_level, curriculum } = route.params as {
     class_id: string;
     class_name: string;
     education_level: string;
+    curriculum?: 'zimsec' | 'cambridge';
   };
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -120,6 +121,8 @@ export default function ClassDetailScreen() {
     },
   ];
 
+  const curriculumLabel = curriculum === 'cambridge' ? 'Cambridge' : 'ZIMSEC';
+
   return (
     <View style={styles.container}>
       <SectionList
@@ -127,6 +130,22 @@ export default function ClassDetailScreen() {
         keyExtractor={(item) => item.id}
         stickySectionHeadersEnabled={false}
         contentContainerStyle={styles.content}
+        ListHeaderComponent={
+          <View style={styles.classHeader}>
+            <Text style={styles.classHeaderName}>{class_name}</Text>
+            <View style={[
+              styles.curriculumBadge,
+              curriculum === 'cambridge' && styles.curriculumBadgeCambridge,
+            ]}>
+              <Text style={[
+                styles.curriculumBadgeText,
+                curriculum === 'cambridge' && styles.curriculumBadgeTextCambridge,
+              ]}>
+                {curriculumLabel}
+              </Text>
+            </View>
+          </View>
+        }
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -478,6 +497,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   centre: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content: { paddingBottom: 32 },
+  classHeader: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4,
+    backgroundColor: COLORS.background,
+  },
+  classHeaderName: { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  curriculumBadge: {
+    backgroundColor: COLORS.teal50, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  curriculumBadgeCambridge: { backgroundColor: '#EEF2FF' },
+  curriculumBadgeText: { fontSize: 11, fontWeight: '700', color: COLORS.teal500 },
+  curriculumBadgeTextCambridge: { color: '#4F46E5' },
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8,

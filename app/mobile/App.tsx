@@ -62,6 +62,8 @@ import GradingDetailScreen from './src/screens/GradingDetailScreen';
 import TeacherClassAnalyticsScreen from './src/screens/TeacherClassAnalyticsScreen';
 import TeacherStudentAnalyticsScreen from './src/screens/TeacherStudentAnalyticsScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
+import TermsOfServiceScreen from './src/screens/TermsOfServiceScreen';
+import UserAgreementScreen from './src/screens/UserAgreementScreen';
 
 // ── Student screens ───────────────────────────────────────────────────────────
 import StudentHomeScreen from './src/screens/StudentHomeScreen';
@@ -82,6 +84,18 @@ const TeacherTab = createBottomTabNavigator<MainTabParamList>();
 const TeacherStack = createNativeStackNavigator<RootStackParamList>();
 const StudentTab = createBottomTabNavigator<StudentTabParamList>();
 const StudentRootStack = createNativeStackNavigator<import('./src/types').StudentRootStackParamList>();
+const AgreementStack = createNativeStackNavigator<RootStackParamList>();
+
+// ── Agreement navigator — shown once until terms accepted ─────────────────────
+
+function AgreementNavigator() {
+  return (
+    <AgreementStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+      <AgreementStack.Screen name="UserAgreement" component={UserAgreementScreen} />
+      <AgreementStack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
+    </AgreementStack.Navigator>
+  );
+}
 
 // ── Auth navigator (shared by both roles) ─────────────────────────────────────
 
@@ -206,6 +220,11 @@ function TeacherNavigator() {
         component={EditProfileScreen}
         options={{ headerShown: false }}
       />
+      <TeacherStack.Screen
+        name="TermsOfService"
+        component={TermsOfServiceScreen}
+        options={{ headerShown: false }}
+      />
     </TeacherStack.Navigator>
   );
 }
@@ -300,7 +319,7 @@ function StudentNavigator() {
 // ── App shell — auth gate + role routing ──────────────────────────────────────
 
 function AppShell() {
-  const { user, loading, hasPin, pinUnlocked, needsPinSetup } = useAuth();
+  const { user, loading, hasPin, pinUnlocked, needsPinSetup, termsAccepted } = useAuth();
 
   // Offline queue replay only needed for teachers (marking pipeline)
   React.useEffect(() => {
@@ -321,12 +340,15 @@ function AppShell() {
   let content: React.ReactElement;
   if (!user) {
     content = <AuthNavigator />;
-  } else if (needsPinSetup) {
-    // First login — prompt user to set a PIN (or skip)
-    content = <PinSetupScreen />;
   } else if (hasPin && !pinUnlocked) {
-    // Cold start with PIN set — require PIN before entering app
+    // Cold start with PIN set — require PIN before anything else
     content = <PinLoginScreen />;
+  } else if (!termsAccepted) {
+    // First login — must accept terms before going further
+    content = <AgreementNavigator />;
+  } else if (needsPinSetup) {
+    // Terms accepted, first OTP login — prompt user to set a PIN (or skip)
+    content = <PinSetupScreen />;
   } else if (user.role === 'teacher') {
     content = <TeacherNavigator />;
   } else {

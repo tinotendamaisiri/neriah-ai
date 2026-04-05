@@ -83,6 +83,7 @@ class Class(BaseModel):
     teacher_id: str
     name: str
     education_level: str
+    curriculum: str = "zimsec"
     join_code: str = Field(default_factory=lambda: str(uuid.uuid4())[:6].upper())
     student_count: int = 0
     created_at: str = Field(default_factory=lambda: _now().isoformat())

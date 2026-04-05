@@ -15,10 +15,12 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { setPin as apiSetPin } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
 
 export default function SetPinScreen() {
   const navigation = useNavigation<any>();
+  const { markPinSet } = useAuth();
   const [step, setStep] = useState<'enter' | 'confirm'>('enter');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -57,6 +59,7 @@ export default function SetPinScreen() {
     setLoading(true);
     try {
       await apiSetPin(pin);
+      await markPinSet();
       Alert.alert('PIN saved', 'Your app lock PIN has been set.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);

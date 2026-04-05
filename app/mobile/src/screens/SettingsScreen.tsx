@@ -1,11 +1,14 @@
 // src/screens/SettingsScreen.tsx
 // Teacher profile, account settings, and logout.
 
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import React, { useState, useEffect } from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
+} from 'react-native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LangCode } from '../i18n/translations';
@@ -24,8 +27,24 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
-  const { user, logout } = useAuth();
+  const { user, logout, hasPin: ctxHasPin, markPinSet } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const isFocused = useIsFocused();
+
+  // Re-read SecureStore every time this screen gains focus so the PIN row
+  // updates immediately after returning from SetPinScreen, regardless of
+  // whether AuthContext has been notified yet.
+  const [hasPin, setHasPinLocal] = useState(ctxHasPin);
+  useEffect(() => {
+    if (!isFocused) return;
+    SecureStore.getItemAsync('neriah_has_pin').then(val => {
+      const pinSet = val === 'true';
+      console.log('[SettingsScreen] focus check — SecureStore neriah_has_pin =', val, '| ctxHasPin =', ctxHasPin);
+      setHasPinLocal(pinSet);
+      // Sync AuthContext if it's out of date
+      if (pinSet && !ctxHasPin) markPinSet();
+    });
+  }, [isFocused]);
 
   const handleLogout = () => {
     Alert.alert(t('log_out'), t('log_out_confirm'), [
@@ -78,8 +97,27 @@ export default function SettingsScreen() {
 
   const languageLabel = LANGUAGES.find(l => l.code === language)?.label ?? 'English';
 
-  const displayName = user?.display_name
-    ?? (user ? `${user.first_name ?? ''} ${user.surname ?? ''}`.trim() : '');
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Account deletion is not self-service. Please contact Neriah Support to request account deletion. We will process your request within 48 hours.',
+      [
+        {
+          text: 'Contact Support',
+          onPress: () => {
+            const subject = encodeURIComponent('Account Deletion Request');
+            const body = encodeURIComponent(`Hi Neriah Support,\n\nI would like to delete my account.\n\nPhone: ${user?.phone ?? ''}`);
+            Linking.openURL(`mailto:support@neriah.africa?subject=${subject}&body=${body}`);
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  };
+
+  const displayName = user
+    ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? ''}`.trim()
+    : '';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -98,7 +136,7 @@ export default function SettingsScreen() {
         >
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
-              {user?.first_name?.[0]?.toUpperCase() ?? '?'}
+              {(user?.surname ?? user?.first_name)?.[0]?.toUpperCase() ?? '?'}
             </Text>
           </View>
           <View style={styles.profileInfo}>
@@ -122,15 +160,17 @@ export default function SettingsScreen() {
 
         <View style={styles.divider} />
 
-        <TouchableOpacity style={styles.settingsRow} onPress={handleSetPin}>
-          <Text style={styles.settingsRowLabel}>{t('set_pin')}</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.settingsRow} onPress={handleResetPin}>
-          <Text style={styles.settingsRowLabel}>{t('reset_pin')}</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
+        {hasPin ? (
+          <TouchableOpacity style={styles.settingsRow} onPress={handleResetPin}>
+            <Text style={styles.settingsRowLabel}>{t('reset_pin')}</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.settingsRow} onPress={handleSetPin}>
+            <Text style={styles.settingsRowLabel}>{t('set_pin')}</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity style={[styles.settingsRow, styles.lastRow]} onPress={handleLanguage}>
           <Text style={styles.settingsRowLabel}>{t('language')}</Text>
@@ -148,16 +188,25 @@ export default function SettingsScreen() {
           <Text style={styles.infoLabel}>{t('version')}</Text>
           <Text style={styles.infoValue}>0.1.0</Text>
         </View>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>{t('backend')}</Text>
-          <Text style={styles.infoValue}>neriah-grading (GCP)</Text>
-        </View>
+        <View style={styles.divider} />
+        <TouchableOpacity style={styles.settingsRow} onPress={() => navigation.navigate('TermsOfService', { initialTab: 'terms' })}>
+          <Text style={styles.settingsRowLabel}>Terms of Service</Text>
+          <Text style={styles.rowChevron}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.settingsRow} onPress={() => navigation.navigate('TermsOfService', { initialTab: 'privacy' })}>
+          <Text style={styles.settingsRowLabel}>Privacy Policy</Text>
+          <Text style={styles.rowChevron}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.settingsRow, styles.lastRow]} onPress={handleDeleteAccount}>
+          <Text style={[styles.settingsRowLabel, styles.deleteRowLabel]}>Delete Account</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Logout */}
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutText}>{t('log_out')}</Text>
       </TouchableOpacity>
+
     </ScrollView>
   );
 }
@@ -215,4 +264,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2', alignItems: 'center',
   },
   logoutText: { color: COLORS.error, fontWeight: '600', fontSize: 16 },
+  deleteRowLabel: { color: COLORS.error },
 });

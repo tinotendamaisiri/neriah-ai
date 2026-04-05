@@ -174,6 +174,7 @@ export const createClass = async (payload: {
   education_level: string;
   subject?: string;
   grade?: string;
+  curriculum?: string;
 }): Promise<Class> => {
   const res: AxiosResponse<Class> = await client.post('/classes', payload);
   return res.data;
@@ -277,6 +278,49 @@ export const updateAnswerKey = async (
 
 export const deleteAnswerKey = async (answer_key_id: string): Promise<void> => {
   await client.delete(`/answer-keys/${answer_key_id}`);
+};
+
+// ── Roster extraction ─────────────────────────────────────────────────────────
+
+export interface ExtractedStudent {
+  first_name: string;
+  surname: string;
+  register_number?: string | null;
+  phone?: string | null;
+}
+
+/** Send a photo of a class register to Gemma 4 and get structured student rows back. */
+export const extractStudentsFromImage = async (imageUri: string): Promise<ExtractedStudent[]> => {
+  const formData = new FormData();
+  formData.append('image', {
+    uri: imageUri,
+    name: 'register.jpg',
+    type: 'image/jpeg',
+  } as any);
+  const res = await client.post('/students/extract-from-image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+  return res.data.students ?? [];
+};
+
+/** Send an xlsx / csv / pdf / docx file and get structured student rows back. */
+export const extractStudentsFromFile = async (
+  fileUri: string,
+  fileName: string,
+  mimeType: string,
+): Promise<ExtractedStudent[]> => {
+  const formData = new FormData();
+  formData.append('file', {
+    uri: fileUri,
+    name: fileName,
+    type: mimeType,
+  } as any);
+  const res = await client.post('/students/extract-from-file', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+  return res.data.students ?? [];
 };
 
 // ── Teacher marking ───────────────────────────────────────────────────────────
@@ -513,6 +557,11 @@ export const getTeacherSubmissions = async (params?: {
 /** Teacher: approve a student submission. */
 export const approveSubmission = async (submission_id: string): Promise<void> => {
   await client.post(`/submissions/${submission_id}/approve`);
+};
+
+/** Record terms acceptance on the server (fire-and-forget; no OTP required). */
+export const acceptTermsOnServer = async (): Promise<void> => {
+  await client.post('/auth/terms-accept', { terms_version: '1.0' });
 };
 
 // ── PIN management ────────────────────────────────────────────────────────────

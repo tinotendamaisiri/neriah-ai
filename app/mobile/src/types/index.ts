@@ -45,6 +45,7 @@ export interface Class {
   teacher_id: string;
   name: string;
   education_level: EducationLevel;
+  curriculum?: 'zimsec' | 'cambridge';
   subject?: string;
   grade?: string;
   join_code?: string;
@@ -368,7 +369,7 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   Main: undefined;
   ClassSetup: undefined;
-  ClassDetail: { class_id: string; class_name: string; education_level: EducationLevel };
+  ClassDetail: { class_id: string; class_name: string; education_level: EducationLevel; curriculum?: 'zimsec' | 'cambridge' };
   TeacherInbox: undefined;
   HomeworkDetail: { answer_key_id: string; class_id: string; class_name: string };
   AddHomework: { class_id?: string; class_name?: string };
@@ -379,6 +380,8 @@ export type RootStackParamList = {
   TeacherClassAnalytics: { class_id: string; class_name: string };
   TeacherStudentAnalytics: { student_id: string; student_name: string; class_id: string; class_name: string };
   EditProfile: undefined;
+  TermsOfService: { initialTab?: 'terms' | 'privacy' } | undefined;
+  UserAgreement: undefined;
 };
 
 export type StudentTabParamList = {

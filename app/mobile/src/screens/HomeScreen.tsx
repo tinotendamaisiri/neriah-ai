@@ -236,6 +236,7 @@ export default function HomeScreen() {
       class_id: cls.id,
       class_name: cls.name,
       education_level: cls.education_level,
+      curriculum: (cls.curriculum ?? 'zimsec') as 'zimsec' | 'cambridge',
     });
   }, [navigation]);
 
@@ -283,7 +284,7 @@ export default function HomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>{t('hello')}, {user?.display_name ?? user?.name ?? user?.first_name ?? 'Teacher'}</Text>
+          <Text style={styles.greeting}>{t('hello')}, {user ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? 'Teacher'}`.trim() : 'Teacher'}</Text>
           <Text style={styles.heading}>{t('my_classes')}</Text>
         </View>
       </View>

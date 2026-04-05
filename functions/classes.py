@@ -33,11 +33,14 @@ def create_class():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
     education_level = (body.get("education_level") or "").strip()
+    curriculum = (body.get("curriculum") or "zimsec").strip().lower()
+    if curriculum not in ("zimsec", "cambridge"):
+        curriculum = "zimsec"
 
     if not name or not education_level:
         return jsonify({"error": "name and education_level are required"}), 400
 
-    cls = Class(teacher_id=teacher_id, name=name, education_level=education_level)
+    cls = Class(teacher_id=teacher_id, name=name, education_level=education_level, curriculum=curriculum)
     upsert("classes", cls.id, cls.model_dump())
     return jsonify(cls.model_dump()), 201
 
@@ -55,7 +58,7 @@ def update_class(class_id: str):
         return jsonify({"error": "forbidden"}), 403
 
     body = request.get_json(silent=True) or {}
-    allowed = {"name", "education_level"}
+    allowed = {"name", "education_level", "curriculum"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         return jsonify({"error": "No updatable fields provided"}), 400
