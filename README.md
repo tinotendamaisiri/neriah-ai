@@ -1,282 +1,117 @@
-# Neriah — AI Homework Marking on Google Cloud
+# Neriah AI
+AI-powered homework grading for African classrooms. 
+Students photograph their handwritten exercise books 
+and submit via app, WhatsApp, or email. Gemma 4 
+grades the submission. The teacher reviews and 
+approves on their dashboard.
 
-> **Hackathon submission** — a clean, production-ready implementation of the Neriah
-> grading pipeline built natively on Google Cloud, powered by **Gemma 4 on Vertex AI**.
+Built for the Gemma 4 Good Hackathon on Kaggle 
+(deadline May 18, 2026).
 
----
-
-## The Problem
-
-A primary school teacher in Zimbabwe has 40 students. Marking a single exercise takes
-4–6 minutes per book — three hours every night, for every subject, every week.
-Most teachers give up and stop giving written exercises altogether.
-Students get no feedback. Learning stalls.
-
-**Neriah solves this in under 30 seconds per book.**
-
----
-
-## What Neriah Does
-
-A teacher photographs a student's exercise book with their phone.
-Neriah grades every handwritten answer against a stored marking scheme,
-draws ticks and crosses directly onto the original photo, and sends back
-the annotated image with a score — over the mobile app or WhatsApp.
-
-**Key insight:** Gemma 4 is multimodal. Unlike GPT-4o (which required a separate
-OCR pass), Gemma 4 reads the handwriting and grades the answers in a single call.
-No Azure Document Intelligence equivalent needed for the primary marking pipeline.
-
----
+## Live Demo
+Backend: https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading
 
 ## Architecture
+- Cloud Functions (Python 3.11) — all HTTP endpoints
+- Firestore — data storage
+- Google Cloud Storage — image storage  
+- Gemma 4 via Ollama (local dev) / Vertex AI (production)
+- React Native + Expo — mobile app
+- Twilio — OTP SMS
+- WhatsApp Cloud API — submission channel
 
-```
-Teacher's Phone
-      │
-      │  JPEG photo of exercise book
-      ▼
-┌─────────────────────────────────────────────────────────┐
-│              Google Cloud Functions (gen2)               │
-│                                                         │
-│  POST /api/mark                                         │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  1. Quality gate  ── Gemma 4 vision (multimodal) │   │
-│  │  2. Grade         ── Gemma 4 vision (multimodal) │   │
-│  │     └─ reads handwriting + grades in ONE call    │   │
-│  │  3. Annotate      ── Pillow (in-memory JPEG)     │   │
-│  │  4. Store mark    ── Firestore                   │   │
-│  │  5. Upload image  ── Cloud Storage               │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                         │
-│  POST /api/whatsapp  (state machine)                    │
-│  GET  /api/analytics                                    │
-│  CRUD /api/classes  /api/students  /api/answer-keys     │
-│  POST /api/auth/register|login|verify                   │
-└─────────────────────────────────────────────────────────┘
-         │                        │
-         ▼                        ▼
-  ┌─────────────┐         ┌──────────────────┐
-  │  Firestore  │         │  Cloud Storage   │
-  │             │         │                  │
-  │  teachers   │         │  scans/          │
-  │  classes    │         │  marked/         │
-  │  students   │         │  submissions/    │
-  │  answer_keys│         └──────────────────┘
-  │  marks      │
-  │  sessions   │         ┌──────────────────┐
-  │  rubrics    │         │  Vertex AI       │
-  │  submissions│         │                  │
-  └─────────────┘         │  Gemma 4 27B IT  │
-                          │  (Model Garden)  │
-                          └──────────────────┘
-                                   ▲
-                          ┌────────┴─────────┐
-                          │  Document AI     │
-                          │  (PDF/DOCX only) │
-                          └──────────────────┘
-```
+## What is Built
 
-**Two delivery channels — same backend:**
-- **Mobile App** (React Native / Expo) — primary; live camera overlay guides framing
-- **WhatsApp Bot** — zero install; full marking flow over chat
+### Backend
+- [x] Authentication — OTP via Twilio, JWT, PIN login
+- [x] Teacher registration and profile management
+- [x] Student registration (app and WhatsApp)
+- [x] Class management with ZIMSEC/Cambridge curriculum
+- [x] Student roster with bulk import (photo, Excel, CSV, PDF, Word)
+- [x] Answer key / homework creation
+- [x] Gemma 4 grading engine (single multimodal call, no OCR step)
+- [x] Grading pipeline — batch architecture when teacher closes submissions
+- [x] WhatsApp webhook — student submission and state machine
+- [x] WhatsApp student onboarding flow
+- [x] Analytics endpoints
+- [x] Push notification registration
+- [x] Schools seed data (20 Zimbabwean schools)
+- [x] Student extraction from image (Gemma 4 reads class register photo)
+- [x] Student extraction from file (Excel, CSV, PDF, Word)
 
----
+### Mobile App (Teacher)
+- [x] Role select screen
+- [x] Teacher registration with school picker
+- [x] OTP verification
+- [x] PIN setup and PIN login (persistent session)
+- [x] Terms of service and privacy policy
+- [x] User agreement on first login
+- [x] Home screen with class cards
+- [x] Create class (curriculum, education level, student roster table)
+- [x] Class detail screen with student list
+- [x] Student profile with grading history
+- [x] Add homework screen (Camera, Gallery, PDF, Word, Text upload)
+- [x] Settings with profile editing (OTP verified before save)
+- [x] Language picker (English, Shona, Ndebele)
+- [x] Offline queue for scans
+- [x] Network banner
 
-## How Gemma 4 Is Used
+### Mobile App (Student)
+- [x] Student registration (phone, school, class selection)
+- [x] Student home screen
+- [x] Assignment list
+- [x] Camera submission flow (multi-page)
+- [x] 3-channel submission (App, WhatsApp, Email)
+- [x] Results screen
+- [x] Feedback screen with annotated image
+- [x] Student analytics
 
-All AI functionality lives in `shared/gemma_client.py`. Five functions:
+## What is NOT Yet Built
 
-| Function | Input | What Gemma does |
-|---|---|---|
-| `check_image_quality` | `image_bytes` | Multimodal: inspects photo quality, returns pass/fail + reason |
-| `grade_submission` | `image_bytes` + answer key | **Multimodal: reads handwriting directly, grades each question, returns verdicts** |
-| `generate_marking_scheme` | question paper text | Generates full marking scheme with model answers + mark allocations |
-| `grade_document` | extracted text + rubric | Grades tertiary (PDF/DOCX) submissions against a criterion rubric |
-| `generate_rubric` | assignment brief | Generates a structured assessment rubric with level descriptors |
+### Backend
+- [ ] Batch grading job (Cloud Run Job) — code written, GPU quota pending
+- [ ] Vertex AI serverless Gemma 4 — waiting for Google to launch
+- [ ] Marking scheme auto-generation wired to homework creation
+- [ ] Push notification delivery (token registered, listener not set up)
+- [ ] WhatsApp teacher scanning flow (stubbed)
+- [ ] Email ingestion (SendGrid inbound)
+- [ ] Student AI tutor endpoint
+- [ ] Offline grading sync endpoint
 
-`grade_submission` is the core innovation. The Azure build ran OCR first (Azure Document
-Intelligence → text), then passed the text to GPT-4o for grading — two API calls, two
-billing events, two points of failure. Here, Gemma 4's native vision capability reads
-the handwriting and grades it in a single multimodal call.
+### Mobile App
+- [ ] Photo guidance (real-time camera quality check via LiteRT)
+- [ ] Photo enhancement (on-device before submission)
+- [ ] Student AI tutor screen
+- [ ] Offline individual grading (teacher grades with E4B on device)
+- [ ] Graded offline badge on results
+- [ ] HomeworkDetailScreen — close and grade all button
+- [ ] Push notification listener in AppShell
+- [ ] PIN lock enforcement on cold start (PIN saved but not checked)
 
-Grading intensity is calibrated to the education level: Grade 1 (very lenient, accept
-phonetic spelling) through College/University (academic rigour, cite evidence).
-
----
-
-## Project Structure
-
-```
-neriah-gcp/
-├── main.py                  ← Flask app + Cloud Functions entry point
-├── requirements.txt
-├── .env.example
-├── shared/
-│   ├── config.py            ← Pydantic settings (all env vars)
-│   ├── models.py            ← Pydantic domain models
-│   ├── auth.py              ← JWT + OTP + PIN utilities
-│   ├── gemma_client.py      ← Vertex AI / Gemma 4 (5 AI functions)
-│   ├── firestore_client.py  ← Firestore CRUD helpers
-│   ├── gcs_client.py        ← Cloud Storage upload/download
-│   ├── ocr_client.py        ← Document AI (tertiary PDF/DOCX only)
-│   ├── annotator.py         ← Pillow image annotation pipeline
-│   └── whatsapp_client.py   ← WhatsApp Cloud API send helpers
-├── functions/
-│   ├── auth.py              ← /api/auth/* endpoints
-│   ├── classes.py           ← /api/classes/* endpoints
-│   ├── students.py          ← /api/students/* endpoints
-│   ├── answer_keys.py       ← /api/answer-keys/* endpoints
-│   ├── mark.py              ← /api/mark  (full pipeline)
-│   ├── analytics.py         ← /api/analytics
-│   └── whatsapp.py          ← /api/whatsapp  (state machine)
-└── tests/
-    └── test_grading.py      ← Live smoke test: Gemma 4 end-to-end
-```
-
----
+### Infrastructure
+- [ ] LiteRT on-device model integration (E2B for student, E4B for teacher)
+- [ ] Cloud Run Job for batch grading (waiting on GPU quota)
+- [ ] Vertex AI serverless Gemma 4 (waiting for Google launch)
+- [ ] Fine-tuning pipeline on ZIMSEC data
 
 ## Running Locally
-
-### Prerequisites
-- Python 3.11+
-- A GCP project with Vertex AI API enabled
-- `gcloud auth application-default login` (for local credentials)
-
-### Setup
-
 ```bash
-# 1. Clone and enter project root
-git clone <repo>
-cd neriah
-
-# 2. Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-# Edit .env — fill in GCP_PROJECT_ID, APP_JWT_SECRET, WhatsApp tokens, etc.
-
-# 5. Start the local server
+cd app/mobile && npm install && npx expo start
+cd neriah-ai && pip install -r requirements.txt
+INFERENCE_BACKEND=ollama OLLAMA_BASE_URL=http://localhost:11434 \
 functions-framework --target neriah --debug
-# → http://localhost:8080
 ```
-
-### Quick health check
-```bash
-curl http://localhost:8080/api/health
-# {"status": "ok", "project": "neriah-gcp"}
-```
-
----
-
-## Running the Smoke Test
-
-The smoke test makes a live call to Gemma 4 on Vertex AI.
-Requires valid Application Default Credentials and `GCP_PROJECT_ID` set.
-
-```bash
-# Ensure credentials are set
-gcloud auth application-default login
-
-# Run the test
-pytest tests/test_grading.py -v
-```
-
-Expected output:
-```
-tests/test_grading.py::test_grade_submission_structure PASSED
-tests/test_grading.py::test_grade_submission_all_required_keys PASSED
-tests/test_grading.py::test_grade_submission_scores_in_range PASSED
-```
-
----
-
-## Deploying to Cloud Functions
-
-```bash
-gcloud functions deploy neriah \
-  --gen2 \
-  --runtime python311 \
-  --region us-central1 \
-  --trigger-http \
-  --allow-unauthenticated \
-  --entry-point neriah \
-  --set-env-vars "$(cat .env | grep -v '^#' | grep '=' | tr '\n' ',')"
-```
-
-Or with explicit vars:
-```bash
-gcloud functions deploy neriah \
-  --gen2 \
-  --runtime python311 \
-  --region us-central1 \
-  --trigger-http \
-  --allow-unauthenticated \
-  --entry-point neriah \
-  --set-env-vars \
-    GCP_PROJECT_ID=your-project,\
-    GCS_BUCKET_SCANS=neriah-scans,\
-    GCS_BUCKET_MARKED=neriah-marked,\
-    GCS_BUCKET_SUBMISSIONS=neriah-submissions,\
-    VERTEX_MODEL_ID=gemma-4-27b-it,\
-    APP_JWT_SECRET=your-secret,\
-    WHATSAPP_VERIFY_TOKEN=your-token,\
-    WHATSAPP_ACCESS_TOKEN=your-token,\
-    WHATSAPP_PHONE_NUMBER_ID=your-id,\
-    ENVIRONMENT=prod
-```
-
----
 
 ## Environment Variables
+See `.env.example` for full list.
+Key variables:
+- `GCP_PROJECT_ID=neriah-ai-492302`
+- `INFERENCE_BACKEND=ollama|vertex`
+- `OLLAMA_BASE_URL=http://localhost:11434`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
+- `APP_JWT_SECRET`
 
-| Variable | Required | Description |
-|---|---|---|
-| `GCP_PROJECT_ID` | yes | GCP project ID |
-| `GCP_REGION` | no | Vertex AI region (default: `us-central1`) |
-| `GCS_BUCKET_SCANS` | yes | Bucket for raw uploaded photos |
-| `GCS_BUCKET_MARKED` | yes | Bucket for annotated output images |
-| `GCS_BUCKET_SUBMISSIONS` | yes | Bucket for tertiary PDF/DOCX uploads |
-| `VERTEX_MODEL_ID` | no | Gemma 4 model ID (default: `gemma-4-27b-it`) |
-| `DOCAI_PROCESSOR_ID` | no | Document AI processor (tertiary only; optional) |
-| `WHATSAPP_VERIFY_TOKEN` | yes | Meta webhook verification token |
-| `WHATSAPP_ACCESS_TOKEN` | yes | WhatsApp Graph API access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | yes | WhatsApp Business phone number ID |
-| `APP_JWT_SECRET` | yes | Secret for signing HS256 JWTs |
-| `ENVIRONMENT` | no | `dev` or `prod` — controls log verbosity |
-
----
-
-## GCP Services Used
-
-| Service | Purpose |
-|---|---|
-| Cloud Functions (gen2) | Serverless HTTP backend |
-| Vertex AI — Gemma 4 27B IT | Image quality check, handwriting grading, scheme generation |
-| Firestore | All structured data (teachers, classes, marks, sessions) |
-| Cloud Storage | Raw and annotated images, tertiary document uploads |
-| Document AI | Optional PDF/DOCX text extraction (tertiary submissions only) |
-
----
-
-## Design Decisions
-
-**Why one Cloud Function instead of many?**
-All routes are registered on a single Flask app dispatched through one
-`@functions_framework.http` handler. This keeps cold starts low, simplifies
-deployment, and mirrors the developer experience of the Azure Functions v2 build.
-
-**Why no separate OCR step?**
-Gemma 4 is multimodal. Passing the exercise-book image directly to `grade_submission`
-eliminates a Document AI call for every book, reducing latency and cost.
-Document AI is retained only for tertiary PDF/DOCX extraction where layout matters.
-
-**Why Firestore over Cloud SQL?**
-Queries almost always filter by a known parent (all marks for a student, all students
-in a class). Firestore's document model matches this access pattern exactly, with no
-schema migrations and a serverless billing model that scales to zero.
+## Hackathon
+Gemma 4 Good Hackathon on Kaggle — deadline May 18 2026  
+Prize categories: Main Track ($50K), Future of Education ($10K),
+Digital Equity ($10K), Cactus model routing ($10K), LiteRT ($10K)
