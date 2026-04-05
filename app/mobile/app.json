@@ -34,7 +34,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiBaseUrl": "https://neriah-func-dev.azurewebsites.net/api"
+      "apiBaseUrl": "https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading/api"
     },
     "plugins": [
       "expo-mail-composer",

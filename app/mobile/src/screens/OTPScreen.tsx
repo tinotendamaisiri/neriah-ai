@@ -19,6 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { maskPhone } from '../utils/maskPhone';
 
 type Route = RouteProp<AuthStackParamList, 'OTP'>;
 
@@ -68,15 +69,16 @@ export default function OTPScreen() {
       await login(response);
       // AuthContext login → App re-renders → navigates to main tabs automatically
     } catch (err: any) {
-      const status = err.status;
+      const status = err?.response?.status ?? err?.status;
+      const serverMsg = err?.response?.data?.error;
       if (status === 400) {
-        Alert.alert(t('otp_incorrect'), err.message ?? t('otp_incorrect'));
+        Alert.alert(t('otp_incorrect'), serverMsg ?? t('otp_incorrect'));
       } else if (status === 410) {
-        Alert.alert(t('otp_expired'), err.message ?? t('otp_expired'));
+        Alert.alert(t('otp_expired'), t('otp_expired_msg'));
       } else if (status === 429) {
-        Alert.alert(t('otp_too_many'), err.message ?? t('otp_too_many'));
+        Alert.alert(t('otp_too_many'), serverMsg ?? t('otp_too_many'));
       } else {
-        Alert.alert(t('error'), t('verification_failed'));
+        Alert.alert(t('error'), t('server_error_retry'));
       }
       setOtp('');
     } finally {
@@ -92,17 +94,19 @@ export default function OTPScreen() {
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       setOtp('');
       Alert.alert(t('code_sent_ok'), channel === 'sms' ? t('code_sent_sms') : t('code_sent_phone'));
-    } catch {
-      Alert.alert(t('error'), t('verification_failed'));
+    } catch (err: any) {
+      const status = err?.response?.status ?? err?.status;
+      if (status === 429) {
+        Alert.alert(t('error'), t('too_many_attempts'));
+      } else {
+        Alert.alert(t('error'), t('server_error_retry'));
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Mask phone for display: +263771***567
-  const maskedPhone = phone.length > 6
-    ? `${phone.slice(0, -3).replace(/.(?=.{3})/g, (c, i) => i < 4 ? c : '*')}${phone.slice(-3)}`
-    : phone;
+  const maskedPhone = maskPhone(phone);
 
   return (
     <KeyboardAvoidingView

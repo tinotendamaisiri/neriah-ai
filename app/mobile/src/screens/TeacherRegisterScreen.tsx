@@ -51,10 +51,13 @@ export default function TeacherRegisterScreen() {
   const navigation = useNavigation<Nav>();
   const { t } = useLanguage();
 
+  const [title, setTitle] = useState('');
   const [firstName, setFirstName] = useState('');
   const [surname, setSurname] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const TITLES = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof', 'Sir', 'Eng', 'Rev'];
 
   // School picker state
   const [schools, setSchools] = useState<School[]>([]);
@@ -65,13 +68,35 @@ export default function TeacherRegisterScreen() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customSchool, setCustomSchool] = useState('');
 
+  const fetchSchools = async () => {
+    console.log('[SchoolPicker] Fetching schools from /api/schools');
+    try {
+      const r = await getSchools();
+      console.log('[SchoolPicker] Response:', JSON.stringify(r).slice(0, 300));
+      setSchools(Array.isArray(r) ? r : []);
+    } catch (err) {
+      console.log('[SchoolPicker] Fetch error:', err);
+    }
+  };
+
   useEffect(() => {
-    getSchools().then(r => setSchools(r.schools)).catch(() => {});
+    fetchSchools();
   }, []);
+
+  const openSchoolModal = () => {
+    // Re-fetch if schools list is empty (e.g. mount fetch failed)
+    if (schools.length === 0) {
+      console.log('[SchoolPicker] schools empty on modal open — retrying fetch');
+      fetchSchools();
+    }
+    console.log('[SchoolPicker] Opening modal, schools loaded:', schools.length);
+    setSchoolModalVisible(true);
+  };
 
   // Sections grouped by city, filtered by search query
   const sections = useMemo(() => {
     const q = schoolQuery.trim().toLowerCase();
+    // Empty query → show all schools (q is falsy when "")
     const filtered = q
       ? schools.filter(s =>
           s.name.toLowerCase().includes(q) ||
@@ -79,6 +104,7 @@ export default function TeacherRegisterScreen() {
           s.province.toLowerCase().includes(q),
         )
       : schools;
+    console.log('[SchoolPicker] Filter query:', JSON.stringify(q), '| matched:', filtered.length, '/', schools.length);
     const cityMap: Record<string, School[]> = {};
     filtered.forEach(s => {
       if (!cityMap[s.city]) cityMap[s.city] = [];
@@ -86,7 +112,10 @@ export default function TeacherRegisterScreen() {
     });
     return Object.entries(cityMap)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([title, data]) => ({ title, data }));
+      .map(([title, data]) => ({
+        title,
+        data: data.slice().sort((a, b) => a.name.localeCompare(b.name)),
+      }));
   }, [schools, schoolQuery]);
 
   const handleSelectSchool = (school: School) => {
@@ -128,29 +157,48 @@ export default function TeacherRegisterScreen() {
 
     setLoading(true);
     try {
-      const res = await requestRegisterOtp({
+      const payload = {
         phone: ph,
         first_name: fn,
         surname: sn,
+        ...(title ? { title } : {}),
         ...(schoolId ? { school_id: schoolId } : { school_name: schoolNameVal }),
-      });
+      };
+      console.log('[Register] Sending:', JSON.stringify({
+        first_name: fn, surname: sn, phone: ph,
+        school: schoolId ? `id:${schoolId}` : `name:${schoolNameVal}`,
+      }));
+      const res = await requestRegisterOtp(payload);
       navigation.navigate('OTP', {
         phone: ph,
         verification_id: res.verification_id,
         ...(res.debug_otp ? { debug_otp: res.debug_otp } : {}),
       });
     } catch (err: any) {
-      if (err.response?.status === 409) {
+      console.log('[Register] Error:', JSON.stringify({
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      }));
+      const status = err?.response?.status;
+      const isAlreadyRegistered =
+        status === 409 ||
+        (err?.message ?? '').toLowerCase().includes('already registered');
+      if (isAlreadyRegistered) {
         Alert.alert(
-          t('already_registered'),
-          t('already_registered_msg'),
+          'Account already exists',
+          'An account with this phone number already exists. Would you like to sign in instead?',
           [
-            { text: t('cancel'), style: 'cancel' },
-            { text: t('sign_in_instead'), onPress: () => navigation.navigate('Phone') },
+            { text: 'Sign in', onPress: () => navigation.navigate('Phone') },
+            { text: 'Cancel', style: 'cancel' },
           ],
         );
+      } else if (status === 400) {
+        Alert.alert(t('error'), t('fill_all_fields'));
+      } else if (status === 429) {
+        Alert.alert(t('error'), t('too_many_attempts'));
       } else {
-        Alert.alert(t('error'), t('verification_failed'));
+        Alert.alert(t('error'), t('server_error_retry'));
       }
     } finally {
       setLoading(false);
@@ -179,6 +227,25 @@ export default function TeacherRegisterScreen() {
           <Text style={styles.subheading}>{t('enter_details')}</Text>
 
           <View style={styles.form}>
+            <Text style={styles.label}>Title <Text style={styles.labelOptional}>(optional)</Text></Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipsRow}
+              keyboardShouldPersistTaps="handled"
+            >
+              {TITLES.map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.chip, title === t && styles.chipSelected]}
+                  onPress={() => setTitle(prev => prev === t ? '' : t)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.chipText, title === t && styles.chipTextSelected]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
             <Text style={styles.label}>{t('first_name')}</Text>
             <TextInput
               style={styles.input}
@@ -227,7 +294,7 @@ export default function TeacherRegisterScreen() {
             ) : (
               <TouchableOpacity
                 style={[styles.schoolField, !selectedSchoolName && styles.schoolFieldEmpty]}
-                onPress={() => setSchoolModalVisible(true)}
+                onPress={openSchoolModal}
                 disabled={loading}
               >
                 <Text style={[styles.schoolFieldText, !selectedSchoolName && styles.schoolFieldPlaceholder]}>
@@ -311,7 +378,6 @@ export default function TeacherRegisterScreen() {
                     <Text style={[styles.schoolName, isSelected && styles.schoolNameSelected]}>
                       {item.name}
                     </Text>
-                    <Text style={styles.schoolCity}>{item.city}, {item.province}</Text>
                   </View>
                   <View style={[
                     styles.typeBadge,
@@ -358,6 +424,15 @@ const styles = StyleSheet.create({
   subheading: { fontSize: 14, color: COLORS.gray500, marginBottom: 32 },
   form: { gap: 8 },
   label: { fontSize: 14, fontWeight: '600', color: COLORS.gray900, marginTop: 8 },
+  labelOptional: { fontWeight: '400', color: COLORS.gray500 },
+  chipsRow: { flexDirection: 'row', gap: 8, paddingVertical: 6 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    borderWidth: 1.5, borderColor: COLORS.gray200, backgroundColor: COLORS.white,
+  },
+  chipSelected: { backgroundColor: COLORS.teal500, borderColor: COLORS.teal500 },
+  chipText: { fontSize: 14, fontWeight: '600', color: COLORS.gray900 },
+  chipTextSelected: { color: COLORS.white },
   input: {
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
     padding: 14, fontSize: 16, color: COLORS.text,

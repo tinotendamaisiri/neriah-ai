@@ -55,7 +55,9 @@ class Teacher(BaseModel):
     id: str = Field(default_factory=_uid)
     phone: str
     name: str
+    title: Optional[str] = None
     school_name: Optional[str] = None
+    school_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: _now().isoformat())
     token_version: int = 0
     pin_hash: Optional[str] = None

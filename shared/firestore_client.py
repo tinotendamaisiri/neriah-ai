@@ -6,6 +6,7 @@ import logging
 from typing import Optional
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from shared.config import settings
 
@@ -52,7 +53,7 @@ def query(
     """
     ref = get_db().collection(collection)
     for field, op, value in filters:
-        ref = ref.where(field, op, value)
+        ref = ref.where(filter=FieldFilter(field, op, value))
     if order_by:
         # Use string literals — compatible across all google-cloud-firestore versions
         dir_ = "ASCENDING" if direction == "ASCENDING" else "DESCENDING"

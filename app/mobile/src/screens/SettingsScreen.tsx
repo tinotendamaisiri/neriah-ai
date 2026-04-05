@@ -5,12 +5,14 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LangCode } from '../i18n/translations';
 import { deletePin } from '../services/api';
 import { RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { maskPhone } from '../utils/maskPhone';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -76,9 +78,8 @@ export default function SettingsScreen() {
 
   const languageLabel = LANGUAGES.find(l => l.code === language)?.label ?? 'English';
 
-  const displayName = user
-    ? `${user.first_name} ${user.surname}`
-    : '';
+  const displayName = user?.display_name
+    ?? (user ? `${user.first_name ?? ''} ${user.surname ?? ''}`.trim() : '');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -90,7 +91,11 @@ export default function SettingsScreen() {
       {/* Profile */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('profile')}</Text>
-        <View style={styles.profileCard}>
+        <TouchableOpacity
+          style={styles.profileCard}
+          onPress={() => navigation.navigate('EditProfile')}
+          activeOpacity={0.7}
+        >
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
               {user?.first_name?.[0]?.toUpperCase() ?? '?'}
@@ -98,17 +103,13 @@ export default function SettingsScreen() {
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{displayName}</Text>
-            <Text style={styles.profilePhone}>{user?.phone ?? ''}</Text>
+            <Text style={styles.profilePhone}>{maskPhone(user?.phone ?? '')}</Text>
             {user?.school && (
               <Text style={styles.profileSchool}>{user.school}</Text>
             )}
           </View>
-          <View style={styles.roleBadge}>
-            <Text style={styles.roleText}>
-              {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'User'}
-            </Text>
-          </View>
-        </View>
+          <Ionicons name="pencil-outline" size={18} color={COLORS.teal500} />
+        </TouchableOpacity>
       </View>
 
       {/* Account */}
@@ -149,7 +150,7 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>{t('backend')}</Text>
-          <Text style={styles.infoValue}>neriah-func-dev</Text>
+          <Text style={styles.infoValue}>neriah-grading (GCP)</Text>
         </View>
       </View>
 

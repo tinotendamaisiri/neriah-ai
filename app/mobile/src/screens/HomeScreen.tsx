@@ -283,7 +283,7 @@ export default function HomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>{t('hello')}, {user?.first_name ?? 'Teacher'}</Text>
+          <Text style={styles.greeting}>{t('hello')}, {user?.display_name ?? user?.name ?? user?.first_name ?? 'Teacher'}</Text>
           <Text style={styles.heading}>{t('my_classes')}</Text>
         </View>
       </View>

@@ -1,0 +1,16 @@
+.venv
+.venv/
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.env
+local.settings.json
+*.md
+tests/
+.git
+node_modules
+app/
+infra/
+docs/
+scripts/

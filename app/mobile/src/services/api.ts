@@ -30,7 +30,7 @@ import {
 
 const BASE_URL: string =
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
-  'https://neriah-apim-dev.azure-api.net/api';
+  'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading/api';
 
 export const JWT_STORAGE_KEY = 'neriah_jwt';
 export const USER_STORAGE_KEY = 'neriah_user';
@@ -42,6 +42,8 @@ const client: AxiosInstance = axios.create({
   timeout: 35000, // marking pipeline can take ~20s
   headers: { 'Content-Type': 'application/json' },
 });
+
+console.log('[API] Base URL:', client.defaults.baseURL);
 
 client.interceptors.request.use(async (config) => {
   const token = await SecureStore.getItemAsync(JWT_STORAGE_KEY);
@@ -110,7 +112,7 @@ export const requestLoginOtp = async (phone: string): Promise<OtpSentResponse> =
 };
 
 /** Fetch the public schools registry (no auth required). */
-export const getSchools = async (): Promise<{ schools: School[] }> => {
+export const getSchools = async (): Promise<School[]> => {
   const res = await client.get('/schools');
   return res.data;
 };
@@ -515,9 +517,34 @@ export const approveSubmission = async (submission_id: string): Promise<void> =>
 
 // ── PIN management ────────────────────────────────────────────────────────────
 
+/** Request OTP for profile update verification (send to current or new phone). */
+export const requestProfileOtp = async (phone: string): Promise<OtpSentResponse> => {
+  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/profile/request-otp', { phone });
+  return res.data;
+};
+
+/** Update teacher profile. Requires OTP verification. Returns updated user + new token if phone changed. */
+export const updateProfile = async (payload: {
+  title?: string;
+  first_name?: string;
+  surname?: string;
+  phone?: string;
+  verification_id: string;
+  otp_code: string;
+}): Promise<{ user: { id: string; first_name: string; surname: string; name?: string; title?: string; display_name?: string; phone: string; role: string; school?: string }; token?: string }> => {
+  const res = await client.patch('/auth/me', payload);
+  return res.data;
+};
+
 /** Set or change the 4-digit app lock PIN. */
 export const setPin = async (pin: string): Promise<void> => {
   await client.post('/auth/pin/set', { pin });
+};
+
+/** Verify the 4-digit PIN (cold-start unlock). Returns attempts remaining on failure. */
+export const verifyPin = async (pin: string): Promise<{ message: string }> => {
+  const res = await client.post('/auth/pin/verify', { pin });
+  return res.data;
 };
 
 /** Remove the app lock PIN. */

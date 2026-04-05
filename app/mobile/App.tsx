@@ -25,6 +25,8 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import PinSetupScreen from './src/screens/PinSetupScreen';
+import PinLoginScreen from './src/screens/PinLoginScreen';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import { startNetworkListener } from './src/services/offlineQueue';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -59,6 +61,7 @@ import GradingResultsScreen from './src/screens/GradingResultsScreen';
 import GradingDetailScreen from './src/screens/GradingDetailScreen';
 import TeacherClassAnalyticsScreen from './src/screens/TeacherClassAnalyticsScreen';
 import TeacherStudentAnalyticsScreen from './src/screens/TeacherStudentAnalyticsScreen';
+import EditProfileScreen from './src/screens/EditProfileScreen';
 
 // ── Student screens ───────────────────────────────────────────────────────────
 import StudentHomeScreen from './src/screens/StudentHomeScreen';
@@ -198,6 +201,11 @@ function TeacherNavigator() {
         component={TeacherStudentAnalyticsScreen}
         options={{ headerShown: false }}
       />
+      <TeacherStack.Screen
+        name="EditProfile"
+        component={EditProfileScreen}
+        options={{ headerShown: false }}
+      />
     </TeacherStack.Navigator>
   );
 }
@@ -206,6 +214,7 @@ function TeacherNavigator() {
 
 function StudentTabs() {
   const { t } = useLanguage();
+  return (
     <StudentTab.Navigator
       lazy
       screenOptions={({ route }) => ({
@@ -291,7 +300,7 @@ function StudentNavigator() {
 // ── App shell — auth gate + role routing ──────────────────────────────────────
 
 function AppShell() {
-  const { user, loading } = useAuth();
+  const { user, loading, hasPin, pinUnlocked, needsPinSetup } = useAuth();
 
   // Offline queue replay only needed for teachers (marking pipeline)
   React.useEffect(() => {
@@ -312,6 +321,12 @@ function AppShell() {
   let content: React.ReactElement;
   if (!user) {
     content = <AuthNavigator />;
+  } else if (needsPinSetup) {
+    // First login — prompt user to set a PIN (or skip)
+    content = <PinSetupScreen />;
+  } else if (hasPin && !pinUnlocked) {
+    // Cold start with PIN set — require PIN before entering app
+    content = <PinLoginScreen />;
   } else if (user.role === 'teacher') {
     content = <TeacherNavigator />;
   } else {

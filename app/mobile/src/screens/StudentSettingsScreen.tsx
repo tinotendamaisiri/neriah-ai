@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { getClassJoinInfo, joinClass } from '../services/api';
 import { COLORS } from '../constants/colors';
+import { maskPhone } from '../utils/maskPhone';
 
 export default function StudentSettingsScreen() {
   const { user, logout } = useAuth();
@@ -58,7 +59,7 @@ export default function StudentSettingsScreen() {
 
       {/* Profile */}
       <SectionCard title="Profile">
-        <InfoRow label="Phone" value={user?.phone ?? '—'} />
+        <InfoRow label="Phone" value={user?.phone ? maskPhone(user.phone) : '—'} />
         {user?.school && <InfoRow label="School" value={user.school} />}
       </SectionCard>
 

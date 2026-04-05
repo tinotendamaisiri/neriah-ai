@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
-const logoImage = require('../../assets/icon.png');
+const logoImage = require('../../assets/icon-transparent.png');
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'RoleSelect'>;
 
@@ -33,7 +33,6 @@ export default function RoleSelectScreen() {
         <View style={styles.header}>
           <Image source={logoImage} style={styles.logoMark} />
           <Text style={styles.heading}>{t('welcome')}</Text>
-          <Text style={styles.subheading}>{t('how_using_app')}</Text>
         </View>
 
         {/* Role cards */}
@@ -77,7 +76,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 24, justifyContent: 'center' },
   header: { alignItems: 'center', marginBottom: 40 },
   logoMark: {
-    width: 80, height: 80, marginBottom: 16,
+    width: 100, height: 100, marginBottom: 8, resizeMode: 'contain',
   },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },
   subheading: { fontSize: 15, color: COLORS.gray500 },

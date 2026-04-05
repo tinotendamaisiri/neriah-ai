@@ -153,6 +153,9 @@ export interface AuthUser {
   id: string;
   phone: string;
   role: UserRole;
+  name?: string;         // full name from backend (teachers)
+  title?: string;        // e.g. "Mr", "Dr"
+  display_name?: string; // title + name combined, e.g. "Mr Tinotenda Maisiri"
   first_name: string;
   surname: string;
   school?: string;
@@ -375,6 +378,7 @@ export type RootStackParamList = {
   Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;
   TeacherClassAnalytics: { class_id: string; class_name: string };
   TeacherStudentAnalytics: { student_id: string; student_name: string; class_id: string; class_name: string };
+  EditProfile: undefined;
 };
 
 export type StudentTabParamList = {
