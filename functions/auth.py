@@ -17,6 +17,7 @@ from shared.auth import (
     verify_otp_hash,
     verify_pin,
 )
+from shared.config import is_demo
 from shared.firestore_client import delete_doc, get_doc, query_single, upsert
 from shared.models import Teacher
 from shared.sms_client import send_otp as _dispatch_otp
@@ -61,6 +62,11 @@ def _check_ip_rate_limit(ip: str) -> tuple[bool, dict]:
 
 def _send_otp(phone: str, otp: str) -> str:
     """Send OTP, persist method info, return channel used."""
+    if is_demo():
+        # Demo mode: skip all SMS/WhatsApp delivery. OTP is always "1234".
+        logger.info("[demo] Skipping OTP delivery for %s — accept '1234'", phone)
+        upsert("otp_verifications", phone, {"method": "demo", "verify_sid": None})
+        return "demo"
     channel, method_info = _dispatch_otp(phone, otp)
     # Update OTP doc with delivery method so verify knows how to check
     upsert("otp_verifications", phone, {
@@ -212,6 +218,34 @@ def auth_verify():
 
     if not phone or not otp:
         return jsonify({"error": "verification_id and otp_code are required"}), 400
+
+    # ── Demo bypass ───────────────────────────────────────────────────────────
+    if is_demo() and otp == "1234":
+        # In demo mode any phone + OTP "1234" is accepted automatically.
+        # Skip all rate-limit and hash checks.
+        otp_doc = get_doc("otp_verifications", phone) or {}
+        pending_data = otp_doc.get("pending_data")
+        delete_doc("otp_verifications", phone)
+
+        if pending_data:
+            teacher = Teacher(
+                phone=pending_data["phone"],
+                name=pending_data["name"],
+                title=pending_data.get("title"),
+                school_name=pending_data.get("school_name"),
+                school_id=pending_data.get("school_id"),
+            )
+            upsert("teachers", teacher.id, teacher.model_dump())
+            teacher_doc = teacher.model_dump()
+        else:
+            teacher_doc = query_single("teachers", [("phone", "==", phone)])
+            if not teacher_doc:
+                return jsonify({"error": "Account not found"}), 404
+
+        token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
+        logger.info("[demo] Auto-verified OTP for %s", phone)
+        return jsonify({"token": token, "user": _safe(teacher_doc)}), 200
+    # ── End demo bypass ───────────────────────────────────────────────────────
 
     otp_doc = get_doc("otp_verifications", phone)
     if not otp_doc:

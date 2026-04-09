@@ -18,9 +18,17 @@ _db: Optional[firestore.Client] = None
 def get_db() -> firestore.Client:
     global _db
     if _db is None:
+        # In demo mode the FIRESTORE_DATABASE env var should be set to "demo".
+        # Fallback: if NERIAH_ENV=demo but the var is still "(default)", override
+        # here so a misconfigured deploy can't accidentally write to production.
+        from shared.config import is_demo
+        db_name = settings.FIRESTORE_DATABASE
+        if is_demo() and db_name == "(default)":
+            db_name = "demo"
+            logger.warning("NERIAH_ENV=demo but FIRESTORE_DATABASE not set — defaulting to 'demo'")
         _db = firestore.Client(
             project=settings.GCP_PROJECT_ID,
-            database=settings.FIRESTORE_DATABASE,
+            database=db_name,
         )
     return _db
 

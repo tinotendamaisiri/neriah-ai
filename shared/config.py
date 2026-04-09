@@ -53,5 +53,19 @@ class Settings(BaseSettings):
     # Runtime
     ENVIRONMENT: str = "dev"
 
+    # Neriah environment — "production" or "demo"
+    # Set NERIAH_ENV=demo when deploying the isolated demo Cloud Function.
+    # In demo mode: OTP is bypassed (accept "1234"), WhatsApp/push calls are
+    # logged only, and Firestore uses the "demo" database.
+    NERIAH_ENV: str = "production"
+
+    # Separate JWT secret for the demo environment
+    APP_JWT_SECRET_DEMO: str = ""
+
 
 settings = Settings()
+
+
+def is_demo() -> bool:
+    """Return True when running in the isolated demo environment."""
+    return settings.NERIAH_ENV == "demo"

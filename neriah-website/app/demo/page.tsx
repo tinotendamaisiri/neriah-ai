@@ -5,6 +5,22 @@ import React, {
   createContext, useContext,
 } from 'react';
 
+// ── Demo backend ─────────────────────────────────────────────────────────────
+const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
+
+async function demoFetch(path: string, opts: RequestInit = {}) {
+  try {
+    const res = await fetch(`${DEMO_API}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      ...opts,
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
 // ── Brand ─────────────────────────────────────────────────────────────────────
 const C = {
   teal:    '#0D9488',
@@ -1262,6 +1278,13 @@ export default function DemoPage() {
   const [approved, setApproved] = useState(false);
   const [tutorMessages, setTutorMessages] = useState<{ role: 'user' | 'bot'; text: string }[]>([]);
 
+  // Demo backend tokens + IDs (null = not yet initialised or backend unreachable)
+  const [teacherToken, setTeacherToken] = useState<string | null>(null);
+  const [studentToken, setStudentToken] = useState<string | null>(null);
+  const answerKeyId = useRef<string>('demo-homework-1');
+  const markId = useRef<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+
   const [tStack, setTStack] = useState(['teacher-home']);
   const tScreen = tStack[tStack.length - 1];
   const tPush = useCallback((s: string) => setTStack(p => [...p, s]), []);
@@ -1274,14 +1297,116 @@ export default function DemoPage() {
   const sPop  = useCallback(() => setSStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
   const sGoTo = useCallback((s: string) => setSStack([s]), []);
 
-  const createHomework = useCallback(() => setHomeworkCreated(true), []);
-  const saveScheme     = useCallback(() => setSchemeReady(true), []);
-  const studentSubmit  = useCallback(() => setStudentSubmitted(true), []);
-  const closeAndGrade  = useCallback(() => {
+  // ── Init: seed demo DB and fetch tokens ────────────────────────────────────
+  const initBackend = useCallback(async () => {
+    // Fetch teacher token via OTP bypass (phone = "+1234567890", otp = "1234")
+    const loginRes = await demoFetch('/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: '+1234567890' }),
+    });
+    if (loginRes) {
+      const verifyRes = await demoFetch('/auth/verify', {
+        method: 'POST', body: JSON.stringify({ phone: '+1234567890', otp: '1234' }),
+      });
+      if (verifyRes?.token) setTeacherToken(verifyRes.token);
+    }
+
+    // Fetch student token directly (no OTP needed in demo mode)
+    const studentRes = await demoFetch('/demo/student-token', { method: 'POST' });
+    if (studentRes?.token) setStudentToken(studentRes.token);
+  }, []);
+
+  useEffect(() => { initBackend(); }, [initBackend]);
+
+  // ── Reset ──────────────────────────────────────────────────────────────────
+  const resetDemo = useCallback(async () => {
+    setResetting(true);
+    await demoFetch('/demo/reset', { method: 'POST' });
+    // Reset local state
+    setHomeworkCreated(false);
+    setSchemeReady(false);
+    setStudentSubmitted(false);
+    setGradingStatus('none');
+    setApproved(false);
+    setTutorMessages([]);
+    setTStack(['teacher-home']);
+    setSStack(['student-home']);
+    markId.current = null;
+    answerKeyId.current = 'demo-homework-1';
+    await initBackend();
+    setResetting(false);
+  }, [initBackend]);
+
+  const createHomework = useCallback(() => {
+    setHomeworkCreated(true);
+    // Fire-and-forget: create answer key record on backend
+    if (teacherToken) {
+      demoFetch('/answer-keys', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${teacherToken}` },
+        body: JSON.stringify({
+          class_id: 'demo-class-1',
+          title: 'Maths Chapter 5 Test',
+          education_level: 'form_2',
+          subject: 'Mathematics',
+        }),
+      }).then(res => { if (res?.id) answerKeyId.current = res.id; });
+    }
+  }, [teacherToken]);
+
+  const saveScheme = useCallback(() => {
+    setSchemeReady(true);
+    if (teacherToken) {
+      demoFetch(`/answer-keys/${answerKeyId.current}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${teacherToken}` },
+        body: JSON.stringify({
+          questions: SCHEME.map((s, i) => ({
+            question_number: i + 1, question_text: s.text,
+            answer: s.ans, marks: s.marks,
+          })),
+          open_for_submission: true,
+          status: 'active', ai_generated: true,
+        }),
+      });
+    }
+  }, [teacherToken]);
+
+  const studentSubmit = useCallback(() => {
+    setStudentSubmitted(true);
+    if (studentToken) {
+      demoFetch('/submissions/student', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${studentToken}` },
+        body: JSON.stringify({
+          answer_key_id: answerKeyId.current,
+          student_id: 'demo-student-1',
+          class_id: 'demo-class-1',
+          submission_type: 'photo',
+          notes: 'Demo submission',
+        }),
+      });
+    }
+  }, [studentToken]);
+
+  const closeAndGrade = useCallback(() => {
     setGradingStatus('grading');
+    // Call demo/grade (pre-canned, no AI needed)
+    demoFetch('/demo/grade', {
+      method: 'POST',
+      body: JSON.stringify({ answer_key_id: answerKeyId.current }),
+    }).then(res => { if (res?.id) markId.current = res.id; });
     setTimeout(() => setGradingStatus('complete'), 2600);
   }, []);
-  const approveAll = useCallback(() => setApproved(true), []);
+
+  const approveAll = useCallback(() => {
+    setApproved(true);
+    if (markId.current) {
+      demoFetch('/demo/approve', {
+        method: 'POST',
+        body: JSON.stringify({ mark_id: markId.current }),
+      });
+    }
+  }, []);
 
   const sendTutorMsg = useCallback((text: string) => {
     setTutorMessages(prev => {
@@ -1412,6 +1537,20 @@ export default function DemoPage() {
           ))}
         </div>
         <div style={{ fontSize: 10, color: '#475569', marginTop: 5 }}>{doneCount}/5 steps complete</div>
+
+        {/* Reset button */}
+        <button
+          onClick={resetDemo}
+          disabled={resetting}
+          style={{
+            marginTop: 14, padding: '6px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)',
+            backgroundColor: 'transparent', color: resetting ? '#475569' : '#94A3B8',
+            fontSize: 11, fontWeight: 600, cursor: resetting ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', letterSpacing: 0.3,
+          }}
+        >
+          {resetting ? 'Resetting…' : '↺ Reset Demo'}
+        </button>
 
         {/* CTA */}
         <div style={{ marginTop: 36, textAlign: 'center' }}>
