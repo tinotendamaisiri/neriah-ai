@@ -103,6 +103,16 @@ def seed() -> None:
     print("\nDemo seed complete.")
 
 
+def seed_rag() -> None:
+    """Seed the demo vector DB with ZIMSEC Form 2 Maths content."""
+    print("Seeding demo vector DB (RAG)…")
+    # Re-use the same seed logic from functions/demo.py
+    from functions.demo import _seed_rag  # noqa: E402
+    _seed_rag()
+    print("  RAG seed complete.")
+
+
 if __name__ == "__main__":
     print("Seeding demo Firestore database…\n")
     seed()
+    seed_rag()

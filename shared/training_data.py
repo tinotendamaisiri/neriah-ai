@@ -197,9 +197,97 @@ def _do_collect(
             bucket, prefix, teacher_override,
         )
 
+        # ── vector DB (RAG grading examples) ─────────────────────────────────
+        _store_grading_vector(sub, mark, answer_key, class_doc, teacher_override)
+
     except Exception:
         logger.exception(
             "[training] Failed to collect training sample for submission %s",
+            sub.get("id") or sub.get("submission_id"),
+        )
+
+
+# ── Vector DB — RAG grading examples ──────────────────────────────────────────
+
+def _store_grading_vector(
+    sub: dict,
+    mark: dict,
+    answer_key: dict,
+    class_doc: dict,
+    teacher_override: bool,
+) -> None:
+    """
+    Store each graded question as a vector DB document in the 'grading_examples'
+    collection so future grading calls can retrieve similar verified decisions.
+
+    One document per verdict (not per submission) to maximise retrieval granularity.
+    No student names or identifying information — IDs only.
+    Fails silently — never interrupts the parent thread.
+    """
+    try:
+        from shared.vector_db import store_document  # noqa: PLC0415
+
+        submission_id = sub.get("id") or sub.get("submission_id") or "unknown"
+        subject       = answer_key.get("subject") or class_doc.get("subject") or ""
+        edu_level     = answer_key.get("education_level") or class_doc.get("education_level") or ""
+        curriculum    = class_doc.get("curriculum") or ""
+        school_id     = sub.get("school_id") or class_doc.get("school_id") or ""
+        final_score   = float(sub.get("score") or mark.get("score") or 0)
+        max_score     = float(sub.get("max_score") or mark.get("max_score") or 1)
+
+        verdicts: list[dict] = mark.get("verdicts") or []
+        questions: list[dict] = answer_key.get("questions") or []
+
+        # Build a lookup of question text from the answer key
+        q_lookup: dict[int, dict] = {
+            q.get("number") or q.get("question_number", 0): q
+            for q in questions
+        }
+
+        for v in verdicts:
+            q_num      = v.get("question_number", 0)
+            verdict    = v.get("verdict", "")
+            awarded    = float(v.get("awarded_marks", 0))
+            q_max      = float(v.get("max_marks", 0))
+            feedback   = v.get("feedback") or ""
+            student_ans = v.get("student_answer") or ""
+            q_info     = q_lookup.get(q_num, {})
+            q_text     = q_info.get("question_text") or q_info.get("correct_answer", "")
+            correct_ans = q_info.get("correct_answer") or q_info.get("answer") or ""
+
+            text = (
+                f"Subject: {subject}\n"
+                f"Education Level: {edu_level}\n"
+                f"Curriculum: {curriculum}\n"
+                f"Question: {q_text}\n"
+                f"Correct Answer: {correct_ans}\n"
+                f"Student Answer: {student_ans}\n"
+                f"Verdict: {verdict}\n"
+                f"Score: {awarded}/{q_max}\n"
+                f"Teacher Feedback: {feedback}\n"
+                f"Teacher Override: {teacher_override}"
+            )
+
+            doc_id = f"{submission_id}-q{q_num}"
+            metadata = {
+                "subject":         subject,
+                "education_level": edu_level,
+                "curriculum":      curriculum,
+                "school_id":       school_id,
+                "verdict":         verdict,
+                "teacher_override": teacher_override,
+                "submission_id":   submission_id,
+                "approved_at":     _now_iso(),
+            }
+            store_document("grading_examples", doc_id, text, metadata)
+
+        logger.info(
+            "[training] Stored %d grading vector(s) for submission %s",
+            len(verdicts), submission_id,
+        )
+    except Exception:
+        logger.exception(
+            "[training] Failed to store grading vectors for submission %s",
             sub.get("id") or sub.get("submission_id"),
         )
 

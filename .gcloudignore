@@ -59,6 +59,16 @@ credentials.json
 *.key
 *.pem
 
+# sentence-transformers / HuggingFace model cache
+.cache/
+*.bin
+*.safetensors
+models/
+
+# ChromaDB on-disk persistence (if any)
+chroma_db/
+neriah-vectordb/
+
 # Misc
 scripts/
 infra/

@@ -94,6 +94,154 @@ def _wipe_gcs_bucket(bucket_name: str) -> int:
         return 0
 
 
+_ZIMSEC_FORM2_MATHS = """
+ZIMSEC Form 2 Mathematics Syllabus — Key Topics
+
+Algebra
+Linear equations with one unknown: solve by isolating the variable.
+Simultaneous equations: substitution and elimination methods.
+Inequalities: represent on a number line; flip sign when multiplying/dividing by negative.
+Factorisation: common factors, difference of two squares, trinomials.
+
+Arithmetic
+Percentages: convert to fraction, apply to amounts.
+Ratio and proportion: cross-multiplication.
+Profit and loss: percentage profit = (profit/cost price) × 100.
+
+Geometry
+Area of rectangles, triangles, circles: formulae must be memorised.
+Volume of cuboids and cylinders.
+Angles in parallel lines: corresponding, alternate, co-interior.
+
+Statistics and Probability
+Probability: P(event) = favourable outcomes / total outcomes.
+Mean, median, mode from grouped and ungrouped data.
+Frequency tables and histograms.
+
+Marking Conventions (ZIMSEC O-Level)
+- Method marks (M): awarded for correct method even if arithmetic error.
+- Accuracy marks (A): awarded only when the method is correct and the answer is correct.
+- Follow-through marks (ft): if answer carries from previous wrong answer, award if method correct.
+- Show all working — unsupported answers receive 0.
+"""
+
+_DEMO_GRADING_EXAMPLES = [
+    {
+        "text": (
+            "Subject: Mathematics\nEducation Level: Form 2\nCurriculum: ZIMSEC\n"
+            "Question: Solve for x: 2x + 5 = 11\n"
+            "Correct Answer: x = 3\n"
+            "Student Answer: 2x = 11-5, 2x = 6, x = 3\n"
+            "Verdict: correct\nScore: 2/2\n"
+            "Teacher Feedback: Full working shown — method and accuracy marks awarded.\n"
+            "Teacher Override: False"
+        ),
+        "metadata": {
+            "subject": "Mathematics", "education_level": "form_2",
+            "curriculum": "ZIMSEC", "verdict": "correct", "teacher_override": False,
+        },
+    },
+    {
+        "text": (
+            "Subject: Mathematics\nEducation Level: Form 2\nCurriculum: ZIMSEC\n"
+            "Question: What is 15% of 200?\n"
+            "Correct Answer: 30\n"
+            "Student Answer: 15/100 × 200 = 30\n"
+            "Verdict: correct\nScore: 2/2\n"
+            "Teacher Feedback: Correct method and answer.\nTeacher Override: False"
+        ),
+        "metadata": {
+            "subject": "Mathematics", "education_level": "form_2",
+            "curriculum": "ZIMSEC", "verdict": "correct", "teacher_override": False,
+        },
+    },
+    {
+        "text": (
+            "Subject: Mathematics\nEducation Level: Form 2\nCurriculum: ZIMSEC\n"
+            "Question: Simplify 3(2x+4) − 2(x−1)\n"
+            "Correct Answer: 4x + 14\n"
+            "Student Answer: 6x+12-2x-2 = 4x+10\n"
+            "Verdict: partial\nScore: 1/2\n"
+            "Teacher Feedback: Correct expansion of 3(2x+4) but sign error in -2(x-1).\n"
+            "Teacher Override: False"
+        ),
+        "metadata": {
+            "subject": "Mathematics", "education_level": "form_2",
+            "curriculum": "ZIMSEC", "verdict": "partial", "teacher_override": False,
+        },
+    },
+    {
+        "text": (
+            "Subject: Mathematics\nEducation Level: Form 2\nCurriculum: ZIMSEC\n"
+            "Question: Area of rectangle 8cm × 5cm\n"
+            "Correct Answer: 40 cm²\n"
+            "Student Answer: 8+5 = 13\n"
+            "Verdict: incorrect\nScore: 0/2\n"
+            "Teacher Feedback: Used addition instead of multiplication for area.\n"
+            "Teacher Override: False"
+        ),
+        "metadata": {
+            "subject": "Mathematics", "education_level": "form_2",
+            "curriculum": "ZIMSEC", "verdict": "incorrect", "teacher_override": False,
+        },
+    },
+    {
+        "text": (
+            "Subject: Mathematics\nEducation Level: Form 2\nCurriculum: ZIMSEC\n"
+            "Question: Probability of drawing red (3 red, 7 blue)\n"
+            "Correct Answer: 3/10\n"
+            "Student Answer: 3 out of 10 = 3/10\n"
+            "Verdict: correct\nScore: 2/2\n"
+            "Teacher Feedback: Correct — stated ratio and fractional form both accepted.\n"
+            "Teacher Override: False"
+        ),
+        "metadata": {
+            "subject": "Mathematics", "education_level": "form_2",
+            "curriculum": "ZIMSEC", "verdict": "correct", "teacher_override": False,
+        },
+    },
+]
+
+
+def _seed_rag() -> None:
+    """
+    Seed the demo vector DB with ZIMSEC Form 2 Maths syllabus context and
+    pre-built grading examples.  Fails silently — never interrupts demo reset.
+    """
+    try:
+        from shared.vector_db import store_document  # noqa: PLC0415
+
+        # Syllabus chunks
+        chunks = [c.strip() for c in _ZIMSEC_FORM2_MATHS.strip().split("\n\n") if c.strip()]
+        for i, chunk in enumerate(chunks):
+            store_document(
+                "syllabuses",
+                f"demo-zimsec-form2-maths-chunk-{i}",
+                f"[ZIMSEC Mathematics form_2]\nCountry: Zimbabwe\n\n{chunk}",
+                {
+                    "country": "Zimbabwe", "curriculum": "ZIMSEC",
+                    "subject": "Mathematics", "education_level": "form_2",
+                    "year": "2026", "syllabus_id": "demo-zimsec-form2-maths",
+                    "doc_type": "syllabus", "chunk_index": i,
+                    "source_filename": "demo_zimsec_form2_maths.txt",
+                },
+            )
+
+        # Grading examples
+        for i, ex in enumerate(_DEMO_GRADING_EXAMPLES):
+            store_document(
+                "grading_examples",
+                f"demo-grading-example-{i}",
+                ex["text"],
+                ex["metadata"],
+            )
+
+        logger.info("[demo] RAG seed complete: %d syllabus chunks, %d grading examples",
+                    len(chunks), len(_DEMO_GRADING_EXAMPLES))
+    except Exception:
+        logger.exception("[demo] RAG seed failed — non-fatal")
+
+
 def _seed() -> dict:
     """Populate demo Firestore with baseline data. Returns counts."""
     now = _now()
@@ -158,6 +306,8 @@ def demo_reset():
         "teachers", "students", "classes", "answer_keys",
         "marks", "submissions", "sessions", "otp_verifications",
         "ip_rate_limits", "schools",
+        # RAG collections
+        "rag_syllabuses", "rag_grading_examples",
     ]
     wiped: dict[str, int] = {}
     for col in collections:
@@ -173,8 +323,16 @@ def demo_reset():
     ]:
         gcs_wiped[bucket_label] = _wipe_gcs_bucket(bucket_env)
 
-    # Re-seed
+    # Clear ChromaDB in-memory cache
+    try:
+        from shared.vector_db import clear_chroma_cache  # noqa: PLC0415
+        clear_chroma_cache()
+    except Exception:
+        logger.warning("[demo] ChromaDB cache clear failed — non-fatal")
+
+    # Re-seed Firestore + vector DB
     seeded = _seed()
+    _seed_rag()
 
     logger.info("[demo] Reset complete — seeded %s", seeded)
     return jsonify({
