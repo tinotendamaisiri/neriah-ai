@@ -382,6 +382,34 @@ def auth_me():
     return jsonify(_safe(doc)), 200
 
 
+# ─── Profile update ───────────────────────────────────────────────────────────
+
+# Allowlist of fields a teacher can update via PATCH /api/auth/profile.
+_PROFILE_UPDATABLE = frozenset({"training_data_consent"})
+
+
+@auth_bp.patch("/auth/profile")
+def auth_update_profile():
+    """
+    Update mutable profile preferences on the authenticated teacher document.
+
+    Currently accepted fields:
+      training_data_consent  (bool) — opt in/out of training data collection
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    updates = {k: v for k, v in body.items() if k in _PROFILE_UPDATABLE}
+
+    if not updates:
+        return jsonify({"error": "No updatable fields provided"}), 400
+
+    upsert("teachers", teacher_id, updates)
+    return jsonify({"message": "profile updated", **updates}), 200
+
+
 # ─── Recover ──────────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/recover")

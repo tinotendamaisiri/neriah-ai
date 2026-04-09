@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # Separate JWT secret for the demo environment
     APP_JWT_SECRET_DEMO: str = ""
 
+    # Training data collection
+    # Set GCS_BUCKET_TRAINING to the destination bucket (Nearline, us-central1).
+    # Set COLLECT_TRAINING_DATA=false to disable globally (e.g. on staging).
+    GCS_BUCKET_TRAINING: str = "neriah-training-data"
+    COLLECT_TRAINING_DATA: bool = True
+
 
 settings = Settings()
 

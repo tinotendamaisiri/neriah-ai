@@ -15,6 +15,7 @@ from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
 from shared.firestore_client import get_doc, query, upsert
+from shared.training_data import collect_training_sample
 
 logger = logging.getLogger(__name__)
 submissions_bp = Blueprint("submissions", __name__)
@@ -151,6 +152,10 @@ def approve_submission(sub_id: str):
     if mark_id:
         upsert("marks", mark_id, {"approved": True, "approved_at": now})
 
+    # Collect training pair asynchronously (fire and forget — never blocks response)
+    approved_sub = {**sub, "status": "approved", "approved_at": now}
+    collect_training_sample(approved_sub, teacher_id)
+
     return jsonify({"message": "approved", "submission_id": sub_id}), 200
 
 
@@ -222,6 +227,10 @@ def override_submission(sub_id: str):
         if feedback is not None:
             mark_updates["overall_feedback"] = feedback.strip()
         upsert("marks", mark_id, mark_updates)
+
+    # Collect training pair with overridden grade (fire and forget)
+    overridden_sub = {**sub, **sub_updates}
+    collect_training_sample(overridden_sub, teacher_id)
 
     return jsonify({
         "message": "override saved",

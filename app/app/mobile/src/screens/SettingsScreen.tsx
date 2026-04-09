@@ -9,11 +9,12 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LangCode } from '../i18n/translations';
 import { hasPin } from '../services/pinLock';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, Teacher } from '../types';
 import { COLORS } from '../constants/colors';
 import { isNativeModuleAvailable } from '../services/litert';
 import { isModelDownloaded, downloadModel, deleteModel, MODEL_SIZE_LABEL } from '../services/modelManager';
 import { getDeviceCapabilities } from '../services/deviceCapabilities';
+import { updateProfile } from '../services/api';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -43,6 +44,23 @@ export default function SettingsScreen() {
   const [e2bProgress, setE2bProgress] = useState<number | null>(null);
   const [e4bProgress, setE4bProgress] = useState<number | null>(null);
   const [wifiOnly, setWifiOnly] = useState(true);
+
+  // ── Training data consent ─────────────────────────────────────────────────
+  // Default true: existing teachers without the field should be opted in.
+  const teacher = user as Teacher | null;
+  const [trainingConsent, setTrainingConsent] = useState(
+    teacher?.training_data_consent !== false,
+  );
+
+  const handleTrainingConsentChange = async (value: boolean) => {
+    setTrainingConsent(value); // optimistic
+    try {
+      await updateProfile({ training_data_consent: value });
+    } catch {
+      setTrainingConsent(!value); // revert on error
+      Alert.alert('Error', 'Could not save preference. Please try again.');
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -219,6 +237,28 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Privacy */}
+      {user?.role === 'teacher' && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Privacy</Text>
+          <View style={styles.consentRow}>
+            <View style={styles.consentText}>
+              <Text style={styles.settingsRowLabel}>Help improve AI grading</Text>
+              <Text style={styles.consentHint}>
+                Approved submissions may be used to improve Neriah's grading accuracy.
+                Data is anonymised — no student names are stored.
+              </Text>
+            </View>
+            <Switch
+              value={trainingConsent}
+              onValueChange={handleTrainingConsentChange}
+              trackColor={{ true: COLORS.teal500, false: COLORS.gray200 }}
+              thumbColor={COLORS.white}
+            />
+          </View>
+        </View>
+      )}
+
       {/* On-Device AI */}
       {isNativeModuleAvailable() && (
         <View style={styles.section}>
@@ -382,4 +422,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 6,
   },
   deleteBtnText: { color: COLORS.error, fontSize: 13, fontWeight: '600' },
+  consentRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 6,
+  },
+  consentText: { flex: 1 },
+  consentHint: { fontSize: 12, color: COLORS.textLight, marginTop: 3, lineHeight: 17 },
 });

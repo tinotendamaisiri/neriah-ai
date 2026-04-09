@@ -69,6 +69,8 @@ class Teacher(BaseModel):
     pin_attempts: int = 0
     pin_locked: bool = False
     role: str = "teacher"
+    # Consent for training data collection (default on, opt-out available in Settings)
+    training_data_consent: bool = True
 
 
 class Student(BaseModel):

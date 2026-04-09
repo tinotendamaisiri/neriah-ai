@@ -38,6 +38,7 @@ export interface Teacher {
   push_token?: string;
   created_at: string;
   role: 'teacher';
+  training_data_consent?: boolean;
 }
 
 export interface Class {

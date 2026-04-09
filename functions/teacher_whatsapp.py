@@ -21,6 +21,7 @@ import re
 from datetime import datetime, timezone
 
 from shared.firestore_client import get_doc, query, upsert
+from shared.training_data import collect_training_sample
 from shared.whatsapp_client import send_image, send_text
 
 logger = logging.getLogger(__name__)
@@ -286,10 +287,13 @@ def _approve_current(phone: str, context: dict, teacher_id: str) -> None:
         "approved_at": now,
         "approved_by": teacher_id,
     })
-    sub = get_doc("student_submissions", sub_id)
-    mark_id = sub.get("mark_id") if sub else None
+    sub = get_doc("student_submissions", sub_id) or {}
+    mark_id = sub.get("mark_id")
     if mark_id:
         upsert("marks", mark_id, {"approved": True, "approved_at": now})
+
+    # Collect training pair (fire and forget)
+    collect_training_sample({**sub, "status": "approved", "approved_at": now}, teacher_id)
 
     context["review_approved_count"] = context.get("review_approved_count", 0) + 1
     _advance(phone, context, approved=True)
@@ -320,7 +324,7 @@ def _override_and_approve(
     percentage = round(new_score / max_score * 100, 1) if max_score else 0.0
     now = _now_iso()
 
-    upsert("student_submissions", sub_id, {
+    override_updates = {
         "status": "approved",
         "score": new_score,
         "percentage": percentage,
@@ -329,7 +333,8 @@ def _override_and_approve(
         "teacher_override_at": now,
         "approved_at": now,
         "approved_by": teacher_id,
-    })
+    }
+    upsert("student_submissions", sub_id, override_updates)
     mark_id = sub.get("mark_id")
     if mark_id:
         upsert("marks", mark_id, {
@@ -339,6 +344,9 @@ def _override_and_approve(
             "percentage": percentage,
             "manually_edited": True,
         })
+
+    # Collect training pair with override (fire and forget)
+    collect_training_sample({**sub, **override_updates}, teacher_id)
 
     context["review_approved_count"] = context.get("review_approved_count", 0) + 1
     send_text(phone, f"✅ Overridden to {new_score:.0f}/{max_score:.0f} and approved.")
@@ -356,14 +364,17 @@ def _approve_all_remaining(phone: str, context: dict, teacher_id: str) -> None:
     for sub_id in remaining:
         sub = get_doc("student_submissions", sub_id)
         if sub and sub.get("status") == "graded":
-            upsert("student_submissions", sub_id, {
+            approval_update = {
                 "status": "approved",
                 "approved_at": now,
                 "approved_by": teacher_id,
-            })
+            }
+            upsert("student_submissions", sub_id, approval_update)
             mark_id = sub.get("mark_id")
             if mark_id:
                 upsert("marks", mark_id, {"approved": True, "approved_at": now})
+            # Collect training pair (fire and forget)
+            collect_training_sample({**sub, **approval_update}, teacher_id)
             newly_approved += 1
 
     total_approved = context.get("review_approved_count", 0) + newly_approved

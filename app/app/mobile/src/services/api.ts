@@ -154,6 +154,12 @@ export const getMe = async (): Promise<Teacher | Student> => {
   return res.data;
 };
 
+export const updateProfile = async (updates: {
+  training_data_consent?: boolean;
+}): Promise<void> => {
+  await client.patch('/auth/profile', updates);
+};
+
 // ── Push token ────────────────────────────────────────────────────────────────
 
 export const registerPushToken = async (push_token: string): Promise<void> => {
