@@ -34,11 +34,19 @@ def register_push_token():
     return jsonify({"message": "registered"}), 200
 
 
-def send_teacher_notification(teacher_id: str, title: str, body: str) -> bool:
+def send_teacher_notification(
+    teacher_id: str,
+    title: str,
+    body: str,
+    data: dict | None = None,
+) -> bool:
     """
     Send an Expo push notification to a teacher by their Firestore user ID.
     Looks up the token in the 'push_tokens' collection.
     Returns True if the notification was dispatched, False otherwise.
+
+    ``data`` is an optional dict included in the notification payload so the
+    app can deep-link directly to the relevant screen on tap.
     """
     token_doc = get_doc("push_tokens", teacher_id)
     if not token_doc:
@@ -50,12 +58,12 @@ def send_teacher_notification(teacher_id: str, title: str, body: str) -> bool:
         logger.warning("Unrecognised push token format for teacher %s: %r", teacher_id, token[:30])
         return False
 
+    payload: dict = {"to": token, "title": title, "body": body, "sound": "default"}
+    if data:
+        payload["data"] = data
+
     try:
-        resp = http.post(
-            _EXPO_PUSH_URL,
-            json={"to": token, "title": title, "body": body, "sound": "default"},
-            timeout=10,
-        )
+        resp = http.post(_EXPO_PUSH_URL, json=payload, timeout=10)
         resp.raise_for_status()
         logger.info("Push notification sent to teacher %s", teacher_id)
         return True

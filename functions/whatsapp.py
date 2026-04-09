@@ -27,9 +27,17 @@ from shared.gemma_client import (
     extract_names_from_image,
     generate_marking_scheme,
     grade_submission,
+    student_tutor,
 )
 from shared.models import AnswerKey, Class, Mark, Session, Student, WhatsAppState
 from shared.whatsapp_client import download_media, send_image, send_text
+from functions.teacher_whatsapp import (
+    TEACHER_REVIEW_ACTIVE,
+    TEACHER_REVIEW_SELECTING,
+    handle_teacher_results,
+    handle_teacher_review_active,
+    handle_teacher_review_selecting,
+)
 
 logger = logging.getLogger(__name__)
 whatsapp_bp = Blueprint("whatsapp", __name__)
@@ -137,6 +145,25 @@ def _route(phone: str, state: str, context: dict, text: str, media_id: str | Non
         send_text(phone, _HELP_MENU)
         return
 
+    # ── Teacher review states (checked before student states) ─────────────────
+    if state == TEACHER_REVIEW_SELECTING:
+        teacher = _get_teacher(phone)
+        if teacher:
+            handle_teacher_review_selecting(phone, context, text_lower)
+        else:
+            _set_state(phone, WhatsAppState.IDLE, {})
+            send_text(phone, _HELP_MENU)
+        return
+
+    if state == TEACHER_REVIEW_ACTIVE:
+        teacher = _get_teacher(phone)
+        if teacher:
+            handle_teacher_review_active(phone, context, text, teacher)
+        else:
+            _set_state(phone, WhatsAppState.IDLE, {})
+            send_text(phone, _HELP_MENU)
+        return
+
     # ── Student onboarding states ──────────────────────────────────────────────
     if state == WhatsAppState.STUDENT_ONBOARDING_SCHOOL:
         _handle_onboarding_school(phone, context, text, media_id)
@@ -179,11 +206,17 @@ def _handle_idle(phone: str, context: dict, text: str, media_id: str | None):
 
     student = _get_student_by_phone(phone)
     if student:
-        # Registered student — handle photo submission.
+        # Registered student — photo → submission flow, text → tutor.
         if media_id:
             _handle_student_submission(phone, student, media_id)
+        elif text and _is_tutor_intent(text):
+            _handle_student_tutor_wa(phone, student, text)
         else:
-            send_text(phone, "Hi! Send a photo of your homework to submit it. 📸")
+            send_text(
+                phone,
+                "Hi! Send a photo of your homework to submit it 📸\n\n"
+                "Or ask me a question about your work — I'm here to help you study! 📚",
+            )
         return
 
     # Unregistered phone — start student onboarding.
@@ -205,6 +238,13 @@ def _handle_idle(phone: str, context: dict, text: str, media_id: str | None):
 
 
 def _handle_teacher_idle(phone: str, context: dict, text: str, media_id: str | None):
+    # Review graded homework (WhatsApp-based approval flow)
+    if any(k in text for k in ("results", "review", "grades", "approve")):
+        teacher = _get_teacher(phone)
+        if teacher:
+            handle_teacher_results(phone, teacher)
+        return
+
     if any(k in text for k in ("setup", "class", "create")):
         _set_state(phone, WhatsAppState.CLASS_SETUP, {"step": "name"})
         send_text(phone, "Let's set up a class. What is the class name?")
@@ -370,6 +410,72 @@ def _handle_onboarding_confirm(phone: str, context: dict, text: str, media_id: s
         f"*{context['class_name']}* at *{context['school_name']}*.\n\n"
         "Send a photo of your homework to submit it. 📸",
     )
+
+
+# ─── Student AI tutor (registered student in IDLE) ───────────────────────────
+
+_TUTOR_KEYWORDS = (
+    "help", "explain", "how do i", "what is", "why ", "why?", "tutor", "study",
+    "what does", "how does", "can you help", "i don't understand", "i dont understand",
+    "confused", "stuck",
+)
+
+
+def _is_tutor_intent(text: str) -> bool:
+    t = text.lower()
+    return any(t.startswith(kw) or kw in t for kw in _TUTOR_KEYWORDS)
+
+
+def _handle_student_tutor_wa(phone: str, student: dict, message: str) -> None:
+    """Route a student text message to the Socratic tutor and reply via WhatsApp."""
+    from functions.tutor import check_rate_limit, increment_usage, _is_eligible
+
+    student_id = student["id"]
+
+    if not _is_eligible(student_id):
+        send_text(
+            phone,
+            "The AI tutor is available for students at subscribed schools. "
+            "Ask your teacher about Neriah.",
+        )
+        return
+
+    if not check_rate_limit(student_id):
+        send_text(phone, (
+            "You've been studying hard today! You've used all 50 tutor messages for today. "
+            "They reset at midnight. Keep up the great work!"
+        ))
+        return
+
+    # Load conversation history — keyed by student_id for WhatsApp channel
+    from shared.firestore_client import get_doc as _gd, upsert as _up
+    from datetime import datetime, timezone
+
+    conv_id = f"wa_{student_id}"
+    conv_doc = _gd("tutor_conversations", conv_id)
+    history: list[dict] = conv_doc.get("messages", []) if conv_doc else []
+
+    # Resolve education level from student's class
+    cls = _gd("classes", student.get("class_id", ""))
+    education_level = cls.get("education_level", "Form 4") if cls else "Form 4"
+
+    response_text = student_tutor(message, history, education_level)
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated_history = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": response_text},
+    ]
+    _up("tutor_conversations", conv_id, {
+        "id": conv_id,
+        "student_id": student_id,
+        "messages": updated_history,
+        "created_at": conv_doc.get("created_at", now) if conv_doc else now,
+        "updated_at": now,
+    })
+
+    increment_usage(student_id)
+    send_text(phone, response_text)
 
 
 # ─── Student homework submission (registered student in IDLE) ─────────────────

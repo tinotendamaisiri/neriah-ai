@@ -223,6 +223,24 @@ async def send_weekly_report(
         return {"error": str(exc)}
 
 
+async def send_inbound_reply(
+    to_email: str,
+    subject: str,
+    body: str,
+) -> dict:
+    """Reply to a student's inbound email (e.g. submission confirmation or error)."""
+    try:
+        return _send(
+            subject=subject,
+            to_email=to_email,
+            to_name=to_email,
+            body=body,
+        )
+    except Exception as exc:
+        logger.error("send_inbound_reply failed for %s: %s", to_email, exc)
+        return {"error": str(exc)}
+
+
 async def send_error(
     recipient_email: str,
     recipient_name: str,

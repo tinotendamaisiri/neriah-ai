@@ -152,6 +152,11 @@ export default function ClassDetailScreen() {
             <AnswerKeyRow
               answerKey={item as AnswerKey}
               onToggleOpen={() => handleToggleOpen(item as AnswerKey)}
+              onPress={() => navigation.navigate('HomeworkDetail', {
+                answer_key_id: (item as AnswerKey).id,
+                class_id,
+                class_name,
+              })}
             />
           )
         }
@@ -222,13 +227,15 @@ function StudentRow({
 function AnswerKeyRow({
   answerKey,
   onToggleOpen,
+  onPress,
 }: {
   answerKey: AnswerKey;
   onToggleOpen: () => void;
+  onPress: () => void;
 }) {
   const title = answerKey.title ?? answerKey.subject;
   return (
-    <View style={row.container}>
+    <TouchableOpacity style={row.container} onPress={onPress} activeOpacity={0.75}>
       <View style={row.info}>
         <Text style={row.name}>{title}</Text>
         <Text style={row.sub}>
@@ -254,7 +261,8 @@ function AnswerKeyRow({
           {answerKey.open_for_submission ? 'Open' : 'Closed'}
         </Text>
       </TouchableOpacity>
-    </View>
+      <Text style={row.chevron}>›</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -516,6 +524,7 @@ const row = StyleSheet.create({
   badgeText: { fontSize: 12, fontWeight: '600' },
   badgeTextOpen: { color: COLORS.teal500 },
   badgeTextClosed: { color: COLORS.gray500 },
+  chevron: { fontSize: 18, color: COLORS.gray500, marginLeft: 6 },
 });
 
 const modalS = StyleSheet.create({

@@ -17,18 +17,21 @@
 
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import { startNetworkListener } from './src/services/offlineQueue';
+import { hasPin } from './src/services/pinLock';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkBanner from './src/components/NetworkBanner';
+import PinScreen from './src/screens/PinScreen';
 import { COLORS } from './src/constants/colors';
 import {
   AuthStackParamList,
@@ -54,6 +57,7 @@ import ClassDetailScreen from './src/screens/ClassDetailScreen';
 import TeacherInboxScreen from './src/screens/TeacherInboxScreen';
 import HomeworkDetailScreen from './src/screens/HomeworkDetailScreen';
 import AddHomeworkScreen from './src/screens/AddHomeworkScreen';
+import GenerateSchemeScreen from './src/screens/GenerateSchemeScreen';
 import SetPinScreen from './src/screens/SetPinScreen';
 import GradingResultsScreen from './src/screens/GradingResultsScreen';
 import GradingDetailScreen from './src/screens/GradingDetailScreen';
@@ -62,6 +66,7 @@ import TeacherStudentAnalyticsScreen from './src/screens/TeacherStudentAnalytics
 
 // ── Student screens ───────────────────────────────────────────────────────────
 import StudentHomeScreen from './src/screens/StudentHomeScreen';
+import StudentTutorScreen from './src/screens/StudentTutorScreen';
 import StudentSubmitScreen from './src/screens/StudentSubmitScreen';
 import StudentResultsScreen from './src/screens/StudentResultsScreen';
 import StudentSettingsScreen from './src/screens/StudentSettingsScreen';
@@ -71,6 +76,20 @@ import StudentConfirmScreen from './src/screens/StudentConfirmScreen';
 import SubmissionSuccessScreen from './src/screens/SubmissionSuccessScreen';
 import FeedbackScreen from './src/screens/FeedbackScreen';
 import StudentAnalyticsScreen from './src/screens/StudentAnalyticsScreen';
+
+// ── Push notifications ────────────────────────────────────────────────────────
+
+// Show alerts, play sounds, and set badges when app is foregrounded.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+// Navigation ref — lets us navigate from outside React components (e.g. notification tap).
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 // ── Navigators ────────────────────────────────────────────────────────────────
 
@@ -169,6 +188,11 @@ function TeacherNavigator() {
         options={{ headerShown: false }}
       />
       <TeacherStack.Screen
+        name="GenerateScheme"
+        component={GenerateSchemeScreen}
+        options={{ headerShown: false }}
+      />
+      <TeacherStack.Screen
         name="SetPin"
         component={SetPinScreen}
         options={{ headerShown: false }}
@@ -198,6 +222,11 @@ function TeacherNavigator() {
         component={TeacherStudentAnalyticsScreen}
         options={{ headerShown: false }}
       />
+      <TeacherStack.Screen
+        name="PinLock"
+        component={PinScreen}
+        options={{ headerShown: false }}
+      />
     </TeacherStack.Navigator>
   );
 }
@@ -218,6 +247,7 @@ function StudentTabs() {
           const icons: Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap> = {
             StudentHome: 'home-outline',
             StudentSubmit: 'camera-outline',
+            StudentTutor: 'chatbubble-ellipses-outline',
             StudentResults: 'checkmark-circle-outline',
             StudentSettings: 'settings-outline',
           };
@@ -234,6 +264,11 @@ function StudentTabs() {
         name="StudentSubmit"
         component={StudentSubmitScreen}
         options={{ title: 'Submit Work', tabBarLabel: 'Submit', headerShown: false }}
+      />
+      <StudentTab.Screen
+        name="StudentTutor"
+        component={StudentTutorScreen}
+        options={{ title: 'Tutor', tabBarLabel: 'Tutor', headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentResults"
@@ -285,6 +320,11 @@ function StudentNavigator() {
         component={StudentAnalyticsScreen}
         options={{ title: 'My Analytics', headerBackTitle: 'Back' }}
       />
+      <StudentRootStack.Screen
+        name="PinLock"
+        component={PinScreen}
+        options={{ headerShown: false }}
+      />
     </StudentRootStack.Navigator>
   );
 }
@@ -293,6 +333,15 @@ function StudentNavigator() {
 
 function AppShell() {
   const { user, loading } = useAuth();
+  const [pinLocked, setPinLocked] = React.useState(false);
+
+  // Check for device PIN on startup — runs once user is resolved
+  React.useEffect(() => {
+    if (loading || !user) return;
+    hasPin().then((locked) => {
+      if (locked) setPinLocked(true);
+    });
+  }, [loading, user]);
 
   // Offline queue replay only needed for teachers (marking pipeline)
   React.useEffect(() => {
@@ -301,6 +350,36 @@ function AppShell() {
       return unsubscribe;
     }
   }, [user?.role]);
+
+  // Handle notification taps — navigate to the screen specified in the data payload.
+  const lastResponse = Notifications.useLastNotificationResponse();
+  React.useEffect(() => {
+    if (!lastResponse || !navigationRef.isReady()) return;
+    const data = lastResponse.notification.request.content.data as Record<string, string> | undefined;
+    if (!data?.screen) return;
+
+    if (data.screen === 'HomeworkDetail' && data.answer_key_id && data.class_id) {
+      // Teacher: tap "New Submission" or "All Submissions In" → open homework detail
+      navigationRef.navigate('HomeworkDetail', {
+        answer_key_id: data.answer_key_id,
+        class_id: data.class_id,
+        class_name: data.class_name ?? 'Homework',
+      });
+    } else if (data.screen === 'Results') {
+      // Student: tap "Results Ready" → open feedback for that mark, or fall back to Results tab
+      if (data.mark_id) {
+        (navigationRef as any).navigate('Feedback', { mark_id: data.mark_id });
+      } else {
+        (navigationRef as any).navigate('StudentTabs', { screen: 'StudentResults' });
+      }
+    } else if (data.screen === 'AssignmentDetail') {
+      // Student: tap "New Homework" → open the submit tab so they can see the new assignment
+      (navigationRef as any).navigate('StudentTabs', { screen: 'StudentSubmit' });
+    } else if (data.screen === 'Tutor') {
+      // Student: future tutor nudge notification → open tutor tab
+      (navigationRef as any).navigate('StudentTabs', { screen: 'StudentTutor' });
+    }
+  }, [lastResponse]);
 
   if (loading) {
     return (
@@ -320,12 +399,18 @@ function AppShell() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <View style={{ flex: 1 }}>
         <NetworkBanner />
         <ErrorBoundary>
           {content}
         </ErrorBoundary>
+        {/* PIN lock overlay — covers the entire screen on cold start */}
+        {user && pinLocked && (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+            <PinScreen onUnlock={() => setPinLocked(false)} />
+          </View>
+        )}
       </View>
     </NavigationContainer>
   );

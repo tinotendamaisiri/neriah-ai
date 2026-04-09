@@ -151,6 +151,22 @@ export default function StudentHomeScreen() {
         ))
       )}
 
+      {/* Ask Neriah tutor card */}
+      <TouchableOpacity
+        style={styles.tutorCard}
+        onPress={() => (navigation as any).navigate('StudentTutor')}
+        activeOpacity={0.85}
+      >
+        <View style={styles.tutorCardAvatar}>
+          <Text style={styles.tutorCardAvatarText}>N</Text>
+        </View>
+        <View style={styles.tutorCardBody}>
+          <Text style={styles.tutorCardTitle}>Need help? Ask Neriah</Text>
+          <Text style={styles.tutorCardSub}>Your AI study companion — guides you to the answer</Text>
+        </View>
+        <Text style={styles.tutorCardArrow}>›</Text>
+      </TouchableOpacity>
+
       {/* Recent feedback */}
       {recentMarks.length > 0 && (
         <>
@@ -320,4 +336,26 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 22, fontWeight: '800', color: COLORS.teal500 },
   statLabel: { fontSize: 11, color: COLORS.gray500, marginTop: 4, textAlign: 'center' },
+  // Tutor card
+  tutorCard: {
+    marginHorizontal: 20,
+    marginTop: 24,
+    backgroundColor: COLORS.teal500,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  tutorCardAvatar: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: 12,
+  },
+  tutorCardAvatarText: { color: COLORS.white, fontSize: 18, fontWeight: '800' },
+  tutorCardBody: { flex: 1 },
+  tutorCardTitle: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
+  tutorCardSub: { color: COLORS.teal100, fontSize: 12, marginTop: 2 },
+  tutorCardArrow: { color: 'rgba(255,255,255,0.7)', fontSize: 24, marginLeft: 8 },
 });

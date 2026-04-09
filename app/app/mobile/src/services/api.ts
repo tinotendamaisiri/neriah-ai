@@ -248,12 +248,13 @@ export const listAnswerKeys = async (class_id: string): Promise<AnswerKey[]> => 
 
 export const createAnswerKey = async (payload: {
   class_id: string;
-  subject: string;
+  subject?: string;
   title?: string;
   education_level?: string;
   open_for_submission?: boolean;
   due_date?: string;
-  questions?: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>;
+  generated?: boolean;
+  questions?: Array<{ number: number; question_text?: string; correct_answer: string; max_marks: number; marking_notes?: string }>;
   auto_generate?: boolean;
   question_paper_text?: string;
 }): Promise<AnswerKey> => {
@@ -275,6 +276,38 @@ export const updateAnswerKey = async (
 
 export const deleteAnswerKey = async (answer_key_id: string): Promise<void> => {
   await client.delete(`/answer-keys/${answer_key_id}`);
+};
+
+/** Generate a marking scheme from a question paper photo (preview only — does not save). */
+export const generateMarkingScheme = async (payload: {
+  image_uri: string;
+  education_level: string;
+  class_id: string;
+  subject?: string;
+}): Promise<{
+  generated: boolean;
+  scheme: {
+    title: string;
+    total_marks: number;
+    questions: Array<{
+      number: number;
+      question_text: string;
+      correct_answer: string;
+      max_marks: number;
+      marking_notes: string | null;
+    }>;
+  };
+}> => {
+  const formData = new FormData();
+  formData.append('image', { uri: payload.image_uri, name: 'question_paper.jpg', type: 'image/jpeg' } as any);
+  formData.append('education_level', payload.education_level);
+  formData.append('class_id', payload.class_id);
+  if (payload.subject) formData.append('subject', payload.subject);
+  const res = await client.post('/answer-keys/generate', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+  return res.data;
 };
 
 // ── Teacher marking ───────────────────────────────────────────────────────────
@@ -404,6 +437,7 @@ export const studentRegister = async (data: {
   surname: string;
   phone: string;
   class_join_code: string;
+  email?: string;
 }): Promise<OtpSentResponse> => {
   const res = await client.post('/auth/student/register', data);
   return res.data;
@@ -513,6 +547,29 @@ export const approveSubmission = async (submission_id: string): Promise<void> =>
   await client.post(`/submissions/${submission_id}/approve`);
 };
 
+/**
+ * Grade all pending submissions for a homework using Gemma 4.
+ * Runs synchronously — may take several minutes for large classes.
+ * Uses a 5-minute timeout (overrides the global 35 s default).
+ * Submissions must be closed before calling this.
+ */
+export const closeAndGradeHomework = async (
+  answer_key_id: string,
+): Promise<{ graded: number; errors: number; results: Array<{ submission_id: string; score: number; max_score: number; percentage: number }> }> => {
+  const res = await client.post(`/homework/${answer_key_id}/grade-all`, {}, {
+    timeout: 300000, // 5 minutes — Gemma 4 needs time for large classes
+  });
+  return res.data;
+};
+
+/** Batch-approve all graded submissions for a homework. */
+export const approveAllHomework = async (
+  answer_key_id: string,
+): Promise<{ approved: number; message: string }> => {
+  const res = await client.post(`/homework/${answer_key_id}/approve-all`);
+  return res.data;
+};
+
 // ── PIN management ────────────────────────────────────────────────────────────
 
 /** Set or change the 4-digit app lock PIN. */
@@ -523,4 +580,20 @@ export const setPin = async (pin: string): Promise<void> => {
 /** Remove the app lock PIN. */
 export const deletePin = async (): Promise<void> => {
   await client.delete('/auth/pin');
+};
+
+// ── AI Tutor ──────────────────────────────────────────────────────────────────
+
+/** Send a message to the Socratic AI tutor. Optionally include a base64 image of a homework question. */
+export const tutorChat = async (
+  message: string,
+  conversationId?: string,
+  imageBase64?: string,
+): Promise<{ response: string; conversation_id: string }> => {
+  const res = await client.post('/tutor/chat', {
+    message,
+    ...(conversationId ? { conversation_id: conversationId } : {}),
+    ...(imageBase64 ? { image: imageBase64 } : {}),
+  });
+  return res.data;
 };

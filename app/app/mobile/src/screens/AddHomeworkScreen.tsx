@@ -185,6 +185,36 @@ export default function AddHomeworkScreen() {
                 </Text>
             }
           </TouchableOpacity>
+
+          {/* ── Generate with AI entry point ── */}
+          <View style={styles.orDivider}>
+            <View style={styles.orLine} />
+            <Text style={styles.orText}>or</Text>
+            <View style={styles.orLine} />
+          </View>
+
+          <TouchableOpacity
+            style={styles.aiPhotoButton}
+            onPress={() => {
+              if (!selectedClassId) {
+                Alert.alert('Class required', 'Please select a class first.');
+                return;
+              }
+              navigation.navigate('GenerateScheme', {
+                class_id: selectedClassId,
+                class_name: selectedClass?.name ?? '',
+                education_level: (selectedClass as any)?.education_level ?? undefined,
+                subject: subject.trim() || undefined,
+              });
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.aiPhotoButtonIcon}>✨</Text>
+            <View>
+              <Text style={styles.aiPhotoButtonTitle}>Generate with AI</Text>
+              <Text style={styles.aiPhotoButtonSub}>Photograph your question paper</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -238,4 +268,19 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { backgroundColor: COLORS.teal300 },
   buttonText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+  orDivider: {
+    flexDirection: 'row', alignItems: 'center',
+    marginVertical: 16, gap: 10,
+  },
+  orLine: { flex: 1, height: 1, backgroundColor: COLORS.gray200 },
+  orText: { fontSize: 13, color: COLORS.gray500 },
+  aiPhotoButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    borderWidth: 2, borderColor: COLORS.teal100,
+    borderRadius: 12, padding: 16,
+    backgroundColor: COLORS.teal50,
+  },
+  aiPhotoButtonIcon: { fontSize: 24 },
+  aiPhotoButtonTitle: { fontSize: 15, fontWeight: '700', color: COLORS.teal700 },
+  aiPhotoButtonSub: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
 });

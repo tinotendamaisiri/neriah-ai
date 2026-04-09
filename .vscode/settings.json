@@ -1,0 +1,21 @@
+{
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/assets/models/**": true,
+    "**/.git/**": true,
+    "**/ios/Pods/**": true,
+    "**/android/**": true,
+    "**/.expo/**": true,
+    "**/build/**": true,
+    "**/.gradle/**": true
+  },
+  "files.exclude": {
+    "**/assets/models/**": true
+  },
+  "search.exclude": {
+    "**/node_modules/**": true,
+    "**/ios/Pods/**": true,
+    "**/android/**": true,
+    "**/assets/models/**": true
+  }
+}

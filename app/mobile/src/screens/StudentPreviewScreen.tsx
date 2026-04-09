@@ -1,7 +1,10 @@
 // src/screens/StudentPreviewScreen.tsx
 // Swipeable gallery of captured pages. Allows retaking individual pages.
+// Runs silent image enhancement (resize + EXIF normalise) and heuristic quality
+// checks on every page. Quality warnings are shown as an advisory banner only —
+// the student can always proceed.
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +14,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Alert,
+  ActivityIndicator,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
@@ -18,6 +22,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { enhanceImage } from '../services/imageEnhance';
+import { checkImageQuality } from '../services/imageQuality';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentPreview'>;
 
@@ -28,6 +34,41 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
   const [images, setImages] = useState<string[]>(route.params.images);
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+
+  // Enhancement + quality state
+  const [optimizing, setOptimizing] = useState(true);
+  const [qualityWarnings, setQualityWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function processImages() {
+      setOptimizing(true);
+      const allWarnings: string[] = [];
+
+      const enhanced = await Promise.all(
+        images.map(async (uri) => {
+          const [newUri, quality] = await Promise.all([
+            enhanceImage(uri),
+            checkImageQuality(uri),
+          ]);
+          allWarnings.push(...quality.warnings);
+          return newUri;
+        }),
+      );
+
+      if (!cancelled) {
+        setImages(enhanced);
+        // Deduplicate warnings
+        setQualityWarnings([...new Set(allWarnings)]);
+        setOptimizing(false);
+      }
+    }
+
+    processImages();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount with the initial images
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const page = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
@@ -48,11 +89,17 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
     });
 
     if (!result.canceled && result.assets[0]) {
+      const enhanced = await enhanceImage(result.assets[0].uri);
       setImages(prev => {
         const updated = [...prev];
-        updated[index] = result.assets[0].uri;
+        updated[index] = enhanced;
         return updated;
       });
+      // Re-check quality for replaced page
+      const quality = await checkImageQuality(enhanced);
+      if (quality.warnings.length > 0) {
+        setQualityWarnings(prev => [...new Set([...prev, ...quality.warnings])]);
+      }
     }
   };
 
@@ -65,8 +112,30 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
     });
   };
 
+  if (optimizing) {
+    return (
+      <View style={styles.optimizingContainer}>
+        <ActivityIndicator size="large" color={COLORS.teal500} />
+        <Text style={styles.optimizingText}>Optimizing images…</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
+      {/* Quality warnings */}
+      {qualityWarnings.length > 0 && (
+        <View style={styles.warningBanner}>
+          <Text style={styles.warningTitle}>⚠ Quality notice</Text>
+          {qualityWarnings.map((w, i) => (
+            <Text key={i} style={styles.warningItem}>· {w}</Text>
+          ))}
+          <TouchableOpacity onPress={() => setQualityWarnings([])}>
+            <Text style={styles.warningDismiss}>Dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Page indicator */}
       <View style={styles.indicatorRow}>
         {images.map((_, i) => (
@@ -128,6 +197,41 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827' },
+  optimizingContainer: {
+    flex: 1,
+    backgroundColor: '#111827',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  optimizingText: {
+    color: '#9ca3af',
+    fontSize: 15,
+  },
+  warningBanner: {
+    backgroundColor: '#78350f',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  warningTitle: {
+    color: '#fef3c7',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  warningItem: {
+    color: '#fde68a',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  warningDismiss: {
+    color: '#fcd34d',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    textDecorationLine: 'underline',
+  },
   indicatorRow: {
     flexDirection: 'row',
     justifyContent: 'center',

@@ -21,7 +21,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { verifyPin, requestProfileOtp, updateProfile, setPin as apiSetPin } from '../services/api';
+import { verifyPin, requestProfileOtp, updateProfile, setPin as apiSetPin, deletePin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
@@ -183,8 +183,28 @@ export default function PinLoginScreen() {
     try {
       // Verify identity via PATCH /api/auth/me with no field changes
       await updateProfile({ verification_id: verificationId, otp_code: otp });
+      // Clear the old PIN server-side — user must choose whether to set a new one
+      await deletePin().catch(() => {});
+      await SecureStore.deleteItemAsync(PIN_LOCK_KEY);
       setNewPin('');
-      setStep('new_pin');
+
+      // Show "Secure your account" popup — user chooses Set PIN or Skip
+      Alert.alert(
+        'Secure your account',
+        'Would you like to set a new PIN?',
+        [
+          {
+            text: 'Set PIN',
+            onPress: () => setStep('new_pin'),
+          },
+          {
+            text: 'Skip',
+            style: 'cancel',
+            onPress: () => unlockWithPin(),
+          },
+        ],
+        { cancelable: false },
+      );
     } catch (err: any) {
       const status = err?.status ?? err?.response?.status;
       if (status === 400) {

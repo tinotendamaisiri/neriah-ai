@@ -70,6 +70,7 @@ export interface Question {
   correct_answer: string;
   max_marks: number;
   marking_notes?: string;
+  question_text?: string; // populated for AI-generated schemes
 }
 
 export interface AnswerKey {
@@ -237,7 +238,8 @@ export interface TeacherSubmission {
   class_name?: string;
   answer_key_id: string;
   answer_key_title?: string;
-  status: 'pending' | 'graded';
+  status: 'pending' | 'graded' | 'approved';
+  approved?: boolean;
   submitted_at: string;
   graded_at?: string;
   score?: number;
@@ -247,6 +249,9 @@ export interface TeacherSubmission {
   verdicts?: GradingVerdict[];
   overall_feedback?: string;
   manually_edited?: boolean;
+  // Offline grading support (future LiteRT on-device model)
+  graded_offline?: boolean;
+  grading_model?: string; // "gemma4-26b" | "gemma4-e4b" | etc.
 }
 
 /** Pending or graded submission (GET /api/submissions/student/{id}) */
@@ -367,9 +372,11 @@ export type RootStackParamList = {
   ClassSetup: undefined;
   ClassDetail: { class_id: string; class_name: string; education_level: EducationLevel };
   TeacherInbox: undefined;
-  HomeworkDetail: { answer_key_id: string; class_id: string; class_name: string };
+  HomeworkDetail: { answer_key_id: string; class_id: string; class_name: string; homework_title?: string };
   AddHomework: { class_id?: string; class_name?: string };
+  GenerateScheme: { class_id: string; class_name: string; education_level?: string; subject?: string };
   SetPin: undefined;
+  PinLock: { mode: 'setup' | 'change' | 'remove' };
   GradingResults: { answer_key_id: string; class_id: string; class_name: string; answer_key_title: string };
   GradingDetail: { mark_id: string; student_name: string; class_name: string; answer_key_title: string };
   Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;
@@ -380,12 +387,14 @@ export type RootStackParamList = {
 export type StudentTabParamList = {
   StudentHome: undefined;
   StudentSubmit: undefined;
+  StudentTutor: undefined;
   StudentResults: undefined;
   StudentSettings: undefined;
 };
 
 export type StudentRootStackParamList = {
   StudentTabs: undefined;
+  PinLock: { mode: 'setup' | 'change' | 'remove' };
   StudentCamera: { answer_key_id: string; answer_key_title: string; class_id: string };
   StudentPreview: { images: string[]; answer_key_id: string; answer_key_title: string; class_id: string };
   StudentConfirm: { images: string[]; answer_key_id: string; answer_key_title: string; class_id: string };

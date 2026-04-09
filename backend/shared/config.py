@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     function_app_url: str = "https://neriah-func-dev.azurewebsites.net"
     function_app_key: str = ""
 
+    # Email inbound (SendGrid Inbound Parse)
+    email_inbound_secret: str = ""          # shared secret — validated on every inbound webhook call
+
     # Runtime
     environment: str = "dev"
 

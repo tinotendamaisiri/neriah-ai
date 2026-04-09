@@ -114,10 +114,22 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
         </ScrollView>
       )}
 
+      {/* Frame guide */}
+      <View style={styles.frameGuide}>
+        <View style={styles.frameInner}>
+          {/* Corner brackets */}
+          <View style={[styles.corner, styles.cornerTL]} />
+          <View style={[styles.corner, styles.cornerTR]} />
+          <View style={[styles.corner, styles.cornerBL]} />
+          <View style={[styles.corner, styles.cornerBR]} />
+          <Text style={styles.frameHint}>Align page within this area</Text>
+        </View>
+      </View>
+
       {/* Tip */}
       <View style={styles.tip}>
         <Text style={styles.tipText}>
-          Tip: Ensure each page is flat, well-lit, and fully in frame. Capture pages in order.
+          Tip: Lay the book flat, hold the phone directly above, and ensure all text is visible.
         </Text>
       </View>
 
@@ -195,8 +207,68 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   thumbnailRemoveText: { color: COLORS.white, fontSize: 11 },
+  frameGuide: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    height: 160,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  frameInner: {
+    width: '88%',
+    height: 140,
+    borderWidth: 1,
+    borderColor: COLORS.gray200,
+    borderRadius: 8,
+    backgroundColor: COLORS.gray50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  corner: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+  },
+  cornerTL: {
+    top: -1,
+    left: -1,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: COLORS.teal500,
+    borderTopLeftRadius: 6,
+  },
+  cornerTR: {
+    top: -1,
+    right: -1,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderColor: COLORS.teal500,
+    borderTopRightRadius: 6,
+  },
+  cornerBL: {
+    bottom: -1,
+    left: -1,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: COLORS.teal500,
+    borderBottomLeftRadius: 6,
+  },
+  cornerBR: {
+    bottom: -1,
+    right: -1,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderColor: COLORS.teal500,
+    borderBottomRightRadius: 6,
+  },
+  frameHint: {
+    color: COLORS.gray500,
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
   tip: {
     margin: 16,
+    marginTop: 8,
     backgroundColor: COLORS.amber50,
     borderRadius: 10,
     padding: 12,

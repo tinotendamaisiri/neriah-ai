@@ -34,6 +34,38 @@ def _err(message: str, status: int = 400) -> func.HttpResponse:
     )
 
 
+# ── Push helpers ─────────────────────────────────────────────────────────────
+
+async def _notify_class_new_homework(ak_id: str, ak_doc: dict) -> None:
+    """Notify all students in a class that a new homework is ready for submission."""
+    from shared.push_client import send_push_batch
+    class_id: str = ak_doc.get("class_id", "")
+    if not class_id:
+        return
+    title = ak_doc.get("title") or ak_doc.get("subject", "New Homework")
+    due_date: str | None = ak_doc.get("due_date")
+    due_str = due_date[:10] if due_date else "soon"
+
+    students = await query_items(
+        "students",
+        "SELECT c.push_token FROM c WHERE c.class_id = @cid",
+        [{"name": "@cid", "value": class_id}],
+        partition_key=class_id,
+    )
+    notifications = [
+        {
+            "push_token": s["push_token"],
+            "title": "New Homework",
+            "body": f"{title} — due {due_str}",
+            "data": {"screen": "AssignmentDetail", "answer_key_id": ak_id, "class_id": class_id},
+        }
+        for s in students if s.get("push_token")
+    ]
+    if notifications:
+        await send_push_batch(notifications)
+        logger.info("_notify_class_new_homework: sent %d notifications for ak %s", len(notifications), ak_id)
+
+
 # ── GET / POST /api/answer-keys ───────────────────────────────────────────────
 
 async def handle_answer_keys(req: func.HttpRequest) -> func.HttpResponse:
@@ -133,8 +165,17 @@ async def _create_answer_key(req: func.HttpRequest) -> func.HttpResponse:
             due_date=due_date,
             status=status,
         )
-        await upsert_item("answer_keys", answer_key.model_dump(mode="json"))
-        return _ok(answer_key.model_dump(mode="json"), status=201)
+        ak_data = answer_key.model_dump(mode="json")
+        await upsert_item("answer_keys", ak_data)
+
+        # If created with open_for_submission=True, notify all students immediately
+        if open_for_submission and status != "pending_setup":
+            try:
+                await _notify_class_new_homework(answer_key.id, ak_data)
+            except Exception as exc:
+                logger.warning("_create_answer_key: push batch failed: %s", exc)
+
+        return _ok(ak_data, status=201)
 
     except (KeyError, ValueError) as exc:
         return _err(f"Invalid request: {exc}")
@@ -242,25 +283,10 @@ async def handle_answer_key_update(req: func.HttpRequest) -> func.HttpResponse:
 
     await upsert_item("answer_keys", ak_doc)
 
-    # Push notification: if assignment just opened, notify all students in the class
+    # If assignment just opened for submission, notify all students in the class
     if body.get("open_for_submission") is True and not results[0].get("open_for_submission"):
         try:
-            from shared.push_client import send_push_batch
-            students = await query_items(
-                "students",
-                "SELECT c.push_token FROM c WHERE c.class_id = @cid",
-                [{"name": "@cid", "value": ak_doc["class_id"]}],
-                partition_key=ak_doc["class_id"],
-            )
-            title = ak_doc.get("title") or ak_doc.get("subject", "assignment")
-            notifications = [
-                {"push_token": s["push_token"], "title": "New assignment",
-                 "body": f"{title} is ready for submission",
-                 "data": {"answer_key_id": ak_id, "class_id": ak_doc["class_id"]}}
-                for s in students if s.get("push_token")
-            ]
-            if notifications:
-                await send_push_batch(notifications)
+            await _notify_class_new_homework(ak_id, ak_doc)
         except Exception as exc:
             logger.warning("handle_answer_key_update: push batch failed: %s", exc)
 

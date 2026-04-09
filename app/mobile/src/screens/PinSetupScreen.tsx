@@ -12,9 +12,14 @@ import {
   Alert,
   SafeAreaView,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setPin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
+
+// Written here (and only here) so login() in AuthContext knows not to show this
+// prompt again, even after logout, JWT rotation, or reinstall.
+const PIN_PROMPT_KEY = 'neriah_pin_prompt_shown';
 
 const KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
 
@@ -37,6 +42,9 @@ export default function PinSetupScreen() {
     setLoading(true);
     try {
       await setPin(pin);
+      // Mark the prompt as shown BEFORE updating AuthContext so login() won't
+      // show it again even if we write to SecureStore after a crash.
+      await AsyncStorage.setItem(PIN_PROMPT_KEY, 'true').catch(() => {});
       await markPinSet(); // sets hasPin=true, clears needsPinSetup → AppShell transitions
     } catch (err: any) {
       Alert.alert('Could not save PIN', err.message ?? 'Please try again.');
@@ -45,6 +53,8 @@ export default function PinSetupScreen() {
   };
 
   const handleSkip = () => {
+    // Mark as shown so this prompt never appears again (user can still set PIN in Settings).
+    AsyncStorage.setItem(PIN_PROMPT_KEY, 'true').catch(() => {});
     skipPinSetup(); // clears needsPinSetup → AppShell transitions
   };
 

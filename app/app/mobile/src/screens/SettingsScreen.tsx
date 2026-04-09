@@ -1,16 +1,19 @@
 // src/screens/SettingsScreen.tsx
 // Teacher profile, account settings, and logout.
 
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Switch } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LangCode } from '../i18n/translations';
-import { deletePin } from '../services/api';
+import { hasPin } from '../services/pinLock';
 import { RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { isNativeModuleAvailable } from '../services/litert';
+import { isModelDownloaded, downloadModel, deleteModel, MODEL_SIZE_LABEL } from '../services/modelManager';
+import { getDeviceCapabilities } from '../services/deviceCapabilities';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -24,6 +27,73 @@ export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const { user, logout } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const [pinSet, setPinSet] = useState(false);
+
+  // Refresh PIN state whenever this screen is focused
+  useEffect(() => {
+    hasPin().then(setPinSet);
+  }, []);
+
+  // ── On-Device AI state ────────────────────────────────────────────────────
+
+  const [canRunOnDevice, setCanRunOnDevice] = useState(false);
+  const [canRunE4B, setCanRunE4B] = useState(false);
+  const [e2bDownloaded, setE2bDownloaded] = useState(false);
+  const [e4bDownloaded, setE4bDownloaded] = useState(false);
+  const [e2bProgress, setE2bProgress] = useState<number | null>(null);
+  const [e4bProgress, setE4bProgress] = useState<number | null>(null);
+  const [wifiOnly, setWifiOnly] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [caps, e2b, e4b] = await Promise.all([
+        getDeviceCapabilities(),
+        isModelDownloaded('e2b'),
+        isModelDownloaded('e4b'),
+      ]);
+      if (!mounted) return;
+      setCanRunOnDevice(caps.canRunOnDevice);
+      setCanRunE4B(caps.canRunE4B);
+      setE2bDownloaded(e2b);
+      setE4bDownloaded(e4b);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const handleDownloadModel = async (model: 'e2b' | 'e4b') => {
+    const setProgress = model === 'e2b' ? setE2bProgress : setE4bProgress;
+    const setDownloaded = model === 'e2b' ? setE2bDownloaded : setE4bDownloaded;
+    try {
+      setProgress(0);
+      await downloadModel(model, pct => setProgress(pct));
+      setDownloaded(true);
+    } catch (err: any) {
+      Alert.alert('Download failed', err?.message ?? 'Could not download model. Check your connection.');
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  const handleDeleteModel = (model: 'e2b' | 'e4b') => {
+    const label = model === 'e2b' ? 'Student tutor (E2B, 2.5 GB)' : 'Teacher grading (E4B, 3.5 GB)';
+    Alert.alert(
+      'Delete model?',
+      `${label} will be removed from this device. You can re-download it later.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteModel(model);
+            if (model === 'e2b') setE2bDownloaded(false);
+            else setE4bDownloaded(false);
+          },
+        },
+      ],
+    );
+  };
 
   const handleLogout = () => {
     Alert.alert(t('log_out'), t('log_out_confirm'), [
@@ -32,28 +102,16 @@ export default function SettingsScreen() {
     ]);
   };
 
-  const handleSetPin = () => navigation.navigate('SetPin');
+  const handleSetPin = () => {
+    navigation.navigate('PinLock', { mode: 'setup' });
+  };
 
-  const handleResetPin = () => {
-    Alert.alert(
-      t('reset_pin_title'),
-      t('reset_pin_msg'),
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('remove_pin'),
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deletePin();
-              Alert.alert(t('pin_removed'), t('pin_removed_msg'));
-            } catch (err: any) {
-              Alert.alert(t('error'), err.message ?? 'Could not remove PIN.');
-            }
-          },
-        },
-      ],
-    );
+  const handleChangePin = () => {
+    navigation.navigate('PinLock', { mode: 'change' });
+  };
+
+  const handleRemovePin = () => {
+    navigation.navigate('PinLock', { mode: 'remove' });
   };
 
   const handleLanguage = () => {
@@ -121,15 +179,23 @@ export default function SettingsScreen() {
 
         <View style={styles.divider} />
 
-        <TouchableOpacity style={styles.settingsRow} onPress={handleSetPin}>
-          <Text style={styles.settingsRowLabel}>{t('set_pin')}</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.settingsRow} onPress={handleResetPin}>
-          <Text style={styles.settingsRowLabel}>{t('reset_pin')}</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
+        {!pinSet ? (
+          <TouchableOpacity style={styles.settingsRow} onPress={handleSetPin}>
+            <Text style={styles.settingsRowLabel}>{t('set_pin')}</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity style={styles.settingsRow} onPress={handleChangePin}>
+              <Text style={styles.settingsRowLabel}>Change PIN</Text>
+              <Text style={styles.rowChevron}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsRow} onPress={handleRemovePin}>
+              <Text style={[styles.settingsRowLabel, { color: COLORS.error }]}>Remove PIN</Text>
+              <Text style={styles.rowChevron}>›</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         <TouchableOpacity style={[styles.settingsRow, styles.lastRow]} onPress={handleLanguage}>
           <Text style={styles.settingsRowLabel}>{t('language')}</Text>
@@ -152,6 +218,88 @@ export default function SettingsScreen() {
           <Text style={styles.infoValue}>neriah-func-dev</Text>
         </View>
       </View>
+
+      {/* On-Device AI */}
+      {isNativeModuleAvailable() && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>On-Device AI</Text>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Device capability</Text>
+            <Text style={[styles.infoValue, { color: canRunOnDevice ? COLORS.success : COLORS.textLight }]}>
+              {canRunOnDevice ? 'Supported' : 'Not supported'}
+            </Text>
+          </View>
+          <View style={styles.divider} />
+
+          {/* E2B — Student tutor model */}
+          <View style={styles.modelRow}>
+            <View style={styles.modelInfo}>
+              <Text style={styles.modelName}>Student tutor (Gemma E2B)</Text>
+              <Text style={styles.modelSize}>
+                {e2bDownloaded ? `Downloaded · ${MODEL_SIZE_LABEL.e2b}` : MODEL_SIZE_LABEL.e2b}
+              </Text>
+              {e2bProgress !== null && (
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${e2bProgress}%` }]} />
+                </View>
+              )}
+            </View>
+            {e2bProgress !== null ? (
+              <ActivityIndicator size="small" color={COLORS.teal500} />
+            ) : e2bDownloaded ? (
+              <TouchableOpacity onPress={() => handleDeleteModel('e2b')} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnText}>Delete</Text>
+              </TouchableOpacity>
+            ) : canRunOnDevice ? (
+              <TouchableOpacity onPress={() => handleDownloadModel('e2b')} style={styles.downloadBtn}>
+                <Text style={styles.downloadBtnText}>Download</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* E4B — Teacher grading model */}
+          <View style={styles.modelRow}>
+            <View style={styles.modelInfo}>
+              <Text style={styles.modelName}>Teacher grading (Gemma E4B)</Text>
+              <Text style={styles.modelSize}>
+                {e4bDownloaded ? `Downloaded · ${MODEL_SIZE_LABEL.e4b}` : MODEL_SIZE_LABEL.e4b}
+              </Text>
+              {!canRunE4B && !e4bDownloaded && (
+                <Text style={styles.modelHint}>Requires 6 GB+ RAM</Text>
+              )}
+              {e4bProgress !== null && (
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${e4bProgress}%` }]} />
+                </View>
+              )}
+            </View>
+            {e4bProgress !== null ? (
+              <ActivityIndicator size="small" color={COLORS.teal500} />
+            ) : e4bDownloaded ? (
+              <TouchableOpacity onPress={() => handleDeleteModel('e4b')} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnText}>Delete</Text>
+              </TouchableOpacity>
+            ) : canRunE4B ? (
+              <TouchableOpacity onPress={() => handleDownloadModel('e4b')} style={styles.downloadBtn}>
+                <Text style={styles.downloadBtnText}>Download</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={styles.divider} />
+          <View style={styles.settingsRow}>
+            <Text style={styles.settingsRowLabel}>Download on Wi-Fi only</Text>
+            <Switch
+              value={wifiOnly}
+              onValueChange={setWifiOnly}
+              trackColor={{ true: COLORS.teal500, false: COLORS.gray200 }}
+              thumbColor={COLORS.white}
+            />
+          </View>
+        </View>
+      )}
 
       {/* Logout */}
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -214,4 +362,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2', alignItems: 'center',
   },
   logoutText: { color: COLORS.error, fontWeight: '600', fontSize: 16 },
+  modelRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10 },
+  modelInfo: { flex: 1 },
+  modelName: { fontSize: 14, fontWeight: '600', color: COLORS.text },
+  modelSize: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
+  modelHint: { fontSize: 11, color: COLORS.amber500, marginTop: 2 },
+  progressTrack: {
+    height: 3, backgroundColor: COLORS.gray200, borderRadius: 2, marginTop: 6,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 3, backgroundColor: COLORS.teal500, borderRadius: 2 },
+  downloadBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  downloadBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '600' },
+  deleteBtn: {
+    backgroundColor: COLORS.gray200, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  deleteBtnText: { color: COLORS.error, fontSize: 13, fontWeight: '600' },
 });

@@ -74,6 +74,7 @@ from functions.analytics import (
     handle_student_class_analytics,
 )
 from functions.email_webhook import handle_email_webhook
+from functions.email_inbound import handle_email_inbound
 from functions.submissions import handle_submission_approve, handle_submissions
 from functions.whatsapp_webhook import handle_verification, handle_webhook
 from functions.schools import handle_schools
@@ -370,3 +371,10 @@ async def submission_approve(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="email-webhook", methods=["POST"])
 async def email_webhook(req: func.HttpRequest) -> func.HttpResponse:
     return await handle_email_webhook(req)
+
+
+# ── Email inbound (SendGrid Inbound Parse — student homework via email) ────────
+
+@app.route(route="email/inbound", methods=["POST"])
+async def email_inbound(req: func.HttpRequest) -> func.HttpResponse:
+    return await handle_email_inbound(req)

@@ -54,6 +54,9 @@ export default function StudentRegisterScreen() {
   const [codeValidating, setCodeValidating] = useState(false);
   const joinCodeRef = useRef<TextInput>(null);
 
+  // ── Email (optional) ────────────────────────────────────────────────────────
+  const [email, setEmail] = useState('');
+
   // ── Loading ─────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
 
@@ -149,6 +152,7 @@ export default function StudentRegisterScreen() {
         surname: surname.trim(),
         phone: phone.trim(),
         class_join_code: joinCode,
+        ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
       });
       // Store join_code so AuthContext can attach it to AuthUser after OTP verify
       await AsyncStorage.setItem(PENDING_JOIN_CODE_KEY, joinCode).catch(() => {});
@@ -242,6 +246,20 @@ export default function StudentRegisterScreen() {
               <PhoneInput
                 onChangePhone={setPhone}
                 disabled={loading}
+              />
+              <Text style={styles.label}>
+                Email address{' '}
+                <Text style={styles.labelOptional}>(optional — for email submissions)</Text>
+              </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. tendai@example.com"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
               />
 
               <TouchableOpacity
@@ -430,6 +448,7 @@ const styles = StyleSheet.create({
   // Details form
   form: { gap: 8 },
   label: { fontSize: 14, fontWeight: '600', color: COLORS.gray900, marginTop: 8 },
+  labelOptional: { fontWeight: '400', color: COLORS.gray500 },
   input: {
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
     padding: 14, fontSize: 16, color: COLORS.text,

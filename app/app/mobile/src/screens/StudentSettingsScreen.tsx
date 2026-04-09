@@ -1,7 +1,7 @@
 // src/screens/StudentSettingsScreen.tsx
 // Full student settings: profile, class management, support, legal, logout.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -13,14 +13,67 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getClassJoinInfo, joinClass } from '../services/api';
+import { hasPin } from '../services/pinLock';
 import { COLORS } from '../constants/colors';
+import { isNativeModuleAvailable } from '../services/litert';
+import { isModelDownloaded, downloadModel, deleteModel, MODEL_SIZE_LABEL } from '../services/modelManager';
+import { getDeviceCapabilities } from '../services/deviceCapabilities';
 
 export default function StudentSettingsScreen() {
+  const navigation = useNavigation<any>();
   const { user, logout, updateUser } = useAuth();
   const [joinModalVisible, setJoinModalVisible] = useState(false);
+  const [pinSet, setPinSet] = useState(false);
+
+  useEffect(() => {
+    hasPin().then(setPinSet);
+  }, []);
+
+  // ── On-Device AI state ────────────────────────────────────────────────────
+
+  const [canRunOnDevice, setCanRunOnDevice] = useState(false);
+  const [e2bDownloaded, setE2bDownloaded] = useState(false);
+  const [e2bProgress, setE2bProgress] = useState<number | null>(null);
+  const [wifiOnly, setWifiOnly] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [caps, e2b] = await Promise.all([getDeviceCapabilities(), isModelDownloaded('e2b')]);
+      if (!mounted) return;
+      setCanRunOnDevice(caps.canRunOnDevice);
+      setE2bDownloaded(e2b);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const handleDownloadE2B = async () => {
+    try {
+      setE2bProgress(0);
+      await downloadModel('e2b', pct => setE2bProgress(pct));
+      setE2bDownloaded(true);
+    } catch (err: any) {
+      Alert.alert('Download failed', err?.message ?? 'Could not download model.');
+    } finally {
+      setE2bProgress(null);
+    }
+  };
+
+  const handleDeleteE2B = () => {
+    Alert.alert(
+      'Delete tutor model?',
+      'The on-device AI tutor (2.5 GB) will be removed. You can re-download it later.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => { await deleteModel('e2b'); setE2bDownloaded(false); } },
+      ],
+    );
+  };
 
   const initials = user
     ? `${user.first_name?.[0] ?? ''}${user.surname?.[0] ?? ''}`.toUpperCase()
@@ -103,6 +156,36 @@ export default function StudentSettingsScreen() {
         </TouchableOpacity>
       </SectionCard>
 
+      {/* Security */}
+      <SectionCard title="Security">
+        {!pinSet ? (
+          <TouchableOpacity
+            style={styles.actionRow}
+            onPress={() => navigation.navigate('PinLock', { mode: 'setup' })}
+          >
+            <Text style={styles.actionRowText}>Set app lock PIN</Text>
+            <Text style={styles.actionRowArrow}>›</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={() => navigation.navigate('PinLock', { mode: 'change' })}
+            >
+              <Text style={styles.actionRowText}>Change PIN</Text>
+              <Text style={styles.actionRowArrow}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionRow, { borderTopWidth: 1, borderTopColor: COLORS.background }]}
+              onPress={() => navigation.navigate('PinLock', { mode: 'remove' })}
+            >
+              <Text style={[styles.actionRowText, { color: COLORS.error }]}>Remove PIN</Text>
+              <Text style={styles.actionRowArrow}>›</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </SectionCard>
+
       {/* Support */}
       <SectionCard title="Support">
         <TouchableOpacity
@@ -150,6 +233,56 @@ export default function StudentSettingsScreen() {
           <Text style={styles.linkRowArrow}>›</Text>
         </TouchableOpacity>
       </SectionCard>
+
+      {/* On-Device AI (E2B tutor model) */}
+      {isNativeModuleAvailable() && (
+        <SectionCard title="On-Device AI">
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={styles.linkRowText}>
+              {canRunOnDevice ? 'Your device supports on-device AI' : 'Your device uses cloud AI'}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.text }}>AI Tutor (Gemma E2B)</Text>
+              <Text style={{ fontSize: 12, color: COLORS.textLight, marginTop: 2 }}>
+                {e2bDownloaded ? `Downloaded · ${MODEL_SIZE_LABEL.e2b}` : MODEL_SIZE_LABEL.e2b}
+              </Text>
+              {e2bProgress !== null && (
+                <View style={{ height: 3, backgroundColor: COLORS.gray200, borderRadius: 2, marginTop: 6, overflow: 'hidden' }}>
+                  <View style={{ height: 3, backgroundColor: COLORS.teal500, borderRadius: 2, width: `${e2bProgress}%` }} />
+                </View>
+              )}
+            </View>
+            {e2bProgress !== null ? (
+              <ActivityIndicator size="small" color={COLORS.teal500} />
+            ) : e2bDownloaded ? (
+              <TouchableOpacity
+                onPress={handleDeleteE2B}
+                style={{ backgroundColor: COLORS.gray200, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+              >
+                <Text style={{ color: COLORS.error, fontSize: 13, fontWeight: '600' }}>Delete</Text>
+              </TouchableOpacity>
+            ) : canRunOnDevice ? (
+              <TouchableOpacity
+                onPress={handleDownloadE2B}
+                style={{ backgroundColor: COLORS.teal500, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+              >
+                <Text style={{ color: COLORS.white, fontSize: 13, fontWeight: '600' }}>Download</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
+            <Text style={styles.linkRowText}>Download on Wi-Fi only</Text>
+            <Switch
+              value={wifiOnly}
+              onValueChange={setWifiOnly}
+              trackColor={{ true: COLORS.teal500, false: COLORS.gray200 }}
+              thumbColor={COLORS.white}
+            />
+          </View>
+        </SectionCard>
+      )}
 
       {/* Sign out */}
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>

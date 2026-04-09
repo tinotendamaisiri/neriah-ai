@@ -22,6 +22,7 @@ import { getClassesAnalytics } from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsSummary, RootStackParamList } from '../types';
+import { getCached, setCache, cacheKeys } from '../services/offlineCache';
 
 type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -128,6 +129,7 @@ export default function AnalyticsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -136,8 +138,17 @@ export default function AnalyticsScreen() {
     try {
       const res = await getClassesAnalytics();
       setData(res);
+      setCachedAt(null);
+      setCache(cacheKeys.analyticsAll(), res).catch(() => {});
     } catch (e: any) {
-      setError(e?.message ?? 'Error loading analytics');
+      // Try cache fallback
+      const entry = await getCached<ClassAnalyticsSummary[]>(cacheKeys.analyticsAll());
+      if (entry && entry.data.length > 0) {
+        setData(entry.data);
+        setCachedAt(entry.cached_at);
+      } else {
+        setError(e?.message ?? 'Error loading analytics');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -173,6 +184,13 @@ export default function AnalyticsScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.screenHeading}>{t('analytics')}</Text>
+      {cachedAt && (
+        <View style={styles.cachedStrip}>
+          <Text style={styles.cachedStripText}>
+            Last updated {new Date(cachedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {new Date(cachedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+        </View>
+      )}
       <FlatList
         data={data}
         keyExtractor={(item) => item.class_id}
@@ -224,6 +242,12 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
+  cachedStrip: {
+    backgroundColor: COLORS.amber50,
+    paddingHorizontal: 16, paddingVertical: 5,
+    borderBottomWidth: 1, borderBottomColor: '#FDEBD0',
+  },
+  cachedStripText: { fontSize: 11, color: COLORS.amber700 },
   center: {
     flex: 1,
     justifyContent: 'center',

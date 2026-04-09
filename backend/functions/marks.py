@@ -13,7 +13,6 @@ import azure.functions as func
 
 from shared.auth import require_auth, require_role
 from shared.cosmos_client import get_item, query_items, upsert_item
-from shared.push_client import send_push_notification
 
 logger = logging.getLogger(__name__)
 
@@ -131,41 +130,30 @@ async def handle_marks_approve_bulk(req: func.HttpRequest) -> func.HttpResponse:
             await upsert_item("marks", mark_doc)
             approved_count += 1
 
-            # Push notification
+            # Notify student — results are available
             try:
+                from functions.push import send_student_notification
                 student_id = mark_doc.get("student_id", "")
-                class_id = mark_doc.get("class_id")
-                student_doc = None
-                if class_id and student_id:
-                    try:
-                        student_doc = await get_item("students", student_id, class_id)
-                    except Exception:
-                        pass
-                if not student_doc:
-                    sr = await query_items(
-                        "students",
-                        "SELECT * FROM c WHERE c.id = @id",
-                        [{"name": "@id", "value": student_id}],
-                    )
-                    student_doc = sr[0] if sr else None
-
-                push_token = (student_doc or {}).get("push_token")
-                if push_token:
-                    ak_results = await query_items(
-                        "answer_keys",
-                        "SELECT c.title, c.subject FROM c WHERE c.id = @id",
-                        [{"name": "@id", "value": mark_doc.get("answer_key_id", "")}],
-                    )
-                    ak_title = ""
-                    if ak_results:
-                        ak = ak_results[0]
-                        ak_title = ak.get("title") or ak.get("subject", "assignment")
-                    await send_push_notification(
-                        push_token,
-                        title="Grade received",
-                        body=f"{ak_title}: {score}/{max_score}",
-                        data={"mark_id": mark_id},
-                    )
+                answer_key_id = mark_doc.get("answer_key_id", "")
+                ak_results = await query_items(
+                    "answer_keys",
+                    "SELECT c.title, c.subject FROM c WHERE c.id = @id",
+                    [{"name": "@id", "value": answer_key_id}],
+                )
+                ak_title = ""
+                if ak_results:
+                    ak = ak_results[0]
+                    ak_title = ak.get("title") or ak.get("subject", "assignment")
+                await send_student_notification(
+                    student_id,
+                    title="Results Ready",
+                    body=f"Your {ak_title} has been graded: {score}/{max_score}",
+                    data={
+                        "screen": "Results",
+                        "mark_id": mark_id,
+                        "answer_key_id": answer_key_id,
+                    },
+                )
             except Exception as exc:
                 logger.warning("approve_bulk: push notify failed for %s: %s", mark_id, exc)
 
@@ -261,42 +249,31 @@ async def handle_mark_update(req: func.HttpRequest) -> func.HttpResponse:
 
     await upsert_item("marks", mark_doc)
 
-    # Push notification to student when newly approved
+    # Notify student when newly approved
     if now_approved and not was_approved:
         try:
+            from functions.push import send_student_notification
             student_id = mark_doc.get("student_id", "")
-            class_id = mark_doc.get("class_id")
-            student_doc = None
-            if class_id and student_id:
-                try:
-                    student_doc = await get_item("students", student_id, class_id)
-                except Exception:
-                    pass
-            if not student_doc:
-                sr = await query_items(
-                    "students",
-                    "SELECT * FROM c WHERE c.id = @id",
-                    [{"name": "@id", "value": student_id}],
-                )
-                student_doc = sr[0] if sr else None
-
-            push_token = (student_doc or {}).get("push_token")
-            if push_token:
-                ak_results = await query_items(
-                    "answer_keys",
-                    "SELECT c.title, c.subject FROM c WHERE c.id = @id",
-                    [{"name": "@id", "value": mark_doc.get("answer_key_id", "")}],
-                )
-                ak_title = ""
-                if ak_results:
-                    ak = ak_results[0]
-                    ak_title = ak.get("title") or ak.get("subject", "assignment")
-                await send_push_notification(
-                    push_token,
-                    title="Grade received",
-                    body=f"{ak_title}: {score}/{max_score}",
-                    data={"mark_id": mark_id},
-                )
+            answer_key_id = mark_doc.get("answer_key_id", "")
+            ak_results = await query_items(
+                "answer_keys",
+                "SELECT c.title, c.subject FROM c WHERE c.id = @id",
+                [{"name": "@id", "value": answer_key_id}],
+            )
+            ak_title = ""
+            if ak_results:
+                ak = ak_results[0]
+                ak_title = ak.get("title") or ak.get("subject", "assignment")
+            await send_student_notification(
+                student_id,
+                title="Results Ready",
+                body=f"Your {ak_title} has been graded: {score}/{max_score}",
+                data={
+                    "screen": "Results",
+                    "mark_id": mark_id,
+                    "answer_key_id": answer_key_id,
+                },
+            )
         except Exception as exc:
             logger.warning("mark_update: push notify student failed: %s", exc)
 

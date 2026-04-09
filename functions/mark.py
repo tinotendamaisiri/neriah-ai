@@ -159,7 +159,7 @@ def update_mark(mark_id: str):
         return jsonify({"error": "forbidden"}), 403
 
     body = request.get_json(silent=True) or {}
-    allowed = {"score", "approved", "verdicts"}
+    allowed = {"score", "approved", "verdicts", "overall_feedback", "manually_edited", "feedback"}
     updates = {k: v for k, v in body.items() if k in allowed}
 
     if "score" in updates and "max_score" in mark_doc:

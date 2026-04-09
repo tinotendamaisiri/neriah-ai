@@ -17,6 +17,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { listClasses, listAnswerKeys, getTeacherSubmissions } from '../services/api';
+import { useNetworkStatus } from '../services/syncManager';
+import { shouldShowPinNudge, dismissPinNudge } from '../services/pinLock';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { AnswerKey, Class, RootStackParamList } from '../types';
@@ -156,7 +158,19 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
+  const [showPinNudge, setShowPinNudge] = useState(false);
   const lastFetchRef = useRef(0);
+  const { isOnline } = useNetworkStatus();
+
+  // Check once on mount whether to show the monthly PIN nudge
+  React.useEffect(() => {
+    if (user?.role === 'teacher') {
+      shouldShowPinNudge('teacher').then((show) => {
+        if (show) setShowPinNudge(true);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -288,6 +302,13 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline-outline" size={14} color={COLORS.amber700} />
+          <Text style={styles.offlineBannerText}>Offline — showing cached classes</Text>
+        </View>
+      )}
+
       {error && <Text style={styles.error}>{error}</Text>}
 
       {/* Pending submissions banner */}
@@ -308,6 +329,41 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.inboxBannerArrow}>›</Text>
         </TouchableOpacity>
+      )}
+
+      {/* Monthly PIN nudge card — teacher only, once every 30 days */}
+      {showPinNudge && (
+        <View style={styles.pinNudge}>
+          <View style={styles.pinNudgeIcon}>
+            <Text style={styles.pinNudgeIconText}>🔒</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pinNudgeTitle}>Protect your students' data</Text>
+            <Text style={styles.pinNudgeBody}>
+              Set a 4-digit PIN to keep your Neriah account secure. Student grades are stored on this device.
+            </Text>
+            <View style={styles.pinNudgeActions}>
+              <TouchableOpacity
+                style={styles.pinNudgeSetBtn}
+                onPress={() => {
+                  setShowPinNudge(false);
+                  dismissPinNudge();
+                  navigation.navigate('PinLock', { mode: 'setup' });
+                }}
+              >
+                <Text style={styles.pinNudgeSetBtnText}>Set PIN</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowPinNudge(false);
+                  dismissPinNudge();
+                }}
+              >
+                <Text style={styles.pinNudgeDismissText}>Not now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       )}
 
       <FlatList
@@ -395,6 +451,13 @@ const styles = StyleSheet.create({
   greeting: { fontSize: 13, color: COLORS.gray500 },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginTop: 2 },
   error: { color: COLORS.error, paddingHorizontal: 20, paddingTop: 12, fontSize: 14 },
+  offlineBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: COLORS.amber50,
+    paddingHorizontal: 16, paddingVertical: 7,
+    borderBottomWidth: 1, borderBottomColor: '#FDEBD0',
+  },
+  offlineBannerText: { fontSize: 12, color: COLORS.amber700, fontWeight: '600' },
   list: { padding: 16, paddingBottom: 120 },
 
   // ── Class group ──────────────────────────────────────────────────────────────
@@ -468,6 +531,45 @@ const styles = StyleSheet.create({
   inboxBannerTitle: { fontSize: 14, fontWeight: '700', color: COLORS.amber700 },
   inboxBannerSub: { fontSize: 12, color: COLORS.amber500, marginTop: 2 },
   inboxBannerArrow: { fontSize: 20, color: COLORS.amber500 },
+
+  // ── PIN nudge card ─────────────────────────────────────────────────────────
+  pinNudge: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  pinNudgeIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.teal50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinNudgeIconText: { fontSize: 18 },
+  pinNudgeTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
+  pinNudgeBody: { fontSize: 13, color: COLORS.gray500, lineHeight: 18 },
+  pinNudgeActions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 },
+  pinNudgeSetBtn: {
+    backgroundColor: COLORS.teal500,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  pinNudgeSetBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
+  pinNudgeDismissText: { fontSize: 13, color: COLORS.gray500 },
 
   // ── Empty state ───────────────────────────────────────────────────────────────
   emptyContainer: { alignItems: 'center', paddingTop: 64 },

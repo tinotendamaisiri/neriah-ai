@@ -33,7 +33,11 @@ def upsert(collection: str, doc_id: str, data: dict) -> dict:
 
 def get_doc(collection: str, doc_id: str) -> Optional[dict]:
     snap = get_db().collection(collection).document(doc_id).get()
-    return snap.to_dict() if snap.exists else None
+    if not snap.exists:
+        return None
+    data = snap.to_dict()
+    data.setdefault("id", snap.id)  # inject Firestore doc ID if not stored as field
+    return data
 
 
 def delete_doc(collection: str, doc_id: str) -> None:
@@ -60,7 +64,12 @@ def query(
         ref = ref.order_by(order_by, direction=dir_)
     if limit:
         ref = ref.limit(limit)
-    return [doc.to_dict() for doc in ref.stream()]
+    results = []
+    for doc in ref.stream():
+        data = doc.to_dict()
+        data.setdefault("id", doc.id)  # inject Firestore doc ID if not stored as field
+        results.append(data)
+    return results
 
 
 def query_single(collection: str, filters: list[tuple]) -> Optional[dict]:

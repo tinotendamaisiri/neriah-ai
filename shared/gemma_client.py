@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from functools import lru_cache
 
 import ollama
@@ -295,6 +296,72 @@ Rules:
         return _FALLBACK
 
 
+# ─── 3b. Generate marking scheme from image (multimodal) ─────────────────────
+
+def generate_marking_scheme_from_image(
+    image_bytes: bytes,
+    education_level: str,
+    subject: str | None = None,
+) -> dict:
+    """
+    Auto-generates a marking scheme from a question paper photograph.
+    Single multimodal call — no OCR step.
+    Returns {"title": str, "total_marks": int, "questions": [...]} on success.
+    Returns {"error": str, "raw_response": str} if generation fails.
+    Never raises.
+    """
+    subject_line = f"Subject: {subject}" if subject else ""
+    prompt = f"""You are a curriculum-aligned marking scheme generator for African schools.
+You are looking at a photograph of a question paper. Read every question visible in the image.
+Generate a complete marking scheme with correct answers for each question.
+Education level: {education_level}
+{subject_line}
+
+Respond ONLY with valid JSON matching this schema exactly:
+{{
+  "title": "string — short title for this marking scheme",
+  "total_marks": number,
+  "questions": [
+    {{
+      "number": int,
+      "question_text": "string — the question as read from the image",
+      "correct_answer": "string — the expected correct answer",
+      "max_marks": number,
+      "marking_notes": "string or null — guidance on acceptable alternative answers or partial credit"
+    }}
+  ]
+}}
+Assign marks proportionally based on question complexity and education level.
+Do not include any text outside the JSON object."""
+
+    try:
+        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex")
+
+        # Primary parse (handles markdown fences)
+        parsed = _parse_json(raw, None)
+
+        # Regex fallback — find first {...} block in case of surrounding text
+        if parsed is None:
+            match = re.search(r'\{[\s\S]*\}', raw)
+            if match:
+                try:
+                    parsed = json.loads(match.group())
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+
+        if parsed is None:
+            logger.warning("generate_marking_scheme_from_image: JSON parse failed. Raw: %.200s", raw)
+            return {"error": "Could not generate marking scheme. Please try again.", "raw_response": raw[:500]}
+
+        num_questions = len(parsed.get("questions", []))
+        logger.info("generate_marking_scheme_from_image: generated %d question(s)", num_questions)
+        return parsed
+
+    except Exception:
+        logger.exception("generate_marking_scheme_from_image failed")
+        return {"error": "Could not generate marking scheme. Please try again.", "raw_response": ""}
+
+
 # ─── 4. Grade document (tertiary text-based submissions) ─────────────────────
 
 def grade_document(extracted_text: str, rubric: dict, education_level: str) -> list[dict]:
@@ -333,6 +400,57 @@ Return raw JSON array only — no markdown fences, no commentary."""
     except Exception:
         logger.exception("grade_document failed")
         return _FALLBACK
+
+
+# ─── Multi-turn chat helpers ──────────────────────────────────────────────────
+
+def _ollama_chat(
+    system_prompt: str,
+    history: list[dict],
+    current_message: str,
+    image_bytes: bytes | None,
+    complexity: str,
+) -> str:
+    """Multi-turn Ollama chat. Sends full message history to the model."""
+    model = settings.OLLAMA_MODEL_STUDENT if complexity == "simple" else settings.OLLAMA_MODEL_TEACHER
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    user_msg: dict = {"role": "user", "content": current_message}
+    if image_bytes is not None:
+        user_msg["images"] = [image_bytes]
+    messages.append(user_msg)
+    response = _ollama_client().chat(model=model, messages=messages)
+    return response.message.content
+
+
+def _vertex_chat(
+    system_prompt: str,
+    history: list[dict],
+    current_message: str,
+    image_bytes: bytes | None,
+) -> str:
+    """Multi-turn Vertex AI chat. Converts history to Content objects."""
+    endpoint = settings.VERTEX_ENDPOINT_ID if settings.VERTEX_ENDPOINT_ID else settings.VERTEX_MODEL_ID
+    contents: list = []
+    for msg in history:
+        role = "model" if msg["role"] == "assistant" else "user"
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(msg["content"])]))
+    current_parts: list = []
+    if image_bytes is not None:
+        current_parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+    current_parts.append(types.Part.from_text(current_message))
+    contents.append(types.Content(role="user", parts=current_parts))
+    response = _vertex_client().models.generate_content(
+        model=endpoint,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=settings.VERTEX_TEMPERATURE,
+            max_output_tokens=settings.VERTEX_MAX_OUTPUT_TOKENS,
+        ),
+    )
+    return response.text
 
 
 # ─── 5. Generate rubric ───────────────────────────────────────────────────────
@@ -379,3 +497,60 @@ Return raw JSON only — no markdown fences."""
     except Exception:
         logger.exception("generate_rubric failed")
         return _FALLBACK
+
+
+# ─── 6. Student AI tutor (Socratic method) ────────────────────────────────────
+
+_TUTOR_SYSTEM_TEMPLATE = """\
+You are Neriah, a friendly and encouraging AI study companion for African students.
+You help students understand their homework by using the Socratic method.
+
+ABSOLUTE RULES — NEVER BREAK THESE:
+1. NEVER give the direct answer to a homework question. Ever.
+2. NEVER solve the problem for the student, even if they beg.
+3. NEVER say "the answer is..." or reveal the solution.
+
+WHAT YOU DO INSTEAD:
+- Ask guiding questions that lead the student to discover the answer themselves
+- Provide worked examples using DIFFERENT numbers or scenarios
+- Explain the underlying concept or formula
+- Break complex problems into smaller, manageable steps
+- Encourage the student and celebrate their progress
+- If the student is stuck, give a bigger hint — but still not the answer
+
+TONE:
+- Warm, patient, encouraging
+- Use simple language appropriate for the education level
+- Occasionally use phrases in context ("Well done!" / "You're getting there!")
+- Keep responses concise — 2-4 sentences per turn, not essays
+
+Education level: {education_level}
+Adjust your language complexity and examples to match this level.
+A Grade 3 student gets simpler language than a Form 4 student.\
+"""
+
+
+def student_tutor(
+    message: str,
+    conversation_history: list[dict],
+    education_level: str,
+    image_bytes: bytes | None = None,
+) -> str:
+    """
+    Socratic-method AI tutor for students. Never gives direct answers.
+
+    ``conversation_history`` is a list of prior turns:
+        [{"role": "user"|"assistant", "content": "..."}, ...]
+
+    If ``image_bytes`` is provided, the student has photographed a homework question.
+
+    Returns the tutor's response text. Never raises.
+    """
+    system_prompt = _TUTOR_SYSTEM_TEMPLATE.format(education_level=education_level)
+    try:
+        if settings.INFERENCE_BACKEND == "vertex":
+            return _vertex_chat(system_prompt, conversation_history, message, image_bytes)
+        return _ollama_chat(system_prompt, conversation_history, message, image_bytes, complexity="simple")
+    except Exception:
+        logger.exception("student_tutor failed")
+        return "I'm having a little trouble right now. Please try again in a moment!"

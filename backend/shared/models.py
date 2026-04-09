@@ -113,6 +113,7 @@ class Student(BaseModel):
     surname: str
     # UPDATED: phone is now Optional — not all students have a phone number
     phone: Optional[str] = None             # E.164 format — primary unique identifier e.g. +263771234567
+    email: Optional[str] = None             # optional email for homework submission via email channel
     register_number: Optional[str] = None   # optional class register number for teacher reference
     # New fields
     push_token: Optional[str] = None        # Expo push notification token

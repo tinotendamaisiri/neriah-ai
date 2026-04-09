@@ -129,6 +129,109 @@ export const replayQueue = async (): Promise<{ submitted: number; failed: number
   return { submitted, failed };
 };
 
+// ── Approval action queue ─────────────────────────────────────────────────────
+// Queues approve / override actions taken while offline, replays when back online.
+
+const ACTION_QUEUE_KEY = 'neriah_action_queue';
+
+export type ActionType = 'approve_submission' | 'override_mark';
+
+export interface QueuedAction {
+  id: string;
+  action: ActionType;
+  // approve_submission
+  submission_id?: string;
+  // override_mark
+  mark_id?: string;
+  score?: number;
+  feedback?: string;
+  manually_edited?: boolean;
+  created_at: string;
+}
+
+export const enqueueAction = async (
+  action: Omit<QueuedAction, 'id' | 'created_at'>,
+): Promise<void> => {
+  const queue = await getActionQueue();
+  queue.push({
+    ...action,
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    created_at: new Date().toISOString(),
+  });
+  await AsyncStorage.setItem(ACTION_QUEUE_KEY, JSON.stringify(queue));
+};
+
+export const getActionQueue = async (): Promise<QueuedAction[]> => {
+  try {
+    const raw = await AsyncStorage.getItem(ACTION_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as QueuedAction[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const getActionQueueLength = async (): Promise<number> => {
+  const q = await getActionQueue();
+  return q.length;
+};
+
+export const removeAction = async (id: string): Promise<void> => {
+  const queue = await getActionQueue();
+  await AsyncStorage.setItem(
+    ACTION_QUEUE_KEY,
+    JSON.stringify(queue.filter(a => a.id !== id)),
+  );
+};
+
+export const clearActionQueue = async (): Promise<void> => {
+  await AsyncStorage.removeItem(ACTION_QUEUE_KEY);
+};
+
+/**
+ * Process all queued approve / override actions.
+ * - Success: removes from queue.
+ * - Client 4xx (except 401): drops permanently (will never succeed).
+ * - Server/network error: keeps for next retry.
+ */
+export const processActionQueue = async (): Promise<{ success: number; failed: number }> => {
+  const queue = await getActionQueue();
+  if (queue.length === 0) return { success: 0, failed: 0 };
+
+  // Import here to avoid module-level circular reference risk
+  const { approveSubmission, updateMark } = await import('./api');
+
+  let success = 0;
+  let failed = 0;
+  const remaining: QueuedAction[] = [];
+
+  for (const item of queue) {
+    try {
+      if (item.action === 'approve_submission' && item.submission_id) {
+        await approveSubmission(item.submission_id);
+      } else if (item.action === 'override_mark' && item.mark_id) {
+        await updateMark(item.mark_id, {
+          score: item.score,
+          overall_feedback: item.feedback,
+          manually_edited: item.manually_edited ?? true,
+        });
+      }
+      success++;
+    } catch (err: any) {
+      const status: number = err?.status ?? err?.response?.status ?? 0;
+      if (status >= 400 && status < 500 && status !== 401) {
+        // Permanent client error — drop it
+        failed++;
+      } else {
+        // Transient error — keep for retry
+        remaining.push(item);
+      }
+    }
+  }
+
+  await AsyncStorage.setItem(ACTION_QUEUE_KEY, JSON.stringify(remaining));
+  return { success, failed };
+};
+
 // ── Network listener ──────────────────────────────────────────────────────────
 
 /**
@@ -145,7 +248,8 @@ export const startNetworkListener = (): (() => void) => {
       wasOffline = true;
     } else if (wasOffline && isConnected) {
       wasOffline = false;
-      replayQueue().catch(() => {
+      // Replay both scan queue and action queue on reconnect
+      Promise.all([replayQueue(), processActionQueue()]).catch(() => {
         // Replay is best-effort; errors are non-critical
       });
     }

@@ -57,6 +57,24 @@ const AuthContext = createContext<AuthContextValue>({
   acceptTerms: async () => {},
 });
 
+// ── JWT expiry check ──────────────────────────────────────────────────────────
+//
+// Decode the payload of a JWT (base64url) and check the `exp` claim.
+// Returns true if the token has expired or is unreadable.
+// This is a client-side check only — the server is still the authority.
+
+function isJwtExpired(token: string): boolean {
+  try {
+    // JWT payload is base64url-encoded (uses - and _ instead of + and /)
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64)) as { exp?: number };
+    if (!payload.exp) return false; // no exp claim → treat as valid
+    return Date.now() >= payload.exp * 1000;
+  } catch {
+    return true; // malformed JWT → treat as expired
+  }
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -78,17 +96,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           SecureStore.getItemAsync(PIN_SET_KEY),
           SecureStore.getItemAsync(TERMS_ACCEPTED_KEY),
         ]);
+
         if (storedToken && storedUserJson) {
-          const stored = JSON.parse(storedUserJson) as AuthUser;
-          // Backfill surname from combined name for sessions saved before split fields existed
-          if (!stored.surname && stored.name) {
-            const parts = stored.name.trim().split(' ');
-            stored.first_name = stored.first_name || parts[0];
-            stored.surname = parts.slice(1).join(' ') || parts[0];
+          if (isJwtExpired(storedToken)) {
+            // Token is expired — clear it now so the auth screen shows immediately
+            // rather than flashing the main app and then getting a 401.
+            // hasPin is NOT cleared — user can still re-authenticate on this device.
+            await Promise.all([
+              SecureStore.deleteItemAsync(JWT_STORAGE_KEY),
+              SecureStore.deleteItemAsync(USER_STORAGE_KEY),
+            ]).catch(() => {});
+          } else {
+            const stored = JSON.parse(storedUserJson) as AuthUser;
+            // Backfill surname from combined name for sessions saved before split fields existed
+            if (!stored.surname && stored.name) {
+              const parts = stored.name.trim().split(' ');
+              stored.first_name = stored.first_name || parts[0];
+              stored.surname = parts.slice(1).join(' ') || parts[0];
+            }
+            setToken(storedToken);
+            setUser(stored);
           }
-          setToken(storedToken);
-          setUser(stored);
         }
+
         if (storedPin === 'true') {
           setHasPin(true);
           // pinUnlocked stays false — user must enter PIN on cold start
@@ -105,10 +135,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     restore();
   }, []);
 
-  // Wire up 401 handler so any request that gets a 401 forces logout
+  // Wire up 401 handler so any request that gets a 401 forces logout.
+  // A 401 on a non-expired token means the server revoked it (token_version
+  // change from account recovery). Logout clears the JWT and shows auth screen.
   useEffect(() => {
-    setUnauthorizedHandler(() => logout());
-  }, []);
+    setUnauthorizedHandler(logout);
+  }, [logout]);
 
   const login = useCallback(async (response: VerifyResponse) => {
     // If this is a student registering via join code, the pending join_code
@@ -147,9 +179,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(authUser);
     setPinUnlocked(true); // OTP login always unlocks
 
-    // Show PIN setup if user hasn't set one yet
-    const existingPin = await SecureStore.getItemAsync(PIN_SET_KEY);
-    if (existingPin !== 'true') {
+    // Show PIN setup prompt if user hasn't set a PIN AND hasn't dismissed the prompt before.
+    // "neriah_pin_prompt_shown" is written to AsyncStorage when the user either sets a PIN
+    // or taps "Skip" in PinSetupScreen, so it survives logout/re-login and JWT rotation.
+    const [existingPin, promptShown] = await Promise.all([
+      SecureStore.getItemAsync(PIN_SET_KEY),
+      AsyncStorage.getItem('neriah_pin_prompt_shown'),
+    ]);
+    if (existingPin !== 'true' && promptShown !== 'true') {
       setNeedsPinSetup(true);
     }
 

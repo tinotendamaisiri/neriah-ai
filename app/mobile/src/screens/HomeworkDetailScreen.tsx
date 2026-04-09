@@ -25,6 +25,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { pickFile } from '../utils/filePicker';
+import { enhanceImage } from '../services/imageEnhance';
 import { AnswerKey, TeacherSubmission } from '../types';
 import { COLORS } from '../constants/colors';
 
@@ -148,8 +149,9 @@ export default function HomeworkDetailScreen() {
     if (!file) return;
 
     if (file.isImage) {
-      // Image: show in preview + open text modal
-      setLocalImageUri(file.uri);
+      // Silently enhance the image (resize to 2048px max, normalise EXIF rotation)
+      const enhanced = await enhanceImage(file.uri);
+      setLocalImageUri(enhanced);
       setAiModalVisible(true);
     } else {
       // PDF / Word: send to backend for extraction

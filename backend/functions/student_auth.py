@@ -289,6 +289,7 @@ async def handle_student_self_register(req: func.HttpRequest) -> func.HttpRespon
     first_name: str = (body.get("first_name") or "").strip()
     surname: str = (body.get("surname") or "").strip()
     phone: str = (body.get("phone") or "").strip()
+    email: str = (body.get("email") or "").strip().lower()
     class_id_direct: str = (body.get("class_id") or "").strip()
     join_code: str = (body.get("class_join_code") or "").strip().upper()
 
@@ -339,17 +340,20 @@ async def handle_student_self_register(req: func.HttpRequest) -> func.HttpRespon
     channel_preference: str = body.get("channel_preference", "whatsapp")
 
     try:
+        pending: dict = {
+            "first_name": first_name,
+            "surname": surname,
+            "phone": phone,
+            "class_id": class_doc["id"],
+            "teacher_id": class_doc.get("teacher_id"),
+        }
+        if email:
+            pending["email"] = email
         otp_doc, channel_used = await _issue_otp(
             phone=phone,
             role="student",
             purpose="student_register",
-            pending_data={
-                "first_name": first_name,
-                "surname": surname,
-                "phone": phone,
-                "class_id": class_doc["id"],
-                "teacher_id": class_doc.get("teacher_id"),
-            },
+            pending_data=pending,
             channel_preference=channel_preference,
         )
     except Exception as exc:

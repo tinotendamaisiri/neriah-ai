@@ -1,9 +1,10 @@
 // src/screens/SettingsScreen.tsx
 // Teacher profile, account settings, and logout.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
+  Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -12,7 +13,7 @@ import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LangCode } from '../i18n/translations';
-import { deletePin } from '../services/api';
+import { deletePin, requestProfileOtp, updateProfile } from '../services/api';
 import { RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
@@ -39,12 +40,99 @@ export default function SettingsScreen() {
     if (!isFocused) return;
     SecureStore.getItemAsync('neriah_has_pin').then(val => {
       const pinSet = val === 'true';
-      console.log('[SettingsScreen] focus check — SecureStore neriah_has_pin =', val, '| ctxHasPin =', ctxHasPin);
       setHasPinLocal(pinSet);
-      // Sync AuthContext if it's out of date
       if (pinSet && !ctxHasPin) markPinSet();
     });
   }, [isFocused]);
+
+  // ── OTP verification modal (for Change PIN and Remove PIN) ───────────────────
+  const [otpMode, setOtpMode] = useState<'change' | 'remove' | null>(null);
+  const [verificationId, setVerificationId] = useState('');
+  const [otp, setOtp] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const otpInputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t2 = setTimeout(() => setResendCooldown(s => s - 1), 1000);
+    return () => clearTimeout(t2);
+  }, [resendCooldown]);
+
+  useEffect(() => {
+    if (otpMode && otp.length === 6) handleOtpVerify();
+  }, [otp]);
+
+  const openOtpModal = async (mode: 'change' | 'remove') => {
+    const phone = user?.phone;
+    if (!phone) return;
+    setOtp('');
+    setOtpLoading(true);
+    try {
+      const res = await requestProfileOtp(phone);
+      setVerificationId(res.verification_id);
+      setResendCooldown(60);
+      setOtpMode(mode);
+      setTimeout(() => otpInputRef.current?.focus(), 350);
+    } catch (err: any) {
+      const status = err?.status ?? err?.response?.status;
+      Alert.alert(
+        'Could not send code',
+        status === 429 ? 'Please wait a moment and try again.' : 'Please check your connection and try again.',
+      );
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleOtpVerify = async () => {
+    if (otp.length !== 6) return;
+    setOtpLoading(true);
+    try {
+      await updateProfile({ verification_id: verificationId, otp_code: otp });
+      const mode = otpMode;
+      setOtpMode(null);
+      setOtp('');
+      if (mode === 'change') {
+        navigation.navigate('SetPin');
+      } else {
+        // Remove PIN
+        await deletePin().catch(() => {});
+        setHasPinLocal(false);
+        await SecureStore.deleteItemAsync('neriah_has_pin');
+        Alert.alert(t('pin_removed'), t('pin_removed_msg'));
+      }
+    } catch (err: any) {
+      const status = err?.status ?? err?.response?.status;
+      if (status === 400) {
+        Alert.alert('Incorrect code', 'The code you entered is wrong. Please try again.');
+      } else if (status === 429) {
+        Alert.alert('Too many attempts', 'Please request a new code.');
+        setOtpMode(null);
+      } else {
+        Alert.alert('Error', 'Something went wrong. Please try again.');
+      }
+      setOtp('');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    const phone = user?.phone;
+    if (!phone) return;
+    setOtpLoading(true);
+    try {
+      const res = await requestProfileOtp(phone);
+      setVerificationId(res.verification_id);
+      setResendCooldown(60);
+      setOtp('');
+    } catch {
+      Alert.alert('Could not resend', 'Please wait and try again.');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert(t('log_out'), t('log_out_confirm'), [
@@ -54,28 +142,6 @@ export default function SettingsScreen() {
   };
 
   const handleSetPin = () => navigation.navigate('SetPin');
-
-  const handleResetPin = () => {
-    Alert.alert(
-      t('reset_pin_title'),
-      t('reset_pin_msg'),
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('remove_pin'),
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deletePin();
-              Alert.alert(t('pin_removed'), t('pin_removed_msg'));
-            } catch (err: any) {
-              Alert.alert(t('error'), err.message ?? 'Could not remove PIN.');
-            }
-          },
-        },
-      ],
-    );
-  };
 
   const handleLanguage = () => {
     Alert.alert(
@@ -161,10 +227,16 @@ export default function SettingsScreen() {
         <View style={styles.divider} />
 
         {hasPin ? (
-          <TouchableOpacity style={styles.settingsRow} onPress={handleResetPin}>
-            <Text style={styles.settingsRowLabel}>{t('reset_pin')}</Text>
-            <Text style={styles.rowChevron}>›</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity style={styles.settingsRow} onPress={() => openOtpModal('change')} disabled={otpLoading}>
+              <Text style={styles.settingsRowLabel}>Change PIN</Text>
+              <Text style={styles.rowChevron}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsRow} onPress={() => openOtpModal('remove')} disabled={otpLoading}>
+              <Text style={[styles.settingsRowLabel, { color: COLORS.error }]}>Remove PIN</Text>
+              <Text style={styles.rowChevron}>›</Text>
+            </TouchableOpacity>
+          </>
         ) : (
           <TouchableOpacity style={styles.settingsRow} onPress={handleSetPin}>
             <Text style={styles.settingsRowLabel}>{t('set_pin')}</Text>
@@ -206,6 +278,66 @@ export default function SettingsScreen() {
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutText}>{t('log_out')}</Text>
       </TouchableOpacity>
+
+      {/* OTP verification modal — used for Change PIN and Remove PIN */}
+      <Modal
+        visible={otpMode !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => { setOtpMode(null); setOtp(''); }}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Verify your identity</Text>
+            <Text style={styles.modalSubtitle}>
+              We sent a verification code to{'\n'}
+              <Text style={styles.modalPhone}>{maskPhone(user?.phone ?? '')}</Text>
+            </Text>
+
+            <TextInput
+              ref={otpInputRef}
+              style={styles.otpInput}
+              value={otp}
+              onChangeText={v => setOtp(v.replace(/\D/g, '').slice(0, 6))}
+              keyboardType="number-pad"
+              maxLength={6}
+              placeholder="------"
+              placeholderTextColor={COLORS.gray200}
+              textAlign="center"
+              editable={!otpLoading}
+              autoFocus
+            />
+
+            <TouchableOpacity
+              style={[styles.verifyBtn, (otpLoading || otp.length < 6) && styles.verifyBtnDisabled]}
+              onPress={handleOtpVerify}
+              disabled={otpLoading || otp.length < 6}
+            >
+              {otpLoading
+                ? <ActivityIndicator color={COLORS.white} />
+                : <Text style={styles.verifyBtnText}>Verify</Text>
+              }
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.linkBtn, (resendCooldown > 0 || otpLoading) && styles.linkBtnDisabled]}
+              onPress={handleResendOtp}
+              disabled={resendCooldown > 0 || otpLoading}
+            >
+              <Text style={[styles.linkText, resendCooldown > 0 && styles.linkTextMuted]}>
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setOtpMode(null); setOtp(''); }}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
     </ScrollView>
   );
@@ -265,4 +397,33 @@ const styles = StyleSheet.create({
   },
   logoutText: { color: COLORS.error, fontWeight: '600', fontSize: 16 },
   deleteRowLabel: { color: COLORS.error },
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: COLORS.white, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 28, paddingBottom: 40, alignItems: 'center',
+  },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
+  modalSubtitle: { fontSize: 15, color: COLORS.textLight, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  modalPhone: { color: COLORS.text, fontWeight: '600' },
+  otpInput: {
+    fontSize: 32, fontWeight: 'bold', letterSpacing: 8,
+    borderWidth: 2, borderColor: COLORS.teal500, borderRadius: 12,
+    paddingVertical: 14, marginBottom: 20, color: COLORS.text,
+    width: '100%', textAlign: 'center',
+  },
+  verifyBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12, padding: 16,
+    width: '100%', alignItems: 'center', marginBottom: 12,
+  },
+  verifyBtnDisabled: { backgroundColor: COLORS.teal100 },
+  verifyBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+  linkBtn: { padding: 8, marginBottom: 4 },
+  linkBtnDisabled: {},
+  linkText: { fontSize: 14, color: COLORS.teal500, fontWeight: '600' },
+  linkTextMuted: { color: COLORS.textLight },
+  cancelBtn: { padding: 10 },
+  cancelBtnText: { fontSize: 14, color: COLORS.gray500 },
 });

@@ -37,6 +37,23 @@ const AuthContext = createContext<AuthContextValue>({
   updateUser: async () => {},
 });
 
+// ── JWT expiry check ──────────────────────────────────────────────────────────
+//
+// Decode the payload of a JWT (base64url) and check the `exp` claim.
+// Returns true if the token has expired or is unreadable.
+// This is a client-side check only — the server is still the authority.
+
+function isJwtExpired(token: string): boolean {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64)) as { exp?: number };
+    if (!payload.exp) return false; // no exp claim → treat as valid
+    return Date.now() >= payload.exp * 1000;
+  } catch {
+    return true; // malformed JWT → treat as expired
+  }
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -53,8 +70,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           SecureStore.getItemAsync(USER_STORAGE_KEY),
         ]);
         if (storedToken && storedUserJson) {
-          setToken(storedToken);
-          setUser(JSON.parse(storedUserJson) as AuthUser);
+          if (isJwtExpired(storedToken)) {
+            // Token expired — clear it now so the auth screen shows immediately
+            // rather than flashing the main app then getting a 401.
+            await Promise.all([
+              SecureStore.deleteItemAsync(JWT_STORAGE_KEY),
+              SecureStore.deleteItemAsync(USER_STORAGE_KEY),
+            ]).catch(() => {});
+          } else {
+            setToken(storedToken);
+            setUser(JSON.parse(storedUserJson) as AuthUser);
+          }
         }
       } catch {
         // Ignore corrupt storage — start unauthenticated
@@ -65,10 +91,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     restore();
   }, []);
 
-  // Wire up 401 handler so any request that gets a 401 forces logout
+  // Wire up 401 handler so any request that gets a 401 forces logout.
+  // A 401 on a non-expired token means the server revoked it (token_version
+  // change from account recovery). Logout clears the JWT and shows auth screen.
   useEffect(() => {
-    setUnauthorizedHandler(() => logout());
-  }, []);
+    setUnauthorizedHandler(logout);
+  }, [logout]);
 
   const login = useCallback(async (response: VerifyResponse) => {
     // If this is a student registering via join code, the pending join_code

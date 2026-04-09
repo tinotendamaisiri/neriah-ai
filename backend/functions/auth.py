@@ -506,6 +506,7 @@ async def handle_auth_verify(req: func.HttpRequest) -> func.HttpResponse:
             first_name=pending.get("first_name", ""),
             surname=pending.get("surname", ""),
             phone=phone,
+            email=pending.get("email") or None,
             token_version=1,
         )
         await upsert_item("students", student.model_dump(mode="json"))

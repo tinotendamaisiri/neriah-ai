@@ -20,7 +20,6 @@ from shared.blob_client import generate_sas_url, upload_bytes, upload_scan
 from shared.config import settings
 from shared.cosmos_client import delete_item, get_item, query_items, upsert_item
 from shared.models import AnswerKey
-from shared.push_client import send_push_notification
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +99,56 @@ async def _get_or_create_unlabeled(class_id: str) -> tuple[str, str]:
     return ak.id, teacher_id
 
 
+# ── All-submissions-in check ─────────────────────────────────────────────────
+
+async def _notify_if_all_submitted(
+    teacher_id: str,
+    class_id: str,
+    answer_key_id: str,
+    assignment_title: str,
+) -> None:
+    """Send one 'All Submissions In' push to the teacher when every student in the
+    class has a submission for this answer key. Fires at most once — if the count
+    already matched before this submission, the check naturally won't fire again
+    because the new submission brought it to equality exactly once.
+    """
+    try:
+        # Count students in the class
+        student_rows = await query_items(
+            "students",
+            "SELECT VALUE COUNT(1) FROM c WHERE c.class_id = @cid",
+            [{"name": "@cid", "value": class_id}],
+            partition_key=class_id,
+        )
+        total_students: int = student_rows[0] if student_rows else 0
+        if total_students < 2:
+            return  # Too few students for the alert to be meaningful
+
+        # Count submissions for this answer key
+        sub_rows = await query_items(
+            "marks",
+            "SELECT VALUE COUNT(1) FROM c WHERE c.answer_key_id = @akid AND c.source = 'student_submission'",
+            [{"name": "@akid", "value": answer_key_id}],
+        )
+        submitted: int = sub_rows[0] if sub_rows else 0
+
+        if submitted >= total_students:
+            from functions.push import send_teacher_notification
+            await send_teacher_notification(
+                teacher_id,
+                title="All Submissions In \u2705",
+                body=f"All {total_students} students have submitted {assignment_title}. Ready to grade!",
+                data={
+                    "screen": "HomeworkDetail",
+                    "answer_key_id": answer_key_id,
+                    "class_id": class_id,
+                    "class_name": assignment_title,
+                },
+            )
+    except Exception as exc:
+        logger.warning("_notify_if_all_submitted: error: %s", exc)
+
+
 # ── Store without grading (pending_setup or non-image) ───────────────────────
 
 async def _store_submission_without_grading(
@@ -152,33 +201,35 @@ async def _store_submission_without_grading(
     await upsert_item("marks", mark_doc)
     logger.info("_store_submission_without_grading: stored mark %s (type=%s)", mark_id, file_type)
 
-    # Push notification to teacher
+    # Notify teacher + check if all submissions are in
     if teacher_id:
         try:
-            teacher_results = await query_items(
-                "teachers",
-                "SELECT c.push_token FROM c WHERE c.id = @id",
-                [{"name": "@id", "value": teacher_id}],
+            from functions.push import send_teacher_notification
+            student_results = await query_items(
+                "students",
+                "SELECT c.first_name, c.surname FROM c WHERE c.id = @id",
+                [{"name": "@id", "value": student_id}],
             )
-            if teacher_results and teacher_results[0].get("push_token"):
-                student_results = await query_items(
-                    "students",
-                    "SELECT c.first_name, c.surname FROM c WHERE c.id = @id",
-                    [{"name": "@id", "value": student_id}],
-                )
-                student_name = ""
-                if student_results:
-                    s = student_results[0]
-                    student_name = f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
-                assignment_title = (
-                    answer_key_doc.get("title") or answer_key_doc.get("subject", "assignment")
-                )
-                await send_push_notification(
-                    teacher_results[0]["push_token"],
-                    title="New submission",
-                    body=f"{student_name} submitted {assignment_title}",
-                    data={"mark_id": mark_id, "student_id": student_id},
-                )
+            student_name = ""
+            if student_results:
+                s = student_results[0]
+                student_name = f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
+            assignment_title = (
+                answer_key_doc.get("title") or answer_key_doc.get("subject", "assignment")
+            )
+            await send_teacher_notification(
+                teacher_id,
+                title="New Submission",
+                body=f"{student_name} submitted {assignment_title}",
+                data={
+                    "screen": "HomeworkDetail",
+                    "answer_key_id": answer_key_id,
+                    "class_id": class_id,
+                    "class_name": assignment_title,
+                },
+            )
+            # Check: all students have submitted → send one "All Submissions In" notification
+            await _notify_if_all_submitted(teacher_id, class_id, answer_key_id, assignment_title)
         except Exception as exc:
             logger.warning("_store_submission_without_grading: push notify failed: %s", exc)
 
@@ -364,37 +415,34 @@ async def handle_student_submission_create(req: func.HttpRequest) -> func.HttpRe
     except Exception as exc:
         logger.warning("student_submission: could not update mark fields: %s", exc)
 
-    # Push notification to teacher
+    # Notify teacher + check if all submissions are in
     if teacher_id:
         try:
-            teacher_results = await query_items(
-                "teachers",
-                "SELECT c.push_token, c.first_name, c.surname FROM c WHERE c.id = @id",
-                [{"name": "@id", "value": teacher_id}],
+            from functions.push import send_teacher_notification
+            student_results = await query_items(
+                "students",
+                "SELECT c.first_name, c.surname FROM c WHERE c.id = @id",
+                [{"name": "@id", "value": student_id}],
             )
-            if teacher_results:
-                t = teacher_results[0]
-                push_token = t.get("push_token")
-                if push_token:
-                    student_results = await query_items(
-                        "students",
-                        "SELECT c.first_name, c.surname FROM c WHERE c.id = @id",
-                        [{"name": "@id", "value": student_id}],
-                    )
-                    student_name = ""
-                    if student_results:
-                        s = student_results[0]
-                        student_name = f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
-                    assignment_title = (
-                        answer_key_doc.get("title")
-                        or answer_key_doc.get("subject", "assignment")
-                    )
-                    await send_push_notification(
-                        push_token,
-                        title="New submission",
-                        body=f"{student_name} submitted {assignment_title}",
-                        data={"mark_id": result.mark_id, "student_id": student_id},
-                    )
+            student_name = ""
+            if student_results:
+                s = student_results[0]
+                student_name = f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
+            assignment_title = (
+                answer_key_doc.get("title") or answer_key_doc.get("subject", "assignment")
+            )
+            await send_teacher_notification(
+                teacher_id,
+                title="New Submission",
+                body=f"{student_name} submitted {assignment_title}",
+                data={
+                    "screen": "HomeworkDetail",
+                    "answer_key_id": answer_key_id,
+                    "class_id": class_id,
+                    "class_name": assignment_title,
+                },
+            )
+            await _notify_if_all_submitted(teacher_id, class_id, answer_key_id, assignment_title)
         except Exception as exc:
             logger.warning("student_submission: push notify teacher failed: %s", exc)
 
