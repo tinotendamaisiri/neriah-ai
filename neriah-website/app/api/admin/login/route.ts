@@ -2,22 +2,39 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SignJWT } from 'jose';
 import { createHash, timingSafeEqual } from 'crypto';
 
-// ── In-memory rate limiter ────────────────────────────────────────────────────
-const RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const RATE_MAX       = 5;
+// ── Progressive rate limiter ──────────────────────────────────────────────────
+// Attempts 1-3: no lockout. From attempt 4 onward, lockout grows with each failure.
+const LOCKOUT_SCHEDULE: number[] = [0, 0, 0, 1, 2, 5, 10, 15]; // minutes per attempt index
+const MAX_LOCKOUT_MINUTES = 15;
 
-const attempts = new Map<string, { count: number; windowStart: number }>();
+interface IpRecord {
+  failures: number;       // total failed attempts
+  lockedUntil: number;    // epoch ms; 0 = not locked
+}
 
-function checkRateLimit(ip: string): boolean {
-  const now  = Date.now();
-  const rec  = attempts.get(ip);
-  if (!rec || now - rec.windowStart > RATE_WINDOW_MS) {
-    attempts.set(ip, { count: 1, windowStart: now });
-    return true; // allowed
-  }
-  if (rec.count >= RATE_MAX) return false; // blocked
-  rec.count += 1;
-  return true;
+const ipRecords = new Map<string, IpRecord>();
+
+/** Returns remaining lockout seconds (0 = allowed through). */
+function getLockoutSeconds(ip: string): number {
+  const rec = ipRecords.get(ip);
+  if (!rec || rec.lockedUntil === 0) return 0;
+  const remaining = rec.lockedUntil - Date.now();
+  return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+}
+
+function recordFailure(ip: string): void {
+  const rec = ipRecords.get(ip) ?? { failures: 0, lockedUntil: 0 };
+  rec.failures += 1;
+  const lockMinutes =
+    rec.failures < LOCKOUT_SCHEDULE.length
+      ? LOCKOUT_SCHEDULE[rec.failures]
+      : MAX_LOCKOUT_MINUTES;
+  rec.lockedUntil = lockMinutes > 0 ? Date.now() + lockMinutes * 60 * 1000 : 0;
+  ipRecords.set(ip, rec);
+}
+
+function resetFailures(ip: string): void {
+  ipRecords.delete(ip);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -40,11 +57,13 @@ export async function POST(req: NextRequest) {
   const ip        = getClientIp(req);
   const timestamp = new Date().toISOString();
 
-  // 1. Rate limit
-  if (!checkRateLimit(ip)) {
-    console.warn(`[admin/login] RATE_LIMITED ip=${ip} at=${timestamp}`);
+  // 1. Progressive lockout check
+  const lockedSecs = getLockoutSeconds(ip);
+  if (lockedSecs > 0) {
+    const mins = Math.ceil(lockedSecs / 60);
+    console.warn(`[admin/login] LOCKED ip=${ip} remaining=${lockedSecs}s at=${timestamp}`);
     return NextResponse.json(
-      { error: 'Too many attempts. Try again in 15 minutes.' },
+      { error: `Too many attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}.` },
       { status: 429 },
     );
   }
@@ -64,25 +83,34 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const adminEmail    = process.env.ADMIN_EMAIL    ?? '';
   const adminPassword = process.env.ADMIN_PASSWORD ?? '';
   const sessionSecret = process.env.ADMIN_SESSION_SECRET ?? '';
 
-  if (!adminEmail || !adminPassword || !sessionSecret) {
+  if (!adminPassword || !sessionSecret) {
     console.error(`[admin/login] MISCONFIGURED at=${timestamp}`);
     return NextResponse.json({ error: 'Admin access not configured.' }, { status: 503 });
   }
 
-  // 3 & 4. Email + password — both must match (timing-safe)
-  const emailMatch    = timingSafeCompare(email.toLowerCase(), adminEmail.toLowerCase());
-  const passwordMatch = timingSafeCompare(password, adminPassword);
-
-  if (!emailMatch || !passwordMatch) {
+  // 3. Password check (timing-safe)
+  if (!timingSafeCompare(password, adminPassword)) {
+    recordFailure(ip);
+    const lockedSecsNow = getLockoutSeconds(ip);
+    if (lockedSecsNow > 0) {
+      const mins = Math.ceil(lockedSecsNow / 60);
+      console.warn(`[admin/login] FAILED+LOCKED ip=${ip} email=${email} at=${timestamp}`);
+      return NextResponse.json(
+        { error: `Too many attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}.` },
+        { status: 429 },
+      );
+    }
     console.warn(`[admin/login] FAILED ip=${ip} email=${email} at=${timestamp}`);
     return NextResponse.json({ error: 'Invalid credentials.' }, { status: 401 });
   }
 
-  // 5. Issue JWT
+  // Reset failure count on success
+  resetFailures(ip);
+
+  // 4. Issue JWT
   const secret = new TextEncoder().encode(sessionSecret);
   const token  = await new SignJWT({ sub: email, role: 'admin' })
     .setProtectedHeader({ alg: 'HS256' })
