@@ -2,8 +2,8 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 
-// ── Config ────────────────────────────────────────────────────────────────────
-const API_BASE = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading/api';
+// ── Proxy base (browser calls our Next.js API, never the Cloud Function directly) ──
+const PROXY_BASE = '/api/admin/curriculum';
 
 // ── Brand ─────────────────────────────────────────────────────────────────────
 const C = {
@@ -48,23 +48,20 @@ interface UploadForm {
   file: File | null;
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
-async function apiFetch(path: string, apiKey: string, opts: RequestInit = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
+// ── Proxy fetch — browser never sees ADMIN_API_KEY ────────────────────────────
+async function proxyFetch(path: string, opts: RequestInit = {}) {
+  const res = await fetch(`${PROXY_BASE}${path}`, {
     ...opts,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      ...(opts.headers || {}),
-    },
+    credentials: 'same-origin',
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
   }
   return res.json();
 }
 
-// ── Components ────────────────────────────────────────────────────────────────
+// ── Shared UI primitives ──────────────────────────────────────────────────────
 function Label({ children }: { children: React.ReactNode }) {
   return (
     <label style={{ display: 'block', fontSize: 13, fontWeight: 600,
@@ -74,9 +71,9 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Input({ value, onChange, placeholder, type = 'text' }: {
+function Input({ value, onChange, placeholder, type = 'text', error }: {
   value: string; onChange: (v: string) => void;
-  placeholder?: string; type?: string;
+  placeholder?: string; type?: string; error?: boolean;
 }) {
   return (
     <input
@@ -87,16 +84,19 @@ function Input({ value, onChange, placeholder, type = 'text' }: {
       style={{
         width: '100%', boxSizing: 'border-box',
         padding: '8px 12px', borderRadius: 8,
-        border: `1.5px solid ${C.g200}`, fontSize: 14,
+        border: `1.5px solid ${error ? C.red : C.g200}`, fontSize: 14,
         outline: 'none', background: C.white, color: C.g900,
       }}
     />
   );
 }
 
-function Btn({ children, onClick, color = C.teal, disabled = false, variant = 'fill' }: {
-  children: React.ReactNode; onClick: () => void;
-  color?: string; disabled?: boolean; variant?: 'fill' | 'outline' | 'ghost';
+function Btn({ children, onClick, color = C.teal, disabled = false,
+  variant = 'fill', type = 'button' }: {
+  children: React.ReactNode; onClick?: () => void;
+  color?: string; disabled?: boolean;
+  variant?: 'fill' | 'outline' | 'ghost';
+  type?: 'button' | 'submit';
 }) {
   const base: React.CSSProperties = {
     padding: '8px 18px', borderRadius: 8, fontSize: 14,
@@ -106,7 +106,7 @@ function Btn({ children, onClick, color = C.teal, disabled = false, variant = 'f
   };
   if (variant === 'fill') {
     return (
-      <button onClick={disabled ? undefined : onClick}
+      <button type={type} onClick={disabled ? undefined : onClick}
         style={{ ...base, background: color, color: C.white }}>
         {children}
       </button>
@@ -114,44 +114,55 @@ function Btn({ children, onClick, color = C.teal, disabled = false, variant = 'f
   }
   if (variant === 'outline') {
     return (
-      <button onClick={disabled ? undefined : onClick}
-        style={{ ...base, background: 'transparent', color, border: `1.5px solid ${color}` }}>
+      <button type={type} onClick={disabled ? undefined : onClick}
+        style={{ ...base, background: 'transparent', color,
+          border: `1.5px solid ${color}` }}>
         {children}
       </button>
     );
   }
   return (
-    <button onClick={disabled ? undefined : onClick}
+    <button type={type} onClick={disabled ? undefined : onClick}
       style={{ ...base, background: 'transparent', color: C.g500 }}>
       {children}
     </button>
   );
 }
 
-// ── Password gate ─────────────────────────────────────────────────────────────
-function PasswordGate({ onAuth }: { onAuth: (key: string) => void }) {
-  const [pw, setPw] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+// ── Login form ────────────────────────────────────────────────────────────────
+function LoginForm({ onSuccess }: { onSuccess: (email: string) => void }) {
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError]       = useState('');
+  const [emailErr, setEmailErr] = useState(false);
+  const [loading, setLoading]   = useState(false);
 
   const submit = async () => {
-    if (!pw) { setError('Password is required.'); return; }
-    if (!apiKey.trim()) { setError('Admin API key is required.'); return; }
-    setLoading(true);
     setError('');
+    setEmailErr(false);
+
+    if (!email.trim()) { setError('Email is required.'); setEmailErr(true); return; }
+    if (!email.toLowerCase().endsWith('@neriah.ai')) {
+      setEmailErr(true);
+      setError('Only @neriah.ai email addresses are allowed.');
+      return;
+    }
+    if (!password) { setError('Password is required.'); return; }
+
+    setLoading(true);
     try {
-      const res = await fetch('/api/admin/verify', {
+      const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
+        body: JSON.stringify({ email: email.trim(), password }),
+        credentials: 'same-origin',
       });
+      const body = await res.json().catch(() => ({})) as { error?: string };
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError((body as { error?: string }).error || 'Incorrect password.');
+        setError(body.error || 'Sign in failed. Please try again.');
         return;
       }
-      onAuth(apiKey.trim());
+      onSuccess(email.trim());
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -159,41 +170,71 @@ function PasswordGate({ onAuth }: { onAuth: (key: string) => void }) {
     }
   };
 
+  const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') submit(); };
+
   return (
     <div style={{ minHeight: '100vh', background: C.g50,
-      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ background: C.white, borderRadius: 16, padding: 36,
         width: 380, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ width: 48, height: 48, borderRadius: 12,
             background: C.teal, margin: '0 auto 12px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 24 }}>
+            fontSize: 22 }}>
             📚
           </div>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.g900 }}>
             Curriculum Admin
           </h1>
           <p style={{ margin: '6px 0 0', fontSize: 14, color: C.g500 }}>
-            Neriah syllabus management
+            Sign in with your @neriah.ai account
           </p>
         </div>
 
+        {/* Fields */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <Label>Admin password</Label>
-            <Input value={pw} onChange={setPw} type="password" placeholder="Password" />
+            <Label>Email</Label>
+            <Input
+              value={email}
+              onChange={v => { setEmail(v); setEmailErr(false); setError(''); }}
+              placeholder="you@neriah.ai"
+              type="email"
+              error={emailErr}
+            />
+            {emailErr && (
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: C.red }}>
+                Only @neriah.ai email addresses are allowed.
+              </p>
+            )}
           </div>
+
           <div>
-            <Label>Admin API key (ADMIN_API_KEY env var)</Label>
-            <Input value={apiKey} onChange={setApiKey} type="password"
-              placeholder="Bearer token set in Cloud Function settings" />
+            <Label>Password</Label>
+            <Input
+              value={password}
+              onChange={v => { setPassword(v); setError(''); }}
+              placeholder="••••••••"
+              type="password"
+            />
           </div>
-          {error && (
+
+          {error && !emailErr && (
             <p style={{ margin: 0, fontSize: 13, color: C.red }}>{error}</p>
           )}
-          <Btn onClick={submit} disabled={loading}>{loading ? 'Checking…' : 'Sign in'}</Btn>
+
+          <Btn onClick={submit} disabled={loading} type="submit">
+            {loading ? 'Signing in…' : 'Sign In'}
+          </Btn>
         </div>
+
+        <p style={{ margin: '18px 0 0', fontSize: 12, color: C.g400, textAlign: 'center' }}>
+          Admin access only. Reset credentials via environment variables.
+        </p>
       </div>
     </div>
   );
@@ -218,16 +259,14 @@ const EDUCATION_LEVELS = [
   { value: 'tertiary', label: 'College/University' },
 ];
 
-function UploadPanel({ apiKey, onUploaded }: {
-  apiKey: string; onUploaded: () => void;
-}) {
+function UploadPanel({ onUploaded }: { onUploaded: () => void }) {
   const [form, setForm] = useState<UploadForm>({
     country: 'Zimbabwe', curriculum: 'ZIMSEC',
     subject: '', education_level: 'all', year: '', file: null,
   });
   const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<{ chunks: number; subject: string } | null>(null);
-  const [error, setError] = useState('');
+  const [result, setResult]       = useState<{ chunks: number; subject: string } | null>(null);
+  const [error, setError]         = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const set = (k: keyof UploadForm) => (v: string | File | null) =>
@@ -237,9 +276,7 @@ function UploadPanel({ apiKey, onUploaded }: {
     if (!form.file || !form.country || !form.curriculum || !form.subject || !form.education_level) {
       setError('All fields except Year are required.'); return;
     }
-    setUploading(true);
-    setError('');
-    setResult(null);
+    setUploading(true); setError(''); setResult(null);
     try {
       const fd = new FormData();
       fd.append('file', form.file);
@@ -249,14 +286,15 @@ function UploadPanel({ apiKey, onUploaded }: {
       fd.append('education_level', form.education_level);
       if (form.year) fd.append('year', form.year);
 
-      const res = await fetch(`${API_BASE}/curriculum/upload`, {
+      // POST through proxy — ADMIN_API_KEY added server-side
+      const res = await fetch(`${PROXY_BASE}/upload`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
         body: fd,
+        credentials: 'same-origin',
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || `HTTP ${res.status}`);
+        throw new Error((b as { error?: string }).error || `HTTP ${res.status}`);
       }
       const data = await res.json();
       setResult({ chunks: data.chunks, subject: data.subject });
@@ -336,40 +374,39 @@ function UploadPanel({ apiKey, onUploaded }: {
 }
 
 // ── Syllabus list ─────────────────────────────────────────────────────────────
-function SyllabusList({ syllabuses, apiKey, onDelete, onReindex }: {
+function SyllabusList({ syllabuses, onDelete, onReindex }: {
   syllabuses: Syllabus[];
-  apiKey: string;
   onDelete: (id: string) => void;
   onReindex: (id: string) => void;
 }) {
-  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [loadingId,   setLoadingId]   = useState<string | null>(null);
   const [reindexingId, setReindexingId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors]           = useState<Record<string, string>>({});
 
   const doDelete = useCallback(async (id: string) => {
     if (!confirm('Delete this syllabus and all its vector DB chunks?')) return;
     setLoadingId(id);
     try {
-      await apiFetch(`/curriculum/${id}`, apiKey, { method: 'DELETE' });
+      await proxyFetch(`/${id}`, { method: 'DELETE' });
       onDelete(id);
     } catch (e: unknown) {
       setErrors(prev => ({ ...prev, [id]: e instanceof Error ? e.message : 'Delete failed' }));
     } finally {
       setLoadingId(null);
     }
-  }, [apiKey, onDelete]);
+  }, [onDelete]);
 
   const doReindex = useCallback(async (id: string) => {
     setReindexingId(id);
     try {
-      await apiFetch(`/curriculum/${id}/reindex`, apiKey, { method: 'POST' });
+      await proxyFetch(`/${id}/reindex`, { method: 'POST' });
       onReindex(id);
     } catch (e: unknown) {
       setErrors(prev => ({ ...prev, [id]: e instanceof Error ? e.message : 'Reindex failed' }));
     } finally {
       setReindexingId(null);
     }
-  }, [apiKey, onReindex]);
+  }, [onReindex]);
 
   if (syllabuses.length === 0) {
     return (
@@ -389,7 +426,6 @@ function SyllabusList({ syllabuses, apiKey, onDelete, onReindex }: {
           border: `1.5px solid ${C.g200}`, padding: '16px 20px',
           display: 'flex', alignItems: 'center', gap: 16 }}>
 
-          {/* Icon */}
           <div style={{ width: 40, height: 40, borderRadius: 10,
             background: C.tealLt, flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -397,7 +433,6 @@ function SyllabusList({ syllabuses, apiKey, onDelete, onReindex }: {
             📄
           </div>
 
-          {/* Info */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 14, color: C.g900 }}>
               {s.curriculum} — {s.subject}
@@ -413,19 +448,12 @@ function SyllabusList({ syllabuses, apiKey, onDelete, onReindex }: {
             )}
           </div>
 
-          {/* Actions */}
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-            <Btn
-              variant="outline"
-              color={C.teal}
-              disabled={reindexingId === s.id}
+            <Btn variant="outline" color={C.teal} disabled={reindexingId === s.id}
               onClick={() => doReindex(s.id)}>
               {reindexingId === s.id ? 'Reindexing…' : '↺ Reindex'}
             </Btn>
-            <Btn
-              variant="outline"
-              color={C.red}
-              disabled={loadingId === s.id}
+            <Btn variant="outline" color={C.red} disabled={loadingId === s.id}
               onClick={() => doDelete(s.id)}>
               {loadingId === s.id ? '…' : 'Delete'}
             </Btn>
@@ -465,21 +493,32 @@ function FilterBar({ value, onChange }: {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CurriculumAdminPage() {
-  const [apiKey, setApiKey] = useState('');
-  const [syllabuses, setSyllabuses] = useState<Syllabus[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState('');
-  const [filter, setFilter] = useState({ curriculum: '', subject: '' });
+  const [adminEmail, setAdminEmail] = useState<string | null>(null); // null = checking
+  const [authChecked, setAuthChecked] = useState(false);
+  const [syllabuses, setSyllabuses]   = useState<Syllabus[]>([]);
+  const [loading, setLoading]         = useState(false);
+  const [fetchError, setFetchError]   = useState('');
+  const [filter, setFilter]           = useState({ curriculum: '', subject: '' });
 
-  const load = useCallback(async (key: string) => {
-    setLoading(true);
-    setFetchError('');
+  // On mount: check if already authenticated
+  useEffect(() => {
+    fetch('/api/admin/verify', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then((d: { authenticated?: boolean; email?: string }) => {
+        if (d.authenticated && d.email) setAdminEmail(d.email);
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const loadSyllabuses = useCallback(async () => {
+    setLoading(true); setFetchError('');
     try {
       const params = new URLSearchParams();
       if (filter.curriculum) params.set('curriculum', filter.curriculum);
-      if (filter.subject) params.set('subject', filter.subject);
-      const path = `/curriculum/list${params.toString() ? '?' + params.toString() : ''}`;
-      const data = await apiFetch(path, key);
+      if (filter.subject)    params.set('subject', filter.subject);
+      const qs   = params.toString() ? '?' + params.toString() : '';
+      const data = await proxyFetch(`/list${qs}`);
       setSyllabuses(data);
     } catch (e: unknown) {
       setFetchError(e instanceof Error ? e.message : 'Failed to load syllabuses');
@@ -488,22 +527,36 @@ export default function CurriculumAdminPage() {
     }
   }, [filter]);
 
-  const handleAuth = useCallback((key: string) => {
-    setApiKey(key);
-    load(key);
-  }, [load]);
-
   useEffect(() => {
-    if (apiKey) load(apiKey);
-  }, [filter, apiKey, load]);
+    if (adminEmail) loadSyllabuses();
+  }, [adminEmail, filter, loadSyllabuses]);
 
-  if (!apiKey) {
-    return <PasswordGate onAuth={handleAuth} />;
+  const handleLogout = async () => {
+    await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
+    setAdminEmail(null);
+    setSyllabuses([]);
+  };
+
+  // Still checking cookie
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.g50,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'system-ui, sans-serif' }}>
+        <p style={{ color: C.g400, fontSize: 14 }}>Loading…</p>
+      </div>
+    );
   }
 
+  // Not logged in
+  if (!adminEmail) {
+    return <LoginForm onSuccess={email => { setAdminEmail(email); }} />;
+  }
+
+  // ── Admin panel ─────────────────────────────────────────────────────────────
   const filtered = syllabuses.filter(s =>
     (!filter.curriculum || s.curriculum.toLowerCase().includes(filter.curriculum.toLowerCase())) &&
-    (!filter.subject || s.subject.toLowerCase().includes(filter.subject.toLowerCase()))
+    (!filter.subject    || s.subject.toLowerCase().includes(filter.subject.toLowerCase()))
   );
 
   return (
@@ -527,19 +580,26 @@ export default function CurriculumAdminPage() {
             </p>
           </div>
         </div>
-        <Btn variant="ghost" onClick={() => setApiKey('')} color={C.g500}>
-          Sign out
-        </Btn>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Email badge */}
+          <span style={{ fontSize: 13, color: C.g500,
+            background: C.g100, borderRadius: 20,
+            padding: '4px 12px' }}>
+            {adminEmail}
+          </span>
+          <Btn variant="ghost" onClick={handleLogout} color={C.g500}>
+            Logout
+          </Btn>
+        </div>
       </div>
 
       {/* Body */}
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px',
         display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-        {/* Upload panel */}
-        <UploadPanel apiKey={apiKey} onUploaded={() => load(apiKey)} />
+        <UploadPanel onUploaded={loadSyllabuses} />
 
-        {/* List header */}
         <div style={{ display: 'flex', alignItems: 'center',
           justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
           <div>
@@ -553,7 +613,6 @@ export default function CurriculumAdminPage() {
           <FilterBar value={filter} onChange={setFilter} />
         </div>
 
-        {/* Error / loading */}
         {fetchError && (
           <div style={{ background: C.redLt, border: `1.5px solid ${C.red}`,
             borderRadius: 10, padding: '12px 16px', fontSize: 14, color: C.red }}>
@@ -564,17 +623,14 @@ export default function CurriculumAdminPage() {
           <p style={{ color: C.g400, fontSize: 14, textAlign: 'center' }}>Loading…</p>
         )}
 
-        {/* List */}
         {!loading && (
           <SyllabusList
             syllabuses={filtered}
-            apiKey={apiKey}
             onDelete={id => setSyllabuses(prev => prev.filter(s => s.id !== id))}
-            onReindex={() => load(apiKey)}
+            onReindex={loadSyllabuses}
           />
         )}
 
-        {/* Info box */}
         <div style={{ background: C.tealLt, borderRadius: 10,
           border: `1.5px solid #99F6E4`, padding: '14px 18px' }}>
           <p style={{ margin: 0, fontSize: 13, color: C.tealDk, fontWeight: 600 }}>
