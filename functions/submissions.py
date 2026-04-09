@@ -201,6 +201,9 @@ def override_submission(sub_id: str):
         return jsonify({"error": "score cannot be negative"}), 400
 
     max_score = float(sub.get("max_score") or 1)
+
+    if new_score > max_score:
+        return jsonify({"error": f"score cannot exceed max_score ({max_score})"}), 400
     percentage = round(new_score / max_score * 100, 1) if max_score else 0.0
 
     now = _now_iso()

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     WHATSAPP_VERIFY_TOKEN: str
     WHATSAPP_ACCESS_TOKEN: str
     WHATSAPP_PHONE_NUMBER_ID: str
+    # App Secret from Meta developer console — used to verify X-Hub-Signature-256.
+    # Leave empty to skip verification in local/demo environments.
+    WHATSAPP_APP_SECRET: str = ""
 
     # App auth
     APP_JWT_SECRET: str
@@ -67,6 +70,15 @@ class Settings(BaseSettings):
     # Set COLLECT_TRAINING_DATA=false to disable globally (e.g. on staging).
     GCS_BUCKET_TRAINING: str = "neriah-training-data"  # Archive storage class — $0.001/GB/month
     COLLECT_TRAINING_DATA: bool = True
+
+    # Syllabus / curriculum uploads (RAG)
+    # Defaults to GCS_BUCKET_SUBMISSIONS if not set (stored under syllabuses/ prefix).
+    GCS_BUCKET_SYLLABUSES: str = ""
+
+    # Admin API key — used by the curriculum admin panel and other admin-only routes.
+    # Any request with "Authorization: Bearer <ADMIN_API_KEY>" bypasses teacher JWT.
+    # Set to a strong random string in production. Empty string disables admin bypass.
+    ADMIN_API_KEY: str = ""
 
 
 settings = Settings()

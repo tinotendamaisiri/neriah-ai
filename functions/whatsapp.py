@@ -20,7 +20,7 @@ from flask import Blueprint, jsonify, request
 from shared.annotator import annotate_image
 from shared.config import settings
 from shared.firestore_client import get_doc, increment_field, query, query_single, upsert
-from shared.gcs_client import upload_bytes
+from shared.gcs_client import generate_signed_url, upload_bytes
 from shared.gemma_client import (
     check_image_quality,
     extract_answer_key_from_image,
@@ -93,6 +93,23 @@ def whatsapp_verify():
 
 @whatsapp_bp.post("/whatsapp")
 def whatsapp_webhook():
+    # ── HMAC signature verification ───────────────────────────────────────────
+    # Verifies X-Hub-Signature-256 sent by Meta to reject spoofed webhook calls.
+    # Skipped when WHATSAPP_APP_SECRET is not configured (local / demo).
+    if settings.WHATSAPP_APP_SECRET:
+        import hashlib as _hashlib  # noqa: PLC0415
+        import hmac as _hmac  # noqa: PLC0415
+        raw_body = request.get_data()
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + _hmac.new(
+            settings.WHATSAPP_APP_SECRET.encode(),
+            raw_body,
+            _hashlib.sha256,
+        ).hexdigest()
+        if not _hmac.compare_digest(sig_header, expected):
+            logger.warning("[whatsapp] HMAC signature mismatch — rejecting webhook")
+            return "", 403
+
     body = request.get_json(silent=True) or {}
     try:
         entry = body["entry"][0]["changes"][0]["value"]
@@ -523,7 +540,8 @@ def _handle_student_submission(phone: str, student: dict, media_id: str):
 
     annotated_bytes = annotate_image(image_bytes, raw_verdicts)
     blob_name = f"{student['id']}/{uuid.uuid4()}.jpg"
-    marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+    upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+    marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60)
 
     mark = Mark(
         student_id=student["id"],
@@ -774,7 +792,8 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
     teacher = _get_teacher(phone)
     teacher_id = teacher["id"] if teacher else "unknown"
-    marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+    upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+    marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60)
 
     mark = Mark(
         student_id=student_id,

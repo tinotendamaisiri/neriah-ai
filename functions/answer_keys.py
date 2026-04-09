@@ -22,6 +22,7 @@ from shared.gemma_client import (
     generate_marking_scheme_from_image,
 )
 from shared.models import AnswerKey
+from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
 answer_keys_bp = Blueprint("answer_keys", __name__)
@@ -406,7 +407,9 @@ def generate_answer_key_scheme():
         return jsonify({"error": "forbidden"}), 403
 
     image_bytes = image_file.read()
-    scheme = generate_marking_scheme_from_image(image_bytes, education_level, subject)
+    user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
+    scheme = generate_marking_scheme_from_image(image_bytes, education_level, subject,
+                                                user_context=user_ctx)
 
     if "error" in scheme:
         return jsonify({"error": scheme["error"]}), 422
@@ -468,6 +471,7 @@ def generate_scheme_from_homework(homework_id: str):
         education_level = (cls or {}).get("education_level", "Form 4")
 
     subject = homework.get("subject") or None
+    homework_class_id = homework.get("class_id") or ""
 
     try:
         image_bytes = _download_image_from_url(question_paper_url)
@@ -475,7 +479,9 @@ def generate_scheme_from_homework(homework_id: str):
         logger.exception("Failed to download question paper image for homework_id=%s", homework_id)
         return jsonify({"error": "Could not download the question paper image. Please try again."}), 502
 
-    scheme = generate_marking_scheme_from_image(image_bytes, education_level, subject)
+    user_ctx = get_user_context(teacher_id, "teacher", class_id=homework_class_id)
+    scheme = generate_marking_scheme_from_image(image_bytes, education_level, subject,
+                                                user_context=user_ctx)
 
     if "error" in scheme:
         return jsonify({"error": scheme["error"]}), 422
@@ -572,7 +578,7 @@ def grade_all_submissions(homework_id: str):
 
     # Defer heavy imports to avoid cold-start overhead on every request
     from shared.annotator import annotate_image
-    from shared.gcs_client import upload_bytes
+    from shared.gcs_client import generate_signed_url, upload_bytes
     from shared.gemma_client import grade_submission as _grade
     from shared.models import GradingVerdict, Mark
 
@@ -615,9 +621,10 @@ def grade_all_submissions(homework_id: str):
             verdicts_dicts = [v.model_dump() for v in verdicts]
             annotated_bytes = annotate_image(image_bytes, verdicts_dicts, None)
 
-            # Upload annotated image to GCS marked bucket
+            # Upload annotated image to GCS marked bucket (private)
             blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
-            marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+            upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+            marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
             # Write Mark document (teacher review required before student can see)
             mark_doc = Mark(

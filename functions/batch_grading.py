@@ -34,7 +34,7 @@ def main() -> None:
     from shared.annotator import annotate_image
     from shared.config import settings
     from shared.firestore_client import get_doc, query, upsert
-    from shared.gcs_client import download_bytes, upload_bytes
+    from shared.gcs_client import download_bytes, generate_signed_url, upload_bytes
     from shared.gemma_client import grade_submission
     from shared.models import GradingVerdict, Mark
     from functions.push import send_teacher_notification
@@ -96,9 +96,10 @@ def main() -> None:
             verdicts_dicts = [v.model_dump() for v in verdicts]
             annotated_bytes = annotate_image(image_bytes, verdicts_dicts, None)
 
-            # Upload annotated image
+            # Upload annotated image (private)
             blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
-            marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+            upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+            marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
             # Write mark
             mark_doc = Mark(

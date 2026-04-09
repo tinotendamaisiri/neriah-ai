@@ -1,11 +1,17 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+.env.local
+backend/.env
+neriah-website/.env.local
 .venv/
 venv/
 *.egg-info/
 .DS_Store
 credentials.json
+*.pem
+*.key
 
 # React Native / Expo
 node_modules/

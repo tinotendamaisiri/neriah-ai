@@ -22,13 +22,47 @@ from flask import Blueprint, jsonify, request
 from shared.annotator import annotate_image
 from shared.auth import require_role
 from shared.config import settings
-from shared.firestore_client import get_doc, query, upsert
-from shared.gcs_client import upload_bytes
+from shared.firestore_client import get_doc, increment_field, query, upsert
+from shared.gcs_client import generate_signed_url, upload_bytes
 from shared.gemma_client import check_image_quality, grade_submission
 from shared.models import GradingVerdict, Mark
+from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
 mark_bp = Blueprint("mark", __name__)
+
+# ─── Upload size limit ────────────────────────────────────────────────────────
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+# ─── Per-teacher daily rate limit ────────────────────────────────────────────
+_MARK_DAILY_LIMIT = 500
+
+
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _mark_usage_doc_id(teacher_id: str) -> str:
+    return f"mark_{teacher_id}_{_today_utc()}"
+
+
+def _check_mark_rate_limit(teacher_id: str) -> bool:
+    """Return True if the teacher is within the daily marking limit."""
+    doc = get_doc("mark_usage", _mark_usage_doc_id(teacher_id))
+    return not doc or doc.get("count", 0) < _MARK_DAILY_LIMIT
+
+
+def _increment_mark_usage(teacher_id: str) -> None:
+    doc_id = _mark_usage_doc_id(teacher_id)
+    if get_doc("mark_usage", doc_id):
+        increment_field("mark_usage", doc_id, "count")
+    else:
+        upsert("mark_usage", doc_id, {
+            "teacher_id": teacher_id,
+            "date": _today_utc(),
+            "count": 1,
+        })
+
 
 _QUALITY_REJECTION: dict[str, str] = {
     "low light":     "The photo is too dark. Move to better lighting and try again.",
@@ -58,6 +92,12 @@ def mark():
     if err:
         return jsonify({"error": err}), 401
 
+    # ── Rate limit ────────────────────────────────────────────────────────────
+    if not _check_mark_rate_limit(teacher_id):
+        return jsonify({
+            "error": f"Daily marking limit of {_MARK_DAILY_LIMIT} reached. Resets at midnight UTC."
+        }), 429
+
     # Expect multipart/form-data: image file + JSON fields
     image_file = request.files.get("image")
     if not image_file:
@@ -68,6 +108,12 @@ def mark():
 
     if not student_id or not answer_key_id:
         return jsonify({"error": "student_id and answer_key_id are required"}), 400
+
+    # ── Image size guard ──────────────────────────────────────────────────────
+    image_file.seek(0, 2)
+    if image_file.tell() > _MAX_IMAGE_BYTES:
+        return jsonify({"error": "Image too large (max 20 MB)"}), 413
+    image_file.seek(0)
 
     image_bytes = image_file.read()
 
@@ -93,8 +139,11 @@ def mark():
         class_doc.get("education_level") if class_doc else "Form 4"
     )
 
-    # ── 2. Grade (Gemma 4 reads handwriting directly) ─────────────────────────
-    raw_verdicts = grade_submission(image_bytes, answer_key, education_level)
+    # ── 2. Grade (Gemma 4 reads handwriting directly, with RAG context) ─────────
+    class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
+    user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
+    raw_verdicts = grade_submission(image_bytes, answer_key, education_level,
+                                    user_context=user_ctx)
 
     verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
     score = sum(v.awarded_marks for v in verdicts)
@@ -114,9 +163,11 @@ def mark():
     verdicts_dicts = [v.model_dump() for v in verdicts]
     annotated_bytes = annotate_image(image_bytes, verdicts_dicts, bounding_boxes or None)
 
-    # ── 5. Upload to Cloud Storage ────────────────────────────────────────────
+    # ── 5. Upload to Cloud Storage (private) ─────────────────────────────────
     blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
-    marked_url = upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes)
+    upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+    # Generate a 7-day signed URL for the response and persistent storage.
+    marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
     # ── 6. Write Mark to Firestore ────────────────────────────────────────────
     mark_doc = Mark(
@@ -133,6 +184,7 @@ def mark():
         approved=True,
     )
     upsert("marks", mark_doc.id, mark_doc.model_dump())
+    _increment_mark_usage(teacher_id)
 
     # ── 7. Return result ──────────────────────────────────────────────────────
     return jsonify({

@@ -26,16 +26,47 @@ def upload_bytes(
     blob_name: str,
     data: bytes,
     content_type: str = "image/jpeg",
-    public: bool = True,
+    public: bool = False,
 ) -> str:
-    """Upload bytes to a bucket. Returns the public URL."""
+    """Upload bytes to a bucket.
+
+    Returns the public URL when public=True (bucket must have allUsers reader).
+    Returns a GCS URI (gs://bucket/blob) when public=False — use
+    generate_signed_url() to produce a time-limited URL for client delivery.
+    """
     client = get_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     blob.upload_from_string(data, content_type=content_type)
     if public:
         blob.make_public()
-    return blob.public_url
+        return blob.public_url
+    return f"gs://{bucket_name}/{blob_name}"
+
+
+def generate_signed_url(
+    bucket_name: str,
+    blob_name: str,
+    expiry_minutes: int = 60,
+) -> str:
+    """Generate a V4 signed URL for a private GCS blob.
+
+    The URL is valid for expiry_minutes (default 60). Use for delivering
+    marked-image URLs to API clients and WhatsApp messages.
+    Returns the GCS URI on failure so callers always get a non-empty string.
+    """
+    import datetime as _dt  # noqa: PLC0415
+    try:
+        client = get_client()
+        blob = client.bucket(bucket_name).blob(blob_name)
+        return blob.generate_signed_url(
+            expiration=_dt.timedelta(minutes=expiry_minutes),
+            method="GET",
+            version="v4",
+        )
+    except Exception:
+        logger.exception("[gcs] generate_signed_url failed for %s/%s", bucket_name, blob_name)
+        return f"gs://{bucket_name}/{blob_name}"
 
 
 def download_bytes(bucket_name: str, blob_name: str) -> bytes:

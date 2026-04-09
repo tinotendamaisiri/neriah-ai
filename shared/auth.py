@@ -57,13 +57,27 @@ def require_auth(request: Request) -> tuple[Optional[str], Optional[str], Option
 def require_role(request: Request, *roles: str) -> tuple[Optional[str], Optional[str]]:
     """
     Returns (user_id, error_message).
-    Validates the JWT and checks that its role is in the allowed roles.
+    Validates the JWT, checks role, and verifies token_version against Firestore
+    to enforce session invalidation (logout-all / account recovery).
     """
-    user_id, role, err = require_auth(request)
-    if err:
-        return None, err
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None, "missing Authorization header"
+    token = auth_header[7:]
+    payload = decode_jwt(token)
+    if not payload:
+        return None, "invalid or expired token"
+    role = payload.get("role")
+    user_id = payload.get("sub")
     if role not in roles:
         return None, "forbidden"
+    # Validate token_version to enforce invalidation on account recovery / logout-all.
+    # Deferred import avoids circular dependency (auth ← firestore_client ← models ← auth).
+    from shared.firestore_client import get_doc  # noqa: PLC0415
+    collection = "teachers" if role == "teacher" else "students"
+    doc = get_doc(collection, user_id)
+    if doc is not None and doc.get("token_version", 0) != payload.get("token_version", 0):
+        return None, "token revoked"
     return user_id, None
 
 
