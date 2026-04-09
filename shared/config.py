@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # Training data collection
     # Set GCS_BUCKET_TRAINING to the destination bucket (Nearline, us-central1).
     # Set COLLECT_TRAINING_DATA=false to disable globally (e.g. on staging).
-    GCS_BUCKET_TRAINING: str = "neriah-training-data"
+    GCS_BUCKET_TRAINING: str = "neriah-training-data"  # Archive storage class — $0.001/GB/month
     COLLECT_TRAINING_DATA: bool = True
 
 
