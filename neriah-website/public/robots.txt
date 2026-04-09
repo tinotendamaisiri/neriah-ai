@@ -1,0 +1,15 @@
+# *
+User-agent: *
+Allow: /
+
+# *
+User-agent: *
+Disallow: /api/
+Disallow: /studio/
+Disallow: /admin/
+
+# Host
+Host: https://neriah.ai
+
+# Sitemaps
+Sitemap: https://neriah.ai/sitemap.xml

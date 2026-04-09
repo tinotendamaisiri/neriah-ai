@@ -1,0 +1,28 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#0D7377"/>
+  <!-- Grid texture -->
+  <defs>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <!-- Bottom dark band -->
+  <rect y="460" width="1200" height="170" fill="#04342C"/>
+  <!-- Logo mark -->
+  <rect x="80" y="80" width="80" height="80" rx="16" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+  <rect x="98" y="107" width="44" height="30" rx="5" stroke="white" stroke-width="2" fill="none"/>
+  <rect x="110" y="96" width="20" height="16" rx="3.5" stroke="white" stroke-width="1.8" fill="none"/>
+  <line x1="120" y1="110" x2="120" y2="132" stroke="white" stroke-width="1.8"/>
+  <line x1="109" y1="121" x2="131" y2="121" stroke="white" stroke-width="1.8"/>
+  <!-- Wordmark -->
+  <text x="180" y="135" font-family="Georgia, serif" font-size="52" font-weight="700" fill="white" letter-spacing="-1">Neriah Africa</text>
+  <!-- Headline -->
+  <text x="80" y="280" font-family="Georgia, serif" font-size="72" font-weight="700" fill="white" letter-spacing="-2">Students submit.</text>
+  <text x="80" y="368" font-family="Georgia, serif" font-size="72" font-weight="700" fill="white" letter-spacing="-2">AI marks.</text>
+  <text x="80" y="456" font-family="Georgia, serif" font-size="72" font-weight="700" fill="white" letter-spacing="-2">Teachers verify.</text>
+  <!-- Tagline -->
+  <text x="80" y="548" font-family="system-ui, sans-serif" font-size="26" fill="#9FE1CB">Built for African schools · School licensing from $29/month · neriah.africa</text>
+  <!-- Amber accent line -->
+  <rect x="80" y="220" width="120" height="4" rx="2" fill="#F5A623"/>
+</svg>
