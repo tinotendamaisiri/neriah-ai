@@ -20,9 +20,11 @@ import {
   getAssignments,
   getStudentMarks,
   getStudentClassAnalytics,
+  getStudentSuggestions,
 } from '../services/api';
-import { Assignment, StudentMark, StudentClassAnalytics, StudentRootStackParamList } from '../types';
+import { Assignment, StudentMark, StudentClassAnalytics, StudySuggestionsResponse, StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { TUTOR_PENDING_MSG_KEY } from './StudentTutorScreen';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -33,6 +35,8 @@ export default function StudentHomeScreen() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [recentMarks, setRecentMarks] = useState<StudentMark[]>([]);
   const [analytics, setAnalytics] = useState<StudentClassAnalytics | null>(null);
+  const [suggestions, setSuggestions] = useState<StudySuggestionsResponse | null>(null);
+  const [strengthsExpanded, setStrengthsExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -76,6 +80,16 @@ export default function StudentHomeScreen() {
       }
     }
 
+    // Suggestions — non-blocking, shown only when available
+    try {
+      const suggestionsData = await getStudentSuggestions(user.id);
+      if (suggestionsData.suggestions.length > 0 || suggestionsData.strengths.length > 0) {
+        setSuggestions(suggestionsData);
+      }
+    } catch {
+      // Non-critical — no suggestions shown if unavailable
+    }
+
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -85,6 +99,11 @@ export default function StudentHomeScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     load(true);
+  };
+
+  const goToTutorWithPrompt = async (prompt: string) => {
+    await AsyncStorage.setItem(TUTOR_PENDING_MSG_KEY, prompt).catch(() => {});
+    (navigation as any).navigate('StudentTutor');
   };
 
   const goToCamera = (assignment: Assignment) => {
@@ -128,6 +147,70 @@ export default function StudentHomeScreen() {
           <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
         </View>
       </View>
+
+      {/* Study suggestions card */}
+      {suggestions && suggestions.suggestions.length > 0 && (() => {
+        const top3 = suggestions.suggestions.slice(0, 3);
+        const hasMore = suggestions.suggestions.length > 3;
+        const hasStrengths = suggestions.strengths.length > 0;
+        return (
+          <View style={styles.suggCard}>
+            <View style={styles.suggHeader}>
+              <Text style={styles.suggIcon}>📚</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.suggTitle}>Practice Opportunities</Text>
+                <Text style={styles.suggSubtitle}>Based on your recent homework</Text>
+              </View>
+            </View>
+
+            {top3.map((s, idx) => (
+              <TouchableOpacity
+                key={idx}
+                style={styles.suggChip}
+                onPress={() => goToTutorWithPrompt(s.prompt)}
+                activeOpacity={0.75}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.suggChipTopic}>{s.topic}</Text>
+                  <Text style={styles.suggChipReason} numberOfLines={1}>{s.reason}</Text>
+                </View>
+                <View style={[styles.suggPriBadge, s.priority === 'high' ? styles.suggPriHigh : styles.suggPriMed]}>
+                  <Text style={styles.suggPriText}>{s.priority === 'high' ? 'Review' : 'Practice'}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+
+            {hasMore && (
+              <TouchableOpacity onPress={() => (navigation as any).navigate('StudentTutor')}>
+                <Text style={styles.suggSeeAll}>See all {suggestions.suggestions.length} topics →</Text>
+              </TouchableOpacity>
+            )}
+
+            {hasStrengths && (
+              <>
+                <TouchableOpacity
+                  style={styles.strengthsToggle}
+                  onPress={() => setStrengthsExpanded(e => !e)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.strengthsToggleText}>
+                    Your strengths 💪 {strengthsExpanded ? '▲' : '▼'}
+                  </Text>
+                </TouchableOpacity>
+                {strengthsExpanded && (
+                  <View style={styles.strengthsRow}>
+                    {suggestions.strengths.map((s, idx) => (
+                      <View key={idx} style={styles.strengthChip}>
+                        <Text style={styles.strengthChipText}>{s.topic}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+        );
+      })()}
 
       {/* Open assignments */}
       <Text style={styles.sectionTitle}>Open Assignments</Text>
@@ -336,6 +419,65 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 22, fontWeight: '800', color: COLORS.teal500 },
   statLabel: { fontSize: 11, color: COLORS.gray500, marginTop: 4, textAlign: 'center' },
+  // Study suggestions card
+  suggCard: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  suggHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  suggIcon: { fontSize: 20 },
+  suggTitle: { fontSize: 14, fontWeight: '700', color: '#92400E' },
+  suggSubtitle: { fontSize: 11, color: '#B45309', marginTop: 1 },
+  suggChip: {
+    backgroundColor: COLORS.white,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  suggChipTopic: { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  suggChipReason: { fontSize: 11, color: COLORS.gray500, marginTop: 2 },
+  suggPriBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginLeft: 8,
+  },
+  suggPriHigh: { backgroundColor: '#FEE2E2' },
+  suggPriMed:  { backgroundColor: '#FEF3C7' },
+  suggPriText: { fontSize: 10, fontWeight: '700', color: '#92400E' },
+  suggSeeAll: {
+    fontSize: 12,
+    color: '#B45309',
+    fontWeight: '600',
+    marginTop: 4,
+    textDecorationLine: 'underline',
+  },
+  strengthsToggle: { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#FCD34D' },
+  strengthsToggleText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
+  strengthsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  strengthChip: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  strengthChipText: { fontSize: 12, fontWeight: '600', color: '#065F46' },
+
   // Tutor card
   tutorCard: {
     marginHorizontal: 20,

@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.firestore_client import get_doc, increment_field, query_single, upsert
 from shared.gemma_client import student_tutor
+from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
 tutor_bp = Blueprint("tutor", __name__)
@@ -150,11 +151,25 @@ def tutor_chat():
     conv_doc = get_doc("tutor_conversations", conversation_id)
     history: list[dict] = conv_doc.get("messages", []) if conv_doc else []
 
-    # ── Get education level from student's class ──────────────────────────────
-    education_level = _get_education_level(student_id)
+    # ── Build user context (country, curriculum, subject, education_level) ────
+    user_ctx = get_user_context(student_id, "student")
+    education_level = user_ctx.get("education_level") or _get_education_level(student_id)
+
+    # ── Attach weakness context for personalised tutor behaviour ─────────────
+    student_doc = get_doc("students", student_id)
+    if student_doc:
+        raw_weaknesses = student_doc.get("weaknesses") or []
+        # Pass up to 5 most recent weak topics for the system prompt
+        weak_topics = [
+            w["topic"] for w in raw_weaknesses[:5]
+            if w.get("topic")
+        ]
+        if weak_topics:
+            user_ctx = {**user_ctx, "weakness_topics": weak_topics}
 
     # ── Call tutor ────────────────────────────────────────────────────────────
-    response_text = student_tutor(message, history, education_level, image_bytes)
+    response_text = student_tutor(message, history, education_level, image_bytes,
+                                  user_context=user_ctx)
 
     # ── Persist updated history ───────────────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()

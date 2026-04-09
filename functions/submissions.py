@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.firestore_client import get_doc, query, upsert
 from shared.training_data import collect_training_sample
+from shared.weakness_tracker import update_student_weaknesses
 
 logger = logging.getLogger(__name__)
 submissions_bp = Blueprint("submissions", __name__)
@@ -152,9 +153,12 @@ def approve_submission(sub_id: str):
     if mark_id:
         upsert("marks", mark_id, {"approved": True, "approved_at": now})
 
-    # Collect training pair asynchronously (fire and forget — never blocks response)
+    # Collect training pair (fire and forget — never blocks response)
     approved_sub = {**sub, "status": "approved", "approved_at": now}
     collect_training_sample(approved_sub, teacher_id)
+
+    # Update student weakness/strength profile (fire and forget — never blocks)
+    update_student_weaknesses(sub.get("student_id", ""), approved_sub)
 
     return jsonify({"message": "approved", "submission_id": sub_id}), 200
 

@@ -23,6 +23,7 @@ from shared.gemma_client import (
 )
 from shared.models import AnswerKey
 from shared.user_context import get_user_context
+from shared.weakness_tracker import update_student_weaknesses
 
 logger = logging.getLogger(__name__)
 answer_keys_bp = Blueprint("answer_keys", __name__)
@@ -775,6 +776,9 @@ def approve_all_submissions(homework_id: str):
         if mark_id:
             upsert("marks", mark_id, {"approved": True, "approved_at": now})
         approved_count += 1
+        # Update student weakness profile (fire and forget)
+        approved_sub = {**sub, "status": "approved", "approved_at": now}
+        update_student_weaknesses(sub.get("student_id", ""), approved_sub)
 
     return jsonify({
         "message": f"Approved {approved_count} submission(s)",

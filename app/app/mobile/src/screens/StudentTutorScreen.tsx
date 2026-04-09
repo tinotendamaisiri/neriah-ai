@@ -27,7 +27,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '../context/AuthContext';
-import { tutorChat } from '../services/api';
+import { tutorChat, getStudentSuggestions } from '../services/api';
+import { StudySuggestion } from '../types';
 import { COLORS } from '../constants/colors';
 import { useNetworkStatus } from '../services/syncManager';
 import {
@@ -147,34 +148,62 @@ const MessageBubble = React.memo(({ msg }: { msg: TutorMessage }) => {
 
 // ── Welcome screen ─────────────────────────────────────────────────────────────
 
-const CHIPS = [
+const DEFAULT_CHIPS = [
   { label: 'Help me with maths', icon: undefined },
   { label: 'Explain this question', icon: 'camera-outline' as const },
   { label: "I'm stuck on my homework", icon: undefined },
 ];
 
-function WelcomeView({ onChip }: { onChip: (text: string) => void }) {
+function WelcomeView({
+  onChip,
+  firstName,
+  suggestions,
+}: {
+  onChip: (text: string) => void;
+  firstName?: string;
+  suggestions: StudySuggestion[];
+}) {
+  const top2 = suggestions.slice(0, 2);
+  const hasPersonalised = top2.length > 0;
+
+  const greeting = hasPersonalised
+    ? `Hi ${firstName || 'there'}! I noticed you had some trouble with ${
+        top2.map(s => s.topic).join(' and ')
+      } in your last homework. Want to work on one of those?`
+    : `Hi ${firstName || 'there'}! I'm Neriah, your study companion.`;
+
   return (
     <View style={st.welcome}>
       <View style={st.welcomeAvatar}>
         <Text style={st.welcomeAvatarText}>N</Text>
       </View>
-      <Text style={st.welcomeTitle}>Hi! I'm Neriah, your study companion.</Text>
-      <Text style={st.welcomeBody}>
-        Ask me about any homework question and I'll help you understand the concept.
-      </Text>
-      <Text style={st.welcomeNote}>
-        I won't give you the answer — but I'll guide you to figure it out yourself!
-      </Text>
+      <Text style={st.welcomeTitle}>{greeting}</Text>
+      {!hasPersonalised && (
+        <>
+          <Text style={st.welcomeBody}>
+            Ask me about any homework question and I'll help you understand the concept.
+          </Text>
+          <Text style={st.welcomeNote}>
+            I won't give you the answer — but I'll guide you to figure it out yourself!
+          </Text>
+        </>
+      )}
       <View style={st.chipsRow}>
-        {CHIPS.map(chip => (
-          <TouchableOpacity key={chip.label} style={st.chip} onPress={() => onChip(chip.label)}>
-            {chip.icon ? (
-              <Ionicons name={chip.icon} size={13} color={COLORS.teal500} style={{ marginRight: 4 }} />
-            ) : null}
-            <Text style={st.chipText}>{chip.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {hasPersonalised
+          ? top2.map(s => (
+              <TouchableOpacity key={s.topic} style={st.chip} onPress={() => onChip(s.prompt)}>
+                <Text style={st.chipText}>{s.topic}</Text>
+              </TouchableOpacity>
+            ))
+          : DEFAULT_CHIPS.map(chip => (
+              <TouchableOpacity key={chip.label} style={st.chip} onPress={() => onChip(chip.label)}>
+                {chip.icon ? (
+                  <Ionicons name={chip.icon} size={13} color={COLORS.teal500} style={{ marginRight: 4 }} />
+                ) : null}
+                <Text style={st.chipText}>{chip.label}</Text>
+              </TouchableOpacity>
+            ))
+        }
       </View>
     </View>
   );
@@ -193,6 +222,7 @@ export default function StudentTutorScreen() {
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [pendingImageBase64, setPendingImageBase64] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [topSuggestions, setTopSuggestions] = useState<StudySuggestion[]>([]);
 
   // ── On-device AI state ────────────────────────────────────────────────────
 
@@ -251,15 +281,28 @@ export default function StudentTutorScreen() {
     }).catch(() => {});
   }, [storageKey]);
 
-  // ── Read pending message from other screens ───────────────────────────────
+  // ── Fetch study suggestions on mount (non-blocking) ──────────────────────
 
   useEffect(() => {
+    if (!user?.id) return;
+    getStudentSuggestions(user.id)
+      .then(data => { if (data.suggestions.length > 0) setTopSuggestions(data.suggestions); })
+      .catch(() => {});
+  }, [user?.id]);
+
+  // ── Read pending message from other screens — auto-send immediately ───────
+
+  const autoSendRef = useRef(false);
+  useEffect(() => {
+    if (autoSendRef.current) return;
     AsyncStorage.getItem(TUTOR_PENDING_MSG_KEY).then(async msg => {
       if (!msg) return;
+      autoSendRef.current = true;
       await AsyncStorage.removeItem(TUTOR_PENDING_MSG_KEY).catch(() => {});
-      setInputText(msg);
+      // Small delay to ensure conversation state is loaded before sending
+      setTimeout(() => handleSend(msg), 400);
     }).catch(() => {});
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Persist to AsyncStorage after every change ────────────────────────────
 
@@ -472,7 +515,11 @@ export default function StudentTutorScreen() {
       >
         {/* Messages or welcome */}
         {messages.length === 0 && !isTyping ? (
-          <WelcomeView onChip={text => handleSend(text)} />
+          <WelcomeView
+            onChip={text => handleSend(text)}
+            firstName={user?.first_name}
+            suggestions={topSuggestions}
+          />
         ) : (
           <FlatList
             data={displayData}

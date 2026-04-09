@@ -206,16 +206,39 @@ def check_image_quality(image_bytes: bytes) -> dict:
 
 # ─── 2. Grade submission (multimodal — no OCR step) ──────────────────────────
 
-def grade_submission(image_bytes: bytes, answer_key: dict, education_level: str) -> list[dict]:
+def grade_submission(
+    image_bytes: bytes,
+    answer_key: dict,
+    education_level: str,
+    user_context: dict | None = None,
+) -> list[dict]:
     """
     Reads handwriting directly from the image and grades in one multimodal call.
     No separate OCR step. Returns list of GradingVerdict dicts. Never raises.
+
+    user_context — dict from shared.user_context.get_user_context(), containing any of:
+        country, curriculum, subject, education_level
+    Used to retrieve curriculum-specific RAG context (syllabus chunks + verified gradings).
+    If absent or empty, grading proceeds without RAG context.
     """
     _FALLBACK: list[dict] = []
+    ctx = user_context or {}
     questions_json = json.dumps(answer_key.get("questions", []), indent=2)
+
+    subject    = ctx.get("subject") or answer_key.get("subject") or ""
+    curriculum = ctx.get("curriculum") or ""
+
+    # ── RAG context retrieval (additive — never blocks if it fails) ───────────
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject} {education_level} {questions_json[:400]}",
+        user_context=ctx,
+    )
+
     prompt = f"""You are an expert teacher marking a student's handwritten work at {education_level} level.
 Grading intensity: {_intensity(education_level)}.
-
+{f"Subject: {subject}" if subject else ""}
+{f"Curriculum: {curriculum}" if curriculum else ""}
+{rag_section}
 You are shown a photo of the student's exercise book. Read each handwritten answer directly from the image.
 
 Answer key:
@@ -249,6 +272,56 @@ Rules:
     except Exception:
         logger.exception("grade_submission failed")
         return _FALLBACK
+
+
+def _build_rag_context(
+    query_text: str,
+    user_context: dict,
+    include_grading_examples: bool = True,
+) -> str:
+    """
+    Retrieve relevant syllabus chunks (and optionally verified gradings) from
+    the vector DB using the user's profile as automatic filters.
+
+    Returns a formatted prompt section string, or "" if nothing found / on error.
+    Never raises.
+    """
+    if not user_context and not query_text:
+        return ""
+    try:
+        from shared.vector_db import search_with_user_context  # noqa: PLC0415
+
+        # For grading examples we also want education_level in the filter
+        syllabus_hits = search_with_user_context(
+            "syllabuses", query_text, user_context, top_k=3,
+        )
+
+        grading_hits: list[dict] = []
+        if include_grading_examples:
+            grading_hits = search_with_user_context(
+                "grading_examples", query_text, user_context, top_k=3,
+            )
+
+        if not syllabus_hits and not grading_hits:
+            return ""
+
+        lines: list[str] = ["\n--- CURRICULUM CONTEXT (use to calibrate marking) ---"]
+        for hit in syllabus_hits:
+            snippet = hit["text"][:400].strip().replace("\n", " ")
+            lines.append(f"• {snippet}")
+
+        if grading_hits:
+            lines.append("\n--- SIMILAR TEACHER-VERIFIED GRADINGS ---")
+            for hit in grading_hits:
+                snippet = hit["text"][:300].strip().replace("\n", " ")
+                lines.append(f"• {snippet}")
+
+        lines.append("--- END OF CONTEXT ---\n")
+        return "\n".join(lines)
+
+    except Exception:
+        logger.warning("_build_rag_context failed — continuing without context")
+        return ""
 
 
 # ─── 3. Generate marking scheme ───────────────────────────────────────────────
@@ -302,6 +375,7 @@ def generate_marking_scheme_from_image(
     image_bytes: bytes,
     education_level: str,
     subject: str | None = None,
+    user_context: dict | None = None,
 ) -> dict:
     """
     Auto-generates a marking scheme from a question paper photograph.
@@ -309,13 +383,29 @@ def generate_marking_scheme_from_image(
     Returns {"title": str, "total_marks": int, "questions": [...]} on success.
     Returns {"error": str, "raw_response": str} if generation fails.
     Never raises.
+
+    user_context — from shared.user_context.get_user_context(); used to retrieve
+    curriculum marking conventions from the vector DB.
     """
+    ctx = user_context or {}
+    subject = subject or ctx.get("subject") or None
+    curriculum = ctx.get("curriculum") or ""
     subject_line = f"Subject: {subject}" if subject else ""
+
+    # RAG: retrieve curriculum marking conventions (no grading examples needed here)
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject or ''} {education_level} marking scheme conventions",
+        user_context=ctx,
+        include_grading_examples=False,
+    )
+
     prompt = f"""You are a curriculum-aligned marking scheme generator for African schools.
 You are looking at a photograph of a question paper. Read every question visible in the image.
 Generate a complete marking scheme with correct answers for each question.
 Education level: {education_level}
+{f"Curriculum: {curriculum}" if curriculum else ""}
 {subject_line}
+{rag_section}
 
 Respond ONLY with valid JSON matching this schema exactly:
 {{
@@ -535,6 +625,7 @@ def student_tutor(
     conversation_history: list[dict],
     education_level: str,
     image_bytes: bytes | None = None,
+    user_context: dict | None = None,
 ) -> str:
     """
     Socratic-method AI tutor for students. Never gives direct answers.
@@ -543,10 +634,51 @@ def student_tutor(
         [{"role": "user"|"assistant", "content": "..."}, ...]
 
     If ``image_bytes`` is provided, the student has photographed a homework question.
+    user_context — from shared.user_context.get_user_context(); used to retrieve
+    relevant curriculum sections so Neriah answers using the student's actual syllabus.
 
     Returns the tutor's response text. Never raises.
     """
-    system_prompt = _TUTOR_SYSTEM_TEMPLATE.format(education_level=education_level)
+    ctx = user_context or {}
+    weak_topics: list[str] = ctx.get("weakness_topics") or []
+
+    # Augment short/generic queries with weak topics so RAG retrieves relevant content
+    rag_query = message
+    if weak_topics and len(message.split()) < 8:
+        rag_query = message + " " + " ".join(weak_topics[:3])
+
+    # RAG: retrieve relevant curriculum content for this student's question
+    rag_section = _build_rag_context(
+        query_text=rag_query,
+        user_context=ctx,
+        include_grading_examples=False,
+    )
+
+    # Append curriculum context to system prompt when available
+    curriculum_note = ""
+    if rag_section:
+        curriculum_note = (
+            "\n\nCURRICULUM REFERENCE (your student's actual syllabus — "
+            "use this to give curriculum-aligned hints):\n" + rag_section
+        )
+
+    # Append weakness context so Neriah gives extra patience on known weak areas
+    weakness_note = ""
+    if weak_topics:
+        topics_str = ", ".join(weak_topics)
+        weakness_note = (
+            f"\n\nSTUDENT CONTEXT: This student recently struggled with: {topics_str}. "
+            "If their question relates to any of these topics, use simpler language, "
+            "smaller steps, and extra encouragement. Frame difficulties as learning "
+            "opportunities — never as failures."
+        )
+
+    system_prompt = (
+        _TUTOR_SYSTEM_TEMPLATE.format(education_level=education_level)
+        + curriculum_note
+        + weakness_note
+    )
+
     try:
         if settings.INFERENCE_BACKEND == "vertex":
             return _vertex_chat(system_prompt, conversation_history, message, image_bytes)

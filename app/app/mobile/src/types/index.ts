@@ -352,6 +352,27 @@ export interface StudentClassAnalytics {
   weaknesses?: string[];
 }
 
+// ── Study suggestions ─────────────────────────────────────────────────────────
+
+export interface StudySuggestion {
+  topic: string;
+  reason: string;
+  subject: string;
+  priority: 'high' | 'medium';
+  prompt: string;
+  date: string;
+}
+
+export interface StudyStrength {
+  topic: string;
+  reason: string;
+}
+
+export interface StudySuggestionsResponse {
+  suggestions: StudySuggestion[];
+  strengths: StudyStrength[];
+}
+
 // ── Navigation param lists ────────────────────────────────────────────────────
 
 export type AuthStackParamList = {

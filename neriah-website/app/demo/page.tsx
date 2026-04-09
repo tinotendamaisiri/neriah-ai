@@ -95,7 +95,7 @@ function getHint(s: {
   if (s.gradingStatus === 'none') return "👨‍🏫 Back to the teacher phone — tap 'Close & Grade All' to start AI grading";
   if (s.gradingStatus === 'grading') return "⏳ Gemma 4 is marking Tendai's submission…";
   if (s.gradingStatus === 'complete' && !s.approved) return "✅ Grading done! Tap the submission card to view annotated results, then tap 'Approve'";
-  if (s.approved && s.sScreen === 'student-home') return "🎉 Results released! Tap 'Results' on the student phone to see the score";
+  if (s.approved && s.sScreen === 'student-home') return "🎉 Results released! Study suggestions are now showing on the student phone — tap a topic to open the AI tutor";
   if (s.sScreen === 'student-results') return "💬 Try the AI Tutor — tap 'Ask Neriah' or the Tutor tab to chat about any question";
   if (s.sScreen === 'student-tutor') return "🤖 Type a question or tap one of the chips. Neriah uses Socratic questioning — try 'How do I solve 2x + 5?'";
   return "🎓 The demo is fully interactive — explore both phones freely";
@@ -856,6 +856,43 @@ function StudentHome() {
             </Card>
           </button>
         )}
+
+        {/* Study suggestions card — shown after teacher approves */}
+        {approved && (
+          <div style={{ marginTop: 12, backgroundColor: '#FEF3C7', borderRadius: 14, padding: 12, border: '1px solid #FCD34D' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 18 }}>📚</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E' }}>Practice Opportunities</div>
+                <div style={{ fontSize: 10, color: '#B45309' }}>Based on your Maths Chapter 5 Test</div>
+              </div>
+            </div>
+            {[
+              { topic: 'Simplifying expressions', reason: 'You scored 0/2 in Maths Chapter 5 Test', priority: 'Review', prompt: 'Help me simplify 3(2x+4) − 2(x−1) step by step' },
+              { topic: 'Probability', reason: 'You scored 1/2 in Maths Chapter 5 Test', priority: 'Practice', prompt: 'Help me understand probability with red and blue balls' },
+            ].map(s => (
+              <button
+                key={s.topic}
+                onClick={() => sGoTo('student-tutor')}
+                style={{ width: '100%', background: '#fff', border: '1px solid #FCD34D', borderRadius: 10, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'inherit' }}
+              >
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#1C1C1C' }}>{s.topic}</div>
+                  <div style={{ fontSize: 10, color: '#6B7280', marginTop: 1 }}>{s.reason}</div>
+                </div>
+                <span style={{ backgroundColor: s.priority === 'Review' ? '#FEE2E2' : '#FEF3C7', color: '#92400E', fontSize: 9, fontWeight: 700, borderRadius: 5, padding: '2px 6px', marginLeft: 6, flexShrink: 0 }}>{s.priority}</span>
+              </button>
+            ))}
+            <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #FCD34D' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#92400E', marginBottom: 5 }}>Your strengths 💪</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {['Solving linear equations', 'Percentages', 'Area of rectangles'].map(t => (
+                  <span key={t} style={{ backgroundColor: '#D1FAE5', color: '#065F46', fontSize: 10, fontWeight: 600, borderRadius: 8, padding: '3px 8px' }}>{t}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <StudentTabs active="student-home" resultsLocked={!approved} />
     </div>
@@ -1048,11 +1085,17 @@ function StudentTutor() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
               <div style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#fff', fontWeight: 700, flexShrink: 0 }}>N</div>
               <div style={{ backgroundColor: C.white, borderRadius: '12px 12px 12px 3px', padding: '9px 12px', maxWidth: '80%', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', fontSize: 11, color: C.g900, lineHeight: 1.5 }}>
-                Hi Tendai! 👋 I'm Neriah, your AI study tutor. I guide you through problems with questions — not just answers. What do you need help with?
+                {approved
+                  ? 'Hi Tendai! 👋 I noticed you had some trouble with Simplifying expressions and Probability in your last homework. Want to work on one of those?'
+                  : 'Hi Tendai! 👋 I\'m Neriah, your AI study tutor. I guide you through problems with questions — not just answers. What do you need help with?'
+                }
               </div>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, paddingLeft: 36 }}>
-              {CHIPS.map(c => (
+              {(approved
+                ? ['Simplifying expressions', 'Probability', 'How do I solve 2x + 5?']
+                : CHIPS
+              ).map(c => (
                 <button key={c} onClick={() => send(c)} style={{ backgroundColor: C.tealLt, color: C.teal, border: `1px solid ${C.teal100}`, borderRadius: 12, padding: '4px 9px', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{c}</button>
               ))}
             </div>

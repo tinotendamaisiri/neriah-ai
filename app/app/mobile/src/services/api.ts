@@ -22,6 +22,7 @@ import {
   StudentMark,
   StudentSubmission,
   StudentClassAnalytics,
+  StudySuggestionsResponse,
   TeacherSubmission,
   ClassAnalyticsSummary,
   ClassAnalyticsDetail,
@@ -589,6 +590,16 @@ export const deletePin = async (): Promise<void> => {
 };
 
 // ── AI Tutor ──────────────────────────────────────────────────────────────────
+
+/** Personalised study suggestions derived from graded homework weaknesses. */
+export const getStudentSuggestions = async (
+  student_id: string,
+): Promise<StudySuggestionsResponse> => {
+  const res: AxiosResponse<StudySuggestionsResponse> = await client.get(
+    `/students/${student_id}/suggestions`,
+  );
+  return res.data;
+};
 
 /** Send a message to the Socratic AI tutor. Optionally include a base64 image of a homework question. */
 export const tutorChat = async (
