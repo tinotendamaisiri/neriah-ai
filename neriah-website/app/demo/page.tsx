@@ -1126,6 +1126,118 @@ function StudentRouter() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// FLOW LIST DATA
+// ══════════════════════════════════════════════════════════════════════════════
+
+const TEACHER_FLOW = [
+  { num: 1,  label: 'Create Class',               screen: 'teacher-home' },
+  { num: 2,  label: 'Add Students',               screen: 'teacher-home' },
+  { num: 3,  label: 'Create Homework',            screen: 'teacher-add-homework' },
+  { num: 4,  label: 'Generate Scheme with AI',    screen: 'teacher-generate-scheme' },
+  { num: 5,  label: 'Close Submissions',          screen: 'teacher-homework-detail' },
+  { num: 6,  label: 'Grade All with Gemma 4',     screen: 'teacher-homework-detail' },
+  { num: 7,  label: 'Review Annotated Results',   screen: 'teacher-homework-detail' },
+  { num: 8,  label: 'Approve or Override Grades', screen: 'teacher-homework-detail' },
+  { num: 9,  label: 'View Class Analytics',       screen: 'teacher-analytics' },
+  { num: 10, label: 'Review via WhatsApp',        screen: 'teacher-settings' },
+];
+
+const STUDENT_FLOW = [
+  { num: 1, label: 'Register',               screen: 'student-settings' },
+  { num: 2, label: 'View Assigned Homework', screen: 'student-home' },
+  { num: 3, label: 'Submit Photos',          screen: 'student-camera' },
+  { num: 4, label: 'View Graded Results',    screen: 'student-results' },
+  { num: 5, label: 'Ask AI Tutor',           screen: 'student-tutor' },
+];
+
+// ── Vertical flow list (desktop/tablet sidebar) ───────────────────────────────
+function FlowList({
+  title, items, activeScreen, onSelect,
+}: {
+  title: string;
+  items: { num: number; label: string; screen: string }[];
+  activeScreen: string;
+  onSelect: (s: string) => void;
+}) {
+  return (
+    <div style={{ width: 190, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>
+        {title}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 700, overflowY: 'auto' }}>
+        {items.map(item => {
+          const active = item.screen === activeScreen;
+          return (
+            <button
+              key={item.num}
+              onClick={() => onSelect(item.screen)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '7px 10px', borderRadius: 8, border: `1px solid ${active ? C.teal : 'rgba(255,255,255,0.08)'}`,
+                backgroundColor: active ? C.teal : 'rgba(255,255,255,0.04)',
+                cursor: 'pointer', textAlign: 'left', width: '100%', fontFamily: 'inherit',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(13,148,136,0.12)'; }}
+              onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.04)'; }}
+            >
+              <div style={{
+                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+                backgroundColor: active ? 'rgba(255,255,255,0.25)' : C.teal,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 9, fontWeight: 800, color: '#fff',
+              }}>
+                {item.num}
+              </div>
+              <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, color: active ? '#fff' : '#94A3B8', lineHeight: 1.3 }}>
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Horizontal pill strip (mobile) ────────────────────────────────────────────
+function MobilePills({
+  items, activeScreen, onSelect,
+}: {
+  items: { num: number; label: string; screen: string }[];
+  activeScreen: string;
+  onSelect: (s: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, marginBottom: 14, width: '100%', maxWidth: 360 }}>
+      {items.map(item => {
+        const active = item.screen === activeScreen;
+        return (
+          <button
+            key={item.num}
+            onClick={() => onSelect(item.screen)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+              padding: '5px 10px', borderRadius: 16,
+              border: `1px solid ${active ? C.teal : 'rgba(255,255,255,0.15)'}`,
+              backgroundColor: active ? C.teal : 'transparent',
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            <div style={{ width: 16, height: 16, borderRadius: '50%', backgroundColor: active ? 'rgba(255,255,255,0.3)' : C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
+              {item.num}
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 600, color: active ? '#fff' : '#94A3B8', whiteSpace: 'nowrap' }}>
+              {item.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SYNC ARROW
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1231,7 +1343,7 @@ export default function DemoPage() {
 
         {/* Mobile tab toggle */}
         {isMobile && (
-          <div style={{ display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginBottom: 20, gap: 4 }}>
+          <div style={{ display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginBottom: 14, gap: 4 }}>
             {(['teacher', 'student'] as const).map(tab => (
               <button key={tab} onClick={() => setMobileTab(tab)} style={{ padding: '8px 24px', borderRadius: 8, border: 'none', backgroundColor: mobileTab === tab ? C.teal : 'transparent', color: mobileTab === tab ? '#fff' : '#94A3B8', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textTransform: 'capitalize' }}>
                 {tab === 'teacher' ? '👨‍🏫 Teacher' : '👩‍🎓 Student'}
@@ -1240,18 +1352,47 @@ export default function DemoPage() {
           </div>
         )}
 
-        {/* Phones */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: 800 }}>
+        {/* Mobile pills — horizontal scrollable above the phone */}
+        {isMobile && (
+          <MobilePills
+            items={mobileTab === 'teacher' ? TEACHER_FLOW : STUDENT_FLOW}
+            activeScreen={mobileTab === 'teacher' ? tScreen : sScreen}
+            onSelect={mobileTab === 'teacher' ? tGoTo : sGoTo}
+          />
+        )}
+
+        {/* Desktop/tablet: [TeacherList] [TeacherPhone] [SyncArrow] [StudentPhone] [StudentList] */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: 1240, gap: 16 }}>
+          {!isMobile && (
+            <FlowList
+              title="Teacher Flow"
+              items={TEACHER_FLOW}
+              activeScreen={tScreen}
+              onSelect={tGoTo}
+            />
+          )}
+
           {(!isMobile || mobileTab === 'teacher') && (
             <PhoneFrame label="Teacher — Mr. Maisiri">
               <TeacherRouter />
             </PhoneFrame>
           )}
+
           {!isMobile && <SyncArrow active={flowActive} />}
+
           {(!isMobile || mobileTab === 'student') && (
             <PhoneFrame label="Student — Tendai Moyo">
               <StudentRouter />
             </PhoneFrame>
+          )}
+
+          {!isMobile && (
+            <FlowList
+              title="Student Flow"
+              items={STUDENT_FLOW}
+              activeScreen={sScreen}
+              onSelect={sGoTo}
+            />
           )}
         </div>
 
