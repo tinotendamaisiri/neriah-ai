@@ -192,51 +192,64 @@ function BackIcon() {
 // PHONE FRAME
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PhoneFrame({ children, label }: { children: React.ReactNode; label: string }) {
+// PhoneFrame uses transform:scale so all internal px values stay correct at every size.
+// The outer wrapper occupies the *scaled* dimensions in the flow so nothing overflows.
+function PhoneFrame({ children, label, scale = 1 }: {
+  children: React.ReactNode; label: string; scale?: number;
+}) {
+  const W = 340; const H = 700;
+  const sw = Math.round(W * scale);
+  const sh = Math.round(H * scale);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
-      <div style={{
-        width: 340, height: 700, borderRadius: 44, backgroundColor: '#0F172A',
-        padding: '12px 6px 8px',
-        boxShadow: '0 32px 80px rgba(0,0,0,0.5), 0 0 0 2px #1E293B, inset 0 0 0 1px rgba(255,255,255,0.05)',
-        flexShrink: 0, position: 'relative', display: 'flex', flexDirection: 'column',
-      }}>
-        {/* Dynamic island */}
-        <div style={{ position: 'absolute', top: 13, left: '50%', transform: 'translateX(-50%)', width: 96, height: 26, backgroundColor: '#0F172A', borderRadius: 18, zIndex: 10 }} />
-        {/* Screen */}
-        <div style={{ flex: 1, borderRadius: 36, overflow: 'hidden', backgroundColor: C.g50, display: 'flex', flexDirection: 'column' }}>
-          {/* Status bar */}
-          <div style={{ height: 42, backgroundColor: C.white, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 20, paddingRight: 16, flexShrink: 0 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>9:41</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <svg width="14" height="10" viewBox="0 0 15 11">
-                <rect x="0" y="7" width="3" height="4" rx="0.5" fill={C.g900} />
-                <rect x="4" y="5" width="3" height="6" rx="0.5" fill={C.g900} />
-                <rect x="8" y="3" width="3" height="8" rx="0.5" fill={C.g900} />
-                <rect x="12" y="0" width="3" height="11" rx="0.5" fill={C.g900} />
-              </svg>
-              <svg width="14" height="11" viewBox="0 0 16 12">
-                <circle cx="8" cy="10.5" r="1" fill={C.g900} />
-                <path d="M4.5 7.5Q8 4 11.5 7.5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-                <path d="M2 5Q8-0.5 14 5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-              </svg>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <div style={{ width: 20, height: 10, border: `1.5px solid ${C.g900}`, borderRadius: 3, padding: 1.5, display: 'flex' }}>
-                  <div style={{ flex: 0.8, backgroundColor: C.g900, borderRadius: 1 }} />
+      {/* Layout footprint = scaled size; overflow hidden clips rounded corners */}
+      <div style={{ width: sw, height: sh, position: 'relative', overflow: 'hidden', borderRadius: Math.round(44 * scale), flexShrink: 0 }}>
+        {/* Phone at natural 340×700, shrunk by transform */}
+        <div style={{
+          width: W, height: H,
+          transform: `scale(${scale})`, transformOrigin: 'top left',
+          borderRadius: 44, backgroundColor: '#0F172A',
+          padding: '12px 6px 8px',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.5), 0 0 0 2px #1E293B, inset 0 0 0 1px rgba(255,255,255,0.05)',
+          position: 'relative', display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Dynamic island */}
+          <div style={{ position: 'absolute', top: 13, left: '50%', transform: 'translateX(-50%)', width: 96, height: 26, backgroundColor: '#0F172A', borderRadius: 18, zIndex: 10 }} />
+          {/* Screen */}
+          <div style={{ flex: 1, borderRadius: 36, overflow: 'hidden', backgroundColor: C.g50, display: 'flex', flexDirection: 'column' }}>
+            {/* Status bar */}
+            <div style={{ height: 42, backgroundColor: C.white, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 20, paddingRight: 16, flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>9:41</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <svg width="14" height="10" viewBox="0 0 15 11">
+                  <rect x="0" y="7" width="3" height="4" rx="0.5" fill={C.g900} />
+                  <rect x="4" y="5" width="3" height="6" rx="0.5" fill={C.g900} />
+                  <rect x="8" y="3" width="3" height="8" rx="0.5" fill={C.g900} />
+                  <rect x="12" y="0" width="3" height="11" rx="0.5" fill={C.g900} />
+                </svg>
+                <svg width="14" height="11" viewBox="0 0 16 12">
+                  <circle cx="8" cy="10.5" r="1" fill={C.g900} />
+                  <path d="M4.5 7.5Q8 4 11.5 7.5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                  <path d="M2 5Q8-0.5 14 5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                </svg>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <div style={{ width: 20, height: 10, border: `1.5px solid ${C.g900}`, borderRadius: 3, padding: 1.5, display: 'flex' }}>
+                    <div style={{ flex: 0.8, backgroundColor: C.g900, borderRadius: 1 }} />
+                  </div>
+                  <div style={{ width: 2, height: 5, backgroundColor: C.g900, borderRadius: '0 1px 1px 0' }} />
                 </div>
-                <div style={{ width: 2, height: 5, backgroundColor: C.g900, borderRadius: '0 1px 1px 0' }} />
               </div>
             </div>
+            {/* Content */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+              {children}
+            </div>
           </div>
-          {/* Content */}
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            {children}
+          {/* Home indicator */}
+          <div style={{ height: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 3 }}>
+            <div style={{ width: 90, height: 3, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 3 }} />
           </div>
-        </div>
-        {/* Home indicator */}
-        <div style={{ height: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 3 }}>
-          <div style={{ width: 90, height: 3, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 3 }} />
         </div>
       </div>
     </div>
@@ -1168,15 +1181,16 @@ const STUDENT_FLOW = [
 
 // ── Vertical flow list (desktop/tablet sidebar) ───────────────────────────────
 function FlowList({
-  title, items, activeScreen, onSelect,
+  title, items, activeScreen, onSelect, width = 190,
 }: {
   title: string;
   items: { num: number; label: string; screen: string }[];
   activeScreen: string;
   onSelect: (s: string) => void;
+  width?: number;
 }) {
   return (
-    <div style={{ width: 190, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ width, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>
         {title}
       </div>
@@ -1225,7 +1239,7 @@ function MobilePills({
   onSelect: (s: string) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, marginBottom: 14, width: '100%', maxWidth: 360 }}>
+    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 12, width: '100%', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
       {items.map(item => {
         const active = item.screen === activeScreen;
         return (
@@ -1264,6 +1278,44 @@ function SyncArrow({ active }: { active: boolean }) {
       {active && <div style={{ fontSize: 8, color: C.teal, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase' }}>sync</div>}
     </div>
   );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VIEWPORT HOOK
+// ══════════════════════════════════════════════════════════════════════════════
+
+function useViewport() {
+  const [vw, setVw] = useState(1400);
+  useEffect(() => {
+    const update = () => setVw(window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  const isMobile = vw < 820;
+
+  // Flow list widths: narrow on smaller viewports
+  const flowListWidth = vw < 1020 ? 140 : 190;
+
+  // Phone scale: fit two phones + two flow lists + arrow + gaps inside viewport
+  let phoneScale: number;
+  if (isMobile) {
+    // Single phone; fill available width, cap at 375px natural width
+    const avail = Math.min(vw - 32, 375);
+    phoneScale = avail / 340;
+  } else {
+    // Desktop/tablet: [list][phone][arrow][phone][list] with 8px gaps
+    const listTotal = flowListWidth * 2;       // both lists
+    const arrowW    = 40;                       // sync arrow
+    const pageH     = 32;                       // left+right page padding
+    const gapTotal  = 8 * 4;                   // 4 gaps between 5 items
+    const forPhones = (vw - listTotal - arrowW - pageH - gapTotal);
+    phoneScale = Math.min((forPhones / 2) / 340, 1);
+  }
+  phoneScale = Math.max(Math.min(phoneScale, 1), 0.5);
+
+  return { vw, isMobile, phoneScale, flowListWidth };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1417,13 +1469,7 @@ export default function DemoPage() {
   }, []);
 
   const [mobileTab, setMobileTab] = useState<'teacher' | 'student'>('teacher');
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 820);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
+  const { isMobile, phoneScale, flowListWidth } = useViewport();
 
   const flowActive = homeworkCreated || studentSubmitted || approved;
   const hint = getHint({ homeworkCreated, schemeReady, studentSubmitted, gradingStatus, approved, tScreen, sScreen });
@@ -1451,14 +1497,15 @@ export default function DemoPage() {
         input:focus { border-color: #0D9488 !important; }
       `}</style>
 
-      <div style={{ minHeight: '100vh', backgroundColor: '#0B1120', padding: '28px 16px 48px', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+      {/* Full-page scroll container */}
+      <div style={{ minHeight: '100vh', backgroundColor: '#0B1120', padding: isMobile ? '20px 12px 40px' : '28px 16px 48px', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", overflowX: 'hidden' }}>
 
         {/* Page header */}
-        <div style={{ textAlign: 'center', marginBottom: 28, maxWidth: 600 }}>
+        <div style={{ textAlign: 'center', marginBottom: isMobile ? 18 : 28, maxWidth: 600, width: '100%' }}>
           <div style={{ display: 'inline-block', backgroundColor: 'rgba(13,148,136,0.15)', color: C.teal, borderRadius: 20, padding: '3px 14px', fontSize: 10, fontWeight: 700, marginBottom: 10, letterSpacing: 1, textTransform: 'uppercase', border: `1px solid rgba(13,148,136,0.3)` }}>
             Interactive Demo
           </div>
-          <h1 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, color: '#F1F5F9', margin: '0 0 8px', lineHeight: 1.2 }}>
+          <h1 style={{ fontSize: isMobile ? 20 : 28, fontWeight: 800, color: '#F1F5F9', margin: '0 0 8px', lineHeight: 1.2 }}>
             Try Neriah Live
           </h1>
           <p style={{ fontSize: 13, color: '#64748B', margin: 0, lineHeight: 1.6 }}>
@@ -1466,39 +1513,41 @@ export default function DemoPage() {
           </p>
         </div>
 
-        {/* Mobile tab toggle */}
+        {/* Mobile: tab toggle + pills above single phone */}
         {isMobile && (
-          <div style={{ display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginBottom: 14, gap: 4 }}>
-            {(['teacher', 'student'] as const).map(tab => (
-              <button key={tab} onClick={() => setMobileTab(tab)} style={{ padding: '8px 24px', borderRadius: 8, border: 'none', backgroundColor: mobileTab === tab ? C.teal : 'transparent', color: mobileTab === tab ? '#fff' : '#94A3B8', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textTransform: 'capitalize' }}>
-                {tab === 'teacher' ? '👨‍🏫 Teacher' : '👩‍🎓 Student'}
-              </button>
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginBottom: 12, gap: 4 }}>
+              {(['teacher', 'student'] as const).map(tab => (
+                <button key={tab} onClick={() => setMobileTab(tab)} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', backgroundColor: mobileTab === tab ? C.teal : 'transparent', color: mobileTab === tab ? '#fff' : '#94A3B8', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  {tab === 'teacher' ? '👨‍🏫 Teacher' : '👩‍🎓 Student'}
+                </button>
+              ))}
+            </div>
+            <MobilePills
+              items={mobileTab === 'teacher' ? TEACHER_FLOW : STUDENT_FLOW}
+              activeScreen={mobileTab === 'teacher' ? tScreen : sScreen}
+              onSelect={mobileTab === 'teacher' ? tGoTo : sGoTo}
+            />
+          </>
         )}
 
-        {/* Mobile pills — horizontal scrollable above the phone */}
-        {isMobile && (
-          <MobilePills
-            items={mobileTab === 'teacher' ? TEACHER_FLOW : STUDENT_FLOW}
-            activeScreen={mobileTab === 'teacher' ? tScreen : sScreen}
-            onSelect={mobileTab === 'teacher' ? tGoTo : sGoTo}
-          />
-        )}
-
-        {/* Desktop/tablet: [TeacherList] [TeacherPhone] [SyncArrow] [StudentPhone] [StudentList] */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: 1240, gap: 16 }}>
+        {/* Main layout: [TeacherList] [TeacherPhone] [SyncArrow] [StudentPhone] [StudentList] */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: '100%', gap: 8,
+        }}>
           {!isMobile && (
             <FlowList
               title="Teacher Flow"
               items={TEACHER_FLOW}
               activeScreen={tScreen}
               onSelect={tGoTo}
+              width={flowListWidth}
             />
           )}
 
           {(!isMobile || mobileTab === 'teacher') && (
-            <PhoneFrame label="Teacher — Mr. Maisiri">
+            <PhoneFrame label="Teacher — Mr. Maisiri" scale={phoneScale}>
               <TeacherRouter />
             </PhoneFrame>
           )}
@@ -1506,7 +1555,7 @@ export default function DemoPage() {
           {!isMobile && <SyncArrow active={flowActive} />}
 
           {(!isMobile || mobileTab === 'student') && (
-            <PhoneFrame label="Student — Tendai Moyo">
+            <PhoneFrame label="Student — Tendai Moyo" scale={phoneScale}>
               <StudentRouter />
             </PhoneFrame>
           )}
@@ -1517,22 +1566,24 @@ export default function DemoPage() {
               items={STUDENT_FLOW}
               activeScreen={sScreen}
               onSelect={sGoTo}
+              width={flowListWidth}
             />
           )}
         </div>
 
         {/* Hint */}
-        <div style={{ marginTop: 24, textAlign: 'center', maxWidth: 520, minHeight: 40 }}>
-          <div key={hint} style={{ fontSize: 13, color: '#94A3B8', lineHeight: 1.6, animation: 'neriah-fade 0.4s ease' }}>
+        <div style={{ marginTop: 20, textAlign: 'center', maxWidth: 520, minHeight: 36, padding: '0 12px', width: '100%' }}>
+          <div key={hint} style={{ fontSize: isMobile ? 12 : 13, color: '#94A3B8', lineHeight: 1.6, animation: 'neriah-fade 0.4s ease' }}>
             {hint}
           </div>
         </div>
 
-        {/* Progress */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        {/* Progress dots + step labels */}
+        <div style={{ display: 'flex', gap: isMobile ? 10 : 16, marginTop: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
           {['Homework', 'Scheme', 'Submitted', 'Graded', 'Approved'].map((label, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               <div title={label} style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: steps[i] ? C.teal : 'rgba(255,255,255,0.15)', transition: 'background-color 0.4s ease', boxShadow: steps[i] ? `0 0 6px ${C.teal}` : 'none' }} />
+              {!isMobile && <div style={{ fontSize: 9, color: steps[i] ? C.teal : '#475569', fontWeight: 600 }}>{label}</div>}
             </div>
           ))}
         </div>
@@ -1543,18 +1594,19 @@ export default function DemoPage() {
           onClick={resetDemo}
           disabled={resetting}
           style={{
-            marginTop: 14, padding: '6px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)',
+            marginTop: 14, padding: '7px 20px', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.15)',
             backgroundColor: 'transparent', color: resetting ? '#475569' : '#94A3B8',
-            fontSize: 11, fontWeight: 600, cursor: resetting ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit', letterSpacing: 0.3,
+            fontSize: 12, fontWeight: 600, cursor: resetting ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', letterSpacing: 0.3, minWidth: 110,
           }}
         >
           {resetting ? 'Resetting…' : '↺ Reset Demo'}
         </button>
 
         {/* CTA */}
-        <div style={{ marginTop: 36, textAlign: 'center' }}>
-          <a href="/site/contact?subject=demo" style={{ display: 'inline-block', backgroundColor: C.teal, color: '#fff', borderRadius: 12, padding: '13px 30px', fontWeight: 700, fontSize: 14, textDecoration: 'none', boxShadow: `0 4px 20px rgba(13,148,136,0.4)` }}>
+        <div style={{ marginTop: 32, textAlign: 'center', padding: '0 16px' }}>
+          <a href="/site/contact?subject=demo" style={{ display: 'inline-block', backgroundColor: C.teal, color: '#fff', borderRadius: 12, padding: isMobile ? '12px 24px' : '13px 30px', fontWeight: 700, fontSize: isMobile ? 13 : 14, textDecoration: 'none', boxShadow: `0 4px 20px rgba(13,148,136,0.4)` }}>
             Request Full Access →
           </a>
           <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>Free for the first 3 months · No credit card</div>
