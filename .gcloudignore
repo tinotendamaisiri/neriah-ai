@@ -1,30 +1,67 @@
-# Credentials and secrets — never upload
-credentials.json
-.env
-*.key
-*.pem
+# .gcloudignore — controls what gcloud uploads when deploying Cloud Functions.
+# Only main.py, requirements.txt, shared/, functions/, and root-level .py files
+# are needed. Everything else is excluded.
 
-# Local Python environment
-.venv/
-venv/
+# Mobile app
+app/
+
+# Website
+neriah-website/
+
+# Assets / media
+assets/
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.task
+*.litertlm
+
+# Notebooks / data science
+samples/
+notebooks/
+kaggle_notebook.ipynb
+
+# Git
+.git/
+.gitignore
+
+# Node
+node_modules/
+
+# Mobile build artifacts
+ios/
+android/
+.expo/
+build/
+.gradle/
+*.apk
+*.ipa
+
+# Python artifacts
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
+.venv/
+venv/
 
-# Tests — not needed at runtime
-tests/
+# IDE / editor
+.vscode/
+.idea/
 
-# Dev tooling
-.git/
-.gitignore
-.pytest_cache/
-*.egg-info/
-dist/
-build/
-.DS_Store
+# Old Azure Functions backend (not used by GCP deployment)
+backend/
 
-# Docs
-*.md
+# Secrets / credentials
+credentials.json
+.env
+.env.*
+*.key
+*.pem
+
+# Misc
+scripts/
+infra/
 docs/
+README.md
+CLAUDE.md
