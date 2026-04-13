@@ -1,19 +1,49 @@
 'use client';
 
-import React, {
-  useState, useCallback, useEffect, useRef,
-  createContext, useContext,
-} from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 
-// ── Demo backend ─────────────────────────────────────────────────────────────
-const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
+// ── Brand ─────────────────────────────────────────────────────────────────────
+const C = {
+  teal:    '#0D7377',
+  tealMd:  '#0D9488',
+  tealDk:  '#0F766E',
+  teal50:  '#E1F5EE',
+  teal100: '#9FE1CB',
+  tealLt:  '#F0FDFA',
+  teal300: '#3AAFA9',
+  amber:   '#F5A623',
+  amber50: '#FFF3E0',
+  amber100:'#FAC775',
+  amber500:'#D4880B',
+  amber700:'#854F0B',
+  amberLt: '#FFFBEB',
+  green:   '#16A34A',
+  greenLt: '#F0FDF4',
+  red:     '#E74C3C',
+  redLt:   '#FEF2F2',
+  g50:     '#FAFAFA',
+  g100:    '#F3F4F6',
+  g200:    '#E8E8E8',
+  g400:    '#9CA3AF',
+  g500:    '#6B6B6B',
+  g700:    '#374151',
+  g900:    '#2C2C2A',
+  text:    '#2C2C2A',
+  white:   '#FFFFFF',
+  bg:      '#FAFAFA',
+  border:  '#E8E8E8',
+};
 
-async function demoFetch(path: string, opts: RequestInit = {}) {
+// ── Demo API ──────────────────────────────────────────────────────────────────
+export const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading/api';
+
+export async function demoFetch(path: string, opts: RequestInit = {}, token?: string | null) {
   try {
-    const res = await fetch(`${DEMO_API}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-      ...opts,
-    });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    Object.assign(headers, opts.headers ?? {});
+    const res = await fetch(`${DEMO_API}${path}`, { ...opts, headers });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -21,1640 +51,2873 @@ async function demoFetch(path: string, opts: RequestInit = {}) {
   }
 }
 
-// ── Brand ─────────────────────────────────────────────────────────────────────
-const C = {
-  teal:    '#0D9488',
-  tealDk:  '#0F766E',
-  tealLt:  '#F0FDFA',
-  teal100: '#CCFBF1',
-  amber:   '#F59E0B',
-  amberLt: '#FFFBEB',
-  amberDk: '#92400E',
-  green:   '#16A34A',
-  greenLt: '#F0FDF4',
-  red:     '#DC2626',
-  redLt:   '#FEF2F2',
-  blue:    '#2563EB',
-  blueLt:  '#EFF6FF',
-  g50:     '#F9FAFB',
-  g100:    '#F3F4F6',
-  g200:    '#E5E7EB',
-  g400:    '#9CA3AF',
-  g500:    '#6B7280',
-  g700:    '#374151',
-  g900:    '#111827',
-  white:   '#FFFFFF',
+// ── Types ─────────────────────────────────────────────────────────────────────
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all';
+
+// ── ReviewQuestion type (mirrors mobile ReviewQuestion) ───────────────────────
+interface ReviewQuestion {
+  question_number: number;
+  question_text:   string;
+  answer:          string;   // "answer" OR "correct_answer" from backend — normalised below
+  marks:           number;
+  marking_notes?:  string | null;
+}
+
+// Normalise a raw API question object into ReviewQuestion (handles both field name variants)
+function normaliseQ(q: any, i: number): ReviewQuestion {
+  return {
+    question_number: q.question_number ?? q.number ?? i + 1,
+    question_text:   q.question_text   ?? q.text   ?? '',
+    answer:          q.answer          ?? q.correct_answer ?? '',
+    marks:           Number(q.marks    ?? q.max_marks      ?? 1),
+    marking_notes:   q.marking_notes   ?? null,
+  };
+}
+
+// Fallback questions shown when the API is unreachable (e.g. no auth token in demo)
+const DEMO_QUESTIONS: ReviewQuestion[] = [
+  { question_number: 1, question_text: 'Solve for x:  2x + 5 = 11',                                                    answer: 'x = 3',  marks: 2, marking_notes: null },
+  { question_number: 2, question_text: 'Calculate 15% of 200.',                                                         answer: '30',     marks: 2, marking_notes: null },
+  { question_number: 3, question_text: 'Find the area of a rectangle with length 8 cm and width 5 cm.',                 answer: '40 cm²', marks: 2, marking_notes: 'Accept 40 sq cm or 40 cm squared' },
+  { question_number: 4, question_text: 'Simplify: 3(2x + 4) − 2(x − 1)',                                               answer: '4x + 14', marks: 2, marking_notes: null },
+  { question_number: 5, question_text: 'A bag has 3 red and 7 blue marbles. What is the probability of picking red?',   answer: '3/10',   marks: 2, marking_notes: 'Also accept 0.3 or 30%' },
+];
+
+// ── HomeworkInfo + StudentGrade ───────────────────────────────────────────────
+interface HomeworkInfo {
+  id:               string;
+  title:            string;
+  subject:          string;
+  education_level:  string;
+  question_count:   number;
+  total_marks:      number;
+  answer_key_id:    string;
+  submission_count: number;
+  is_open:          boolean;
+}
+
+interface StudentGrade {
+  student_id:   string;
+  student_name: string;
+  score:        number;
+  max_score:    number;
+  percentage:   number;
+  verdicts: Array<{
+    question_number: number;
+    verdict:         'correct' | 'incorrect' | 'partial';
+    awarded:         number;
+    max:             number;
+  }>;
+}
+
+const DEMO_HOMEWORK: HomeworkInfo = {
+  id:               'demo-hw-1',
+  title:            'Chapter 5 Maths Test',
+  subject:          'Mathematics',
+  education_level:  'Form 2',
+  question_count:   5,
+  total_marks:      10,
+  answer_key_id:    'demo-key',
+  submission_count: 2,
+  is_open:          true,
 };
 
-// ── Static data ───────────────────────────────────────────────────────────────
-const SCHEME = [
-  { q: 'Q1', text: 'Solve for x: 2x + 5 = 11', ans: 'x = 3', marks: 2 },
-  { q: 'Q2', text: 'What is 15% of 200?', ans: '30', marks: 2 },
-  { q: 'Q3', text: 'Area of rectangle 8cm × 5cm', ans: '40 cm²', marks: 2 },
-  { q: 'Q4', text: 'Simplify 3(2x+4) − 2(x−1)', ans: '4x + 14', marks: 2 },
-  { q: 'Q5', text: 'Probability of red (3 red, 7 blue)', ans: '3/10', marks: 2 },
+const DEMO_GRADES: StudentGrade[] = [
+  {
+    student_id: 's1', student_name: 'Tendai Moyo',
+    score: 7, max_score: 10, percentage: 70,
+    verdicts: [
+      { question_number: 1, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 2, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 3, verdict: 'partial',   awarded: 1, max: 2 },
+      { question_number: 4, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 5, verdict: 'incorrect', awarded: 0, max: 2 },
+    ],
+  },
+  {
+    student_id: 's2', student_name: 'Chipo Dube',
+    score: 6, max_score: 10, percentage: 60,
+    verdicts: [
+      { question_number: 1, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 2, verdict: 'partial',   awarded: 1, max: 2 },
+      { question_number: 3, verdict: 'incorrect', awarded: 0, max: 2 },
+      { question_number: 4, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 5, verdict: 'partial',   awarded: 1, max: 2 },
+    ],
+  },
+  {
+    student_id: 's3', student_name: 'Takudzwa Ncube',
+    score: 4, max_score: 10, percentage: 40,
+    verdicts: [
+      { question_number: 1, verdict: 'correct',   awarded: 2, max: 2 },
+      { question_number: 2, verdict: 'incorrect', awarded: 0, max: 2 },
+      { question_number: 3, verdict: 'partial',   awarded: 1, max: 2 },
+      { question_number: 4, verdict: 'incorrect', awarded: 0, max: 2 },
+      { question_number: 5, verdict: 'partial',   awarded: 1, max: 2 },
+    ],
+  },
 ];
 
-const VERDICTS = [
-  { q: 'Q1', correct: true,  awarded: 2, feedback: 'Correct — x = 3' },
-  { q: 'Q2', correct: true,  awarded: 2, feedback: 'Correct — 30' },
-  { q: 'Q3', correct: true,  awarded: 2, feedback: 'Correct — 40 cm²' },
-  { q: 'Q4', correct: false, awarded: 0, feedback: 'Expected 4x + 14, got 4x + 12' },
-  { q: 'Q5', correct: false, awarded: 1, feedback: 'Partial credit — 3/10 accepted' },
+// Chipo Dube's demo grade (6/10, 60%) — used on the student phone feedback screen
+const DEMO_STUDENT_GRADE = (() => DEMO_GRADES[1])();
+
+function normaliseGrade(g: any, i: number): StudentGrade {
+  const score     = Number(g.score      ?? g.total_score ?? 0);
+  const max_score = Number(g.max_score  ?? g.total_marks ?? 10);
+  return {
+    student_id:   g.student_id   ?? `s${i}`,
+    student_name: g.student_name ?? g.name ?? `Student ${i + 1}`,
+    score,
+    max_score,
+    percentage: max_score > 0 ? Math.round((score / max_score) * 100) : 0,
+    verdicts: Array.isArray(g.verdicts) ? g.verdicts.map((v: any) => ({
+      question_number: Number(v.question_number ?? v.q_num  ?? 0),
+      verdict:         (v.verdict ?? v.result    ?? 'incorrect') as 'correct' | 'incorrect' | 'partial',
+      awarded:         Number(v.awarded          ?? v.marks_awarded ?? 0),
+      max:             Number(v.max              ?? v.max_marks     ?? v.marks ?? 0),
+    })) : [],
+  };
+}
+
+function scoreColor(pct: number): string {
+  if (pct >= 70) return C.green;
+  if (pct >= 50) return C.amber500;
+  return C.red;
+}
+function scoreBg(pct: number): string {
+  if (pct >= 70) return C.greenLt;
+  if (pct >= 50) return C.amber50;
+  return C.redLt;
+}
+
+// Student phone screen type
+type SStudentScreen = 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor';
+
+interface TutorMessage {
+  id:             string;
+  role:           'user' | 'ai';
+  content:        string;
+  imageBase64?:   string;
+  imageMimeType?: string;
+  ts:             number;
+}
+
+// Socratic fallback responses shown when the API is unreachable in the demo
+const DEMO_TUTOR_RESPONSES = [
+  "Great question! Before I answer, what do you already know about this topic?",
+  "You're thinking about it the right way. What operation do you think we should apply first?",
+  "Interesting! Let's break it down. What would happen if we tried the simplest case first?",
+  "Almost there — look at your working again. Do you notice anything that might need adjusting?",
+  "Good effort! Think about which rule applies here. Can you name it?",
+  "Let me ask you this: what would the answer look like if the numbers were much simpler?",
+  "You've got the right idea. Now apply it step by step and tell me what you get.",
 ];
 
-// ── Tutor replies ─────────────────────────────────────────────────────────────
-const TUTOR_PAIRS: [string, string][] = [
-  ['2x + 5', 'Great question! What is the first step to get x by itself?'],
-  ['subtract 5', 'Exactly! Subtract 5 from both sides. What do you get?'],
-  ['2x = 6', 'Perfect! Now how do you isolate x from 2x = 6?'],
-  ['divide by 2', '🎉 Brilliant! So x = 3. Try this next: 3x − 4 = 14'],
-  ['x = 3', 'That\'s right! Now try: 3x − 4 = 14. What\'s your first step?'],
-  ['percent', 'For percentages, convert to decimal: 15% = 0.15. Then multiply. What is 0.15 × 200?'],
-  ['area', 'Area of a rectangle = length × width. You have 8 and 5. What is 8 × 5?'],
-  ['probability', 'Probability = favourable ÷ total. How many red balls? How many total?'],
-  ['3/10', '✓ Correct! The probability is 3 out of 10, or 3/10. Well done!'],
+// ── Subject list ──────────────────────────────────────────────────────────────
+const COMMON_SUBJECTS = [
+  'Mathematics', 'English Language', 'English Literature', 'Science',
+  'Physics', 'Chemistry', 'Biology', 'Geography', 'History',
+  'Religious Studies', 'Agriculture', 'Commerce', 'Accounts', 'Economics',
+  'Computer Science', 'Art', 'Music', 'Physical Education',
+  'Shona', 'Ndebele', 'French', 'Food and Nutrition',
+  'Fashion and Fabrics', 'Technical Graphics', 'Building Studies',
 ];
 
-function getTutorReply(msg: string): string {
-  const lower = msg.toLowerCase();
-  for (const [trigger, reply] of TUTOR_PAIRS) {
-    if (lower.includes(trigger.toLowerCase())) return reply;
-  }
-  return "That's a great question! Let me guide you step by step. What do you already know about this topic?";
-}
-
-// ── Hint ──────────────────────────────────────────────────────────────────────
-function getHint(s: {
-  homeworkCreated: boolean; schemeReady: boolean; studentSubmitted: boolean;
-  gradingStatus: string; approved: boolean; tScreen: string; sScreen: string;
-}): string {
-  if (!s.homeworkCreated) return "👆 Start by tapping 'Add Homework' on the teacher's phone";
-  if (!s.schemeReady) return "✨ Tap 'Generate with AI' to create a marking scheme with Gemma 4";
-  if (!s.studentSubmitted) return "📱 Homework assigned! Tap the homework card on the student phone, then 'Take Photo' to submit";
-  if (s.gradingStatus === 'none') return "👨‍🏫 Back to the teacher phone — tap 'Close & Grade All' to start AI grading";
-  if (s.gradingStatus === 'grading') return "⏳ Gemma 4 is marking Tendai's submission…";
-  if (s.gradingStatus === 'complete' && !s.approved) return "✅ Grading done! Tap the submission card to view annotated results, then tap 'Approve'";
-  if (s.approved && s.sScreen === 'student-home') return "🎉 Results released! Study suggestions are now showing on the student phone — tap a topic to open the AI tutor";
-  if (s.sScreen === 'student-results') return "💬 Try the AI Tutor — tap 'Ask Neriah' or the Tutor tab to chat about any question";
-  if (s.sScreen === 'student-tutor') return "🤖 Type a question or tap one of the chips. Neriah uses Socratic questioning — try 'How do I solve 2x + 5?'";
-  return "🎓 The demo is fully interactive — explore both phones freely";
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// SHARED CONTEXT
-// ══════════════════════════════════════════════════════════════════════════════
-
-interface DemoCtx {
-  homeworkCreated: boolean;
-  schemeReady: boolean;
-  studentSubmitted: boolean;
-  gradingStatus: 'none' | 'grading' | 'complete';
-  approved: boolean;
-  tScreen: string;
-  tPush: (s: string) => void;
-  tPop: () => void;
-  tGoTo: (s: string) => void;
-  sScreen: string;
-  sPush: (s: string) => void;
-  sPop: () => void;
-  sGoTo: (s: string) => void;
-  createHomework: () => void;
-  saveScheme: () => void;
-  studentSubmit: () => void;
-  closeAndGrade: () => void;
-  approveAll: () => void;
-  tutorMessages: { role: 'user' | 'bot'; text: string }[];
-  sendTutorMsg: (text: string) => void;
-}
-
-const Demo = createContext<DemoCtx>(null!);
-const useDemo = () => useContext(Demo);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PRIMITIVES
-// ══════════════════════════════════════════════════════════════════════════════
-
-function Badge({ color, bg, children }: { color: string; bg: string; children: React.ReactNode }) {
+// ── Shared: screen scroll wrapper ─────────────────────────────────────────────
+function Screen({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <span style={{ backgroundColor: bg, color, borderRadius: 10, padding: '2px 8px', fontSize: 10, fontWeight: 700, display: 'inline-block', lineHeight: 1.6, whiteSpace: 'nowrap' }}>
-      {children}
-    </span>
-  );
-}
-
-function TealBtn({ children, onClick, style, disabled }: {
-  children: React.ReactNode; onClick?: () => void;
-  style?: React.CSSProperties; disabled?: boolean;
-}) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      backgroundColor: disabled ? C.g400 : C.teal, color: '#fff', border: 'none', borderRadius: 10,
-      padding: '11px 16px', fontWeight: 600, fontSize: 13, cursor: disabled ? 'not-allowed' : 'pointer',
-      width: '100%', fontFamily: 'inherit', ...style,
+    <div style={{
+      flex: 1,
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      background: C.white,
+      display: 'flex',
+      flexDirection: 'column',
+      ...style,
     }}>
       {children}
-    </button>
-  );
-}
-
-function OutlineBtn({ children, onClick, style }: {
-  children: React.ReactNode; onClick?: () => void; style?: React.CSSProperties;
-}) {
-  return (
-    <button onClick={onClick} style={{
-      border: `1.5px solid ${C.teal}`, color: C.teal, backgroundColor: 'transparent', borderRadius: 10,
-      padding: '11px 16px', fontWeight: 600, fontSize: 13, cursor: 'pointer',
-      width: '100%', fontFamily: 'inherit', ...style,
-    }}>
-      {children}
-    </button>
-  );
-}
-
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={{ backgroundColor: C.white, borderRadius: 12, padding: 13, marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', ...style }}>
-      {children}
     </div>
   );
 }
 
-function BackIcon() {
+// ── Shared: phone number input row ─────────────────────────────────────────────
+function PhoneInputRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M19 12H5M12 5l-7 7 7 7" />
-    </svg>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PHONE FRAME
-// ══════════════════════════════════════════════════════════════════════════════
-
-// PhoneFrame uses transform:scale so all internal px values stay correct at every size.
-// The outer wrapper occupies the *scaled* dimensions in the flow so nothing overflows.
-function PhoneFrame({ children, label, scale = 1 }: {
-  children: React.ReactNode; label: string; scale?: number;
-}) {
-  const W = 340; const H = 700;
-  const sw = Math.round(W * scale);
-  const sh = Math.round(H * scale);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
-      {/* Layout footprint = scaled size; overflow hidden clips rounded corners */}
-      <div style={{ width: sw, height: sh, position: 'relative', overflow: 'hidden', borderRadius: Math.round(44 * scale), flexShrink: 0 }}>
-        {/* Phone at natural 340×700, shrunk by transform */}
-        <div style={{
-          width: W, height: H,
-          transform: `scale(${scale})`, transformOrigin: 'top left',
-          borderRadius: 44, backgroundColor: '#0F172A',
-          padding: '12px 6px 8px',
-          boxShadow: '0 32px 80px rgba(0,0,0,0.5), 0 0 0 2px #1E293B, inset 0 0 0 1px rgba(255,255,255,0.05)',
-          position: 'relative', display: 'flex', flexDirection: 'column',
-        }}>
-          {/* Dynamic island */}
-          <div style={{ position: 'absolute', top: 13, left: '50%', transform: 'translateX(-50%)', width: 96, height: 26, backgroundColor: '#0F172A', borderRadius: 18, zIndex: 10 }} />
-          {/* Screen */}
-          <div style={{ flex: 1, borderRadius: 36, overflow: 'hidden', backgroundColor: C.g50, display: 'flex', flexDirection: 'column' }}>
-            {/* Status bar */}
-            <div style={{ height: 42, backgroundColor: C.white, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 20, paddingRight: 16, flexShrink: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>9:41</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <svg width="14" height="10" viewBox="0 0 15 11">
-                  <rect x="0" y="7" width="3" height="4" rx="0.5" fill={C.g900} />
-                  <rect x="4" y="5" width="3" height="6" rx="0.5" fill={C.g900} />
-                  <rect x="8" y="3" width="3" height="8" rx="0.5" fill={C.g900} />
-                  <rect x="12" y="0" width="3" height="11" rx="0.5" fill={C.g900} />
-                </svg>
-                <svg width="14" height="11" viewBox="0 0 16 12">
-                  <circle cx="8" cy="10.5" r="1" fill={C.g900} />
-                  <path d="M4.5 7.5Q8 4 11.5 7.5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-                  <path d="M2 5Q8-0.5 14 5" stroke={C.g900} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-                </svg>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <div style={{ width: 20, height: 10, border: `1.5px solid ${C.g900}`, borderRadius: 3, padding: 1.5, display: 'flex' }}>
-                    <div style={{ flex: 0.8, backgroundColor: C.g900, borderRadius: 1 }} />
-                  </div>
-                  <div style={{ width: 2, height: 5, backgroundColor: C.g900, borderRadius: '0 1px 1px 0' }} />
-                </div>
-              </div>
-            </div>
-            {/* Content */}
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-              {children}
-            </div>
-          </div>
-          {/* Home indicator */}
-          <div style={{ height: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 3 }}>
-            <div style={{ width: 90, height: 3, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 3 }} />
-          </div>
-        </div>
+    <div style={{ display: 'flex', gap: 0 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        border: `1px solid ${C.g200}`, borderRight: 'none',
+        borderRadius: '10px 0 0 10px', paddingInline: 12, paddingBlock: 14,
+        background: C.g50, minWidth: 88, whiteSpace: 'nowrap',
+      }}>
+        <span style={{ fontSize: 16 }}>🇿🇼</span>
+        <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>+263</span>
+        <span style={{ fontSize: 11, color: C.g500 }}>▾</span>
       </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// SCREEN HEADER & TAB BARS
-// ══════════════════════════════════════════════════════════════════════════════
-
-function ScreenHeader({ title, subtitle, onBack, right }: {
-  title: string; subtitle?: string; onBack?: () => void; right?: React.ReactNode;
-}) {
-  return (
-    <div style={{ backgroundColor: C.white, padding: '10px 14px', borderBottom: `1px solid ${C.g200}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {onBack && (
-        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.teal, padding: 0, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-          <BackIcon />
-        </button>
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: C.g900, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 10, color: C.g500, marginTop: 1 }}>{subtitle}</div>}
-      </div>
-      {right}
-    </div>
-  );
-}
-
-function TeacherTabs({ active }: { active: string }) {
-  const { tGoTo } = useDemo();
-  const tabs = [
-    { id: 'teacher-home', label: 'Classes', icon: '🏫' },
-    { id: 'teacher-analytics', label: 'Analytics', icon: '📊' },
-    { id: 'teacher-settings', label: 'Settings', icon: '⚙️' },
-  ];
-  return (
-    <div style={{ display: 'flex', borderTop: `1px solid ${C.g200}`, backgroundColor: C.white, flexShrink: 0 }}>
-      {tabs.map(t => (
-        <button key={t.id} onClick={() => tGoTo(t.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '7px 0 9px', gap: 2, background: 'none', border: 'none', cursor: 'pointer' }}>
-          <span style={{ fontSize: 17 }}>{t.icon}</span>
-          <span style={{ fontSize: 9, fontWeight: 600, color: active === t.id ? C.teal : C.g500 }}>{t.label}</span>
-          {active === t.id && <div style={{ width: 16, height: 2, backgroundColor: C.teal, borderRadius: 2, marginTop: 1 }} />}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function StudentTabs({ active, resultsLocked }: { active: string; resultsLocked: boolean }) {
-  const { sGoTo } = useDemo();
-  const tabs = [
-    { id: 'student-home', label: 'Home', icon: '📚' },
-    { id: 'student-submit', label: 'Submit', icon: '📤' },
-    { id: 'student-tutor', label: 'Tutor', icon: '🤖' },
-    { id: 'student-results', label: 'Results', icon: '📋', locked: resultsLocked },
-    { id: 'student-settings', label: 'Settings', icon: '⚙️' },
-  ];
-  return (
-    <div style={{ display: 'flex', borderTop: `1px solid ${C.g200}`, backgroundColor: C.white, flexShrink: 0 }}>
-      {tabs.map(t => {
-        const locked = 'locked' in t && t.locked;
-        return (
-          <button key={t.id} onClick={() => !locked && sGoTo(t.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '5px 0 7px', gap: 1, background: 'none', border: 'none', cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.35 : 1 }}>
-            <span style={{ fontSize: 14 }}>{t.icon}</span>
-            <span style={{ fontSize: 8, fontWeight: 600, color: active === t.id ? C.teal : C.g500 }}>{t.label}</span>
-            {active === t.id && <div style={{ width: 14, height: 2, backgroundColor: C.teal, borderRadius: 2 }} />}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TEACHER SCREENS
-// ══════════════════════════════════════════════════════════════════════════════
-
-function TeacherHome() {
-  const { homeworkCreated, schemeReady, studentSubmitted, gradingStatus, approved, tPush, tGoTo } = useDemo();
-  const subCount = studentSubmitted ? 1 : 0;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader
-        title="My Classes"
-        right={
-          <button onClick={() => tPush('teacher-add-homework')} style={{ backgroundColor: C.teal, color: '#fff', border: 'none', borderRadius: 18, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Homework
-          </button>
-        }
+      <input
+        type="tel"
+        value={value}
+        onChange={e => onChange(e.target.value.replace(/\D/g, ''))}
+        placeholder="77 123 4567"
+        style={{
+          flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
+          padding: '14px 12px', fontSize: 15, color: C.text, outline: 'none',
+          fontFamily: 'inherit',
+        }}
       />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        {/* Class card */}
-        <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.g900 }}>Form 2A</div>
-              <div style={{ fontSize: 11, color: C.g500 }}>Mathematics · Form 2</div>
-            </div>
-            <Badge color={C.tealDk} bg={C.tealLt}>Form 2</Badge>
-          </div>
-          <div style={{ display: 'flex', gap: 16, borderTop: `1px solid ${C.g100}`, paddingTop: 8 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>1</div>
-              <div style={{ fontSize: 9, color: C.g500 }}>students</div>
-            </div>
-            <div style={{ width: 1, backgroundColor: C.g200 }} />
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>{homeworkCreated ? 1 : 0}</div>
-              <div style={{ fontSize: 9, color: C.g500 }}>homework</div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Homework card */}
-        {homeworkCreated && (
-          <button onClick={() => tGoTo('teacher-homework-detail')} style={{ width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-            <Card style={{ border: `1px solid ${C.g200}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.g900 }}>Maths Chapter 5 Test</div>
-                  <div style={{ fontSize: 10, color: C.g500, marginTop: 2 }}>Created 8 Apr 2026 · {subCount} submissions</div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, marginLeft: 8 }}>
-                  {!schemeReady ? (
-                    <Badge color={C.amberDk} bg={C.amberLt}>Upload Scheme</Badge>
-                  ) : gradingStatus === 'complete' ? (
-                    <Badge color={C.tealDk} bg={C.tealLt}>View Grading ›</Badge>
-                  ) : studentSubmitted ? (
-                    <Badge color={C.amberDk} bg={C.amberLt}>Ready to Grade</Badge>
-                  ) : (
-                    <Badge color={C.green} bg={C.greenLt}>Open</Badge>
-                  )}
-                  {approved && <Badge color={C.green} bg={C.greenLt}>✓ All Approved</Badge>}
-                </div>
-              </div>
-            </Card>
-          </button>
-        )}
-
-        {/* Add homework CTA */}
-        <button onClick={() => tPush('teacher-add-homework')} style={{ width: '100%', background: 'none', border: `1.5px dashed ${C.g200}`, borderRadius: 12, padding: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit' }}>
-          <span style={{ color: C.teal, fontSize: 16, fontWeight: 700 }}>+</span>
-          <span style={{ color: C.teal, fontSize: 12, fontWeight: 600 }}>Add Homework</span>
-        </button>
-      </div>
-      <TeacherTabs active="teacher-home" />
     </div>
   );
 }
 
-function TeacherAddHomework() {
-  const { tPop, tPush, tGoTo, createHomework } = useDemo();
-  const [title, setTitle] = useState('Maths Chapter 5 Test');
-
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Welcome / Role Select
+// ──────────────────────────────────────────────────────────────────────────────
+function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignIn: () => void }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Add Homework" subtitle="Form 2A — Mathematics" onBack={tPop} />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>CLASS</div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 13, color: C.g900 }}>Form 2A</div>
-              <div style={{ fontSize: 11, color: C.g500 }}>Mathematics · Form 2</div>
-            </div>
-            <Badge color={C.tealDk} bg={C.tealLt}>Form 2</Badge>
-          </div>
-        </Card>
-
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: C.g900, marginBottom: 6 }}>Homework Title</div>
-          <input value={title} onChange={e => setTitle(e.target.value)} style={{ width: '100%', border: `1.5px solid ${C.g200}`, borderRadius: 10, padding: '9px 12px', fontSize: 13, color: C.g900, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }} />
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: C.g900, marginBottom: 6 }}>Answer Key</div>
-          <div style={{ border: `1.5px dashed ${C.g200}`, borderRadius: 10, padding: 14, textAlign: 'center', opacity: 0.55 }}>
-            <div style={{ fontSize: 22, marginBottom: 4 }}>📄</div>
-            <div style={{ fontSize: 11, color: C.g500, marginBottom: 6 }}>Upload from device</div>
-            <div style={{ fontSize: 10, color: C.g400 }}>PDF · Image · Word (coming soon)</div>
-          </div>
-        </div>
-
-        <button onClick={() => { createHomework(); tPush('teacher-generate-scheme'); }} style={{ width: '100%', backgroundColor: C.teal, color: '#fff', border: 'none', borderRadius: 10, padding: '13px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', boxShadow: `0 2px 10px ${C.teal}55`, fontFamily: 'inherit' }}>
-          <span style={{ fontSize: 17 }}>✨</span>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>Generate with AI</span>
-        </button>
-        <div style={{ fontSize: 10, color: C.g400, textAlign: 'center', marginTop: 6 }}>Powered by Gemma 4 · on-device</div>
-      </div>
-      <TeacherTabs active="teacher-home" />
-    </div>
-  );
-}
-
-function TeacherGenerateScheme() {
-  const { tPop, tGoTo, saveScheme } = useDemo();
-  const [phase, setPhase] = useState<'preview' | 'generating' | 'done'>('preview');
-
-  const handleGenerate = () => {
-    setPhase('generating');
-    setTimeout(() => setPhase('done'), 2200);
-  };
-
-  const handleSave = () => {
-    saveScheme();
-    tGoTo('teacher-homework-detail');
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader
-        title={phase === 'done' ? 'Marking Scheme' : 'Generate Scheme'}
-        subtitle={phase === 'done' ? 'Gemma 4 generated · Tap cards to edit' : 'Form 2A — Mathematics'}
-        onBack={phase === 'generating' ? undefined : tPop}
-      />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        {phase === 'preview' && (
-          <>
-            <div style={{ border: `1px solid ${C.g200}`, borderRadius: 12, overflow: 'hidden', marginBottom: 12 }}>
-              <div style={{ backgroundColor: C.g100, padding: '6px 12px', fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>QUESTION PAPER</div>
-              <div style={{ padding: 12, fontFamily: 'monospace', fontSize: 10, color: C.g700, lineHeight: 1.8, backgroundColor: '#FEFEFE' }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>MATHEMATICS — FORM 2A</div>
-                {SCHEME.slice(0, 3).map((q, i) => <div key={q.q}>{i + 1}. {q.text}</div>)}
-                <div style={{ color: C.g400, marginTop: 4 }}>…and 2 more questions</div>
-              </div>
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.g900, marginBottom: 6 }}>Education Level</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {['Form 1', 'Form 2', 'Form 3'].map(l => (
-                  <button key={l} style={{ padding: '5px 10px', borderRadius: 14, border: `1.5px solid ${l === 'Form 2' ? C.teal : C.g200}`, backgroundColor: l === 'Form 2' ? C.tealLt : C.white, color: l === 'Form 2' ? C.teal : C.g500, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{l}</button>
-                ))}
-              </div>
-            </div>
-            <TealBtn onClick={handleGenerate}>Generate Marking Scheme</TealBtn>
-          </>
-        )}
-
-        {phase === 'generating' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 50, gap: 16 }}>
-            <div style={{ width: 52, height: 52, borderRadius: '50%', backgroundColor: C.tealLt, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>✨</div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.g900, marginBottom: 4 }}>Gemma 4 is reading your paper…</div>
-              <div style={{ fontSize: 11, color: C.g500 }}>Generating marking scheme</div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {[0, 1, 2].map(i => <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: C.teal, animation: `neriah-bounce 0.8s ${i * 0.2}s ease-in-out infinite alternate` }} />)}
-            </div>
-          </div>
-        )}
-
-        {phase === 'done' && (
-          <>
-            <div style={{ backgroundColor: C.tealLt, borderRadius: 10, padding: 10, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 16 }}>✅</span>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDk }}>Scheme generated</div>
-                <div style={{ fontSize: 10, color: C.tealDk }}>5 questions · 10 marks total</div>
-              </div>
-            </div>
-            {SCHEME.map(item => (
-              <Card key={item.q} style={{ marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                  <span style={{ fontWeight: 700, fontSize: 11, color: C.teal }}>{item.q}</span>
-                  <Badge color={C.tealDk} bg={C.tealLt}>{item.marks} marks</Badge>
-                </div>
-                <div style={{ fontSize: 11, color: C.g500, marginBottom: 3 }}>{item.text}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.green }}>✓ {item.ans}</div>
-              </Card>
-            ))}
-            <TealBtn onClick={handleSave} style={{ marginTop: 4 }}>Save and Use This Scheme</TealBtn>
-          </>
-        )}
-      </div>
-      <TeacherTabs active="teacher-home" />
-    </div>
-  );
-}
-
-function AnnotatedImageModal({ onClose, onApprove, alreadyApproved }: {
-  onClose: () => void; onApprove: () => void; alreadyApproved: boolean;
-}) {
-  return (
-    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.92)', zIndex: 50, display: 'flex', flexDirection: 'column', borderRadius: 0 }}>
+    <Screen style={{ justifyContent: 'center', padding: 20 }}>
       {/* Header */}
-      <div style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>✕</button>
-        <div style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>Tendai Moyo — 7/10 (70%)</div>
-        <div style={{ width: 24 }} />
-      </div>
-
-      {/* Exercise book mockup */}
-      <div style={{ flex: 1, margin: '0 12px', backgroundColor: '#FEFDF5', borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
-        <div style={{ position: 'absolute', inset: 0, backgroundImage: `repeating-linear-gradient(transparent, transparent 22px, #DBEAFE 22px, #DBEAFE 23px)`, backgroundPositionY: '28px' }} />
-        <div style={{ position: 'absolute', left: 34, top: 0, bottom: 0, width: 1.5, backgroundColor: '#FCA5A5' }} />
-        <div style={{ position: 'relative', padding: '8px 10px 8px 42px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 10, color: '#111' }}>NAME: Tendai Moyo · Form 2A</div>
-          {VERDICTS.map((v, i) => (
-            <div key={v.q} style={{ marginBottom: 14, position: 'relative', paddingRight: 28 }}>
-              <div style={{ fontSize: 9, color: '#222', lineHeight: 1.5 }}>
-                <span style={{ fontWeight: 700 }}>{v.q}. </span>
-                {['2x + 5 = 11, x = 3', '15% of 200 = 30', '8 × 5 = 40 cm²', '4x + 12', '3/10'][i]}
-              </div>
-              <div style={{ position: 'absolute', right: 2, top: 0, width: 18, height: 18, borderRadius: '50%', backgroundColor: v.correct ? C.green : v.awarded > 0 ? C.amber : C.red, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#fff', fontWeight: 700, flexShrink: 0 }}>
-                {v.correct ? '✓' : v.awarded > 0 ? '~' : '✗'}
-              </div>
-            </div>
-          ))}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 36 }}>
+        <div style={{
+          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 12,
+          background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Image
+            src="/images/logo/logo-dark-brackground.png"
+            alt="Neriah"
+            width={80} height={80}
+            style={{ objectFit: 'contain', width: '100%', height: '100%' }}
+          />
         </div>
-        {/* Score stamp */}
-        <div style={{ position: 'absolute', bottom: 10, right: 10, width: 48, height: 48, borderRadius: '50%', border: '2.5px solid #DC2626', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.9)' }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#DC2626', lineHeight: 1 }}>7</div>
-          <div style={{ fontSize: 8, color: '#DC2626', fontWeight: 600 }}>/ 10</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center' }}>
+          Welcome to Neriah
         </div>
       </div>
 
-      {/* Verdicts strip */}
-      <div style={{ margin: '8px 12px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {VERDICTS.map(v => (
-            <div key={v.q} style={{ backgroundColor: v.correct ? C.green : v.awarded > 0 ? C.amber : C.red, borderRadius: 6, padding: '2px 7px', fontSize: 10, color: '#fff', fontWeight: 700 }}>
-              {v.q}: {v.awarded}/{SCHEME.find(s => s.q === v.q)!.marks}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Role cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Teacher */}
+        <button
+          onClick={onTeacher}
+          style={{
+            background: C.teal, border: 'none', borderRadius: 16, padding: '24px 20px',
+            cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
+            gap: 8, minHeight: 130, justifyContent: 'center',
+            boxShadow: '0 4px 14px rgba(13,115,119,0.30)', transition: 'opacity 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+        >
+          <span style={{ fontSize: 36 }}>💼</span>
+          <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+            Mark exercise books with AI
+          </span>
+        </button>
 
-      {/* Actions */}
-      <div style={{ padding: '6px 12px 12px', display: 'flex', gap: 8, flexShrink: 0 }}>
-        {!alreadyApproved ? (
-          <>
-            <button onClick={onApprove} style={{ flex: 1, backgroundColor: C.teal, color: '#fff', border: 'none', borderRadius: 10, padding: 11, fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✓ Approve</button>
-            <button onClick={onClose} style={{ flex: 1, backgroundColor: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.25)', borderRadius: 10, padding: 11, fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>Override Score</button>
-          </>
-        ) : (
-          <div style={{ flex: 1, backgroundColor: C.greenLt, borderRadius: 10, padding: 11, textAlign: 'center', fontSize: 12, fontWeight: 700, color: C.green }}>✓ Approved & Released</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TeacherHomeworkDetail() {
-  const { tPop, studentSubmitted, gradingStatus, approved, closeAndGrade, approveAll } = useDemo();
-  const [showAnnotated, setShowAnnotated] = useState(false);
-  const subCount = studentSubmitted ? 1 : 0;
-
-  const banner = (() => {
-    if (gradingStatus === 'complete') return { bg: C.blueLt, color: C.blue, icon: '✅', title: 'Grading Complete', sub: `${approved ? 1 : 0}/1 Approved` };
-    if (gradingStatus === 'grading') return { bg: C.tealLt, color: C.tealDk, icon: '⏳', title: 'Grading in progress…', sub: 'Gemma 4 is marking submissions' };
-    if (studentSubmitted) return { bg: C.amberLt, color: C.amberDk, icon: '📥', title: 'Ready to Grade', sub: `${subCount} submission received` };
-    return { bg: C.greenLt, color: C.green, icon: '🟢', title: 'Accepting Submissions', sub: `${subCount} received · Due 10 Apr 2026` };
-  })();
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      <ScreenHeader title="Maths Chapter 5 Test" subtitle="Form 2A · Mathematics" onBack={tPop} />
-
-      <div style={{ backgroundColor: banner.bg, padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, borderBottom: `1px solid ${C.g200}` }}>
-        <span style={{ fontSize: 14 }}>{banner.icon}</span>
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: banner.color }}>{banner.title}</div>
-          <div style={{ fontSize: 10, color: banner.color }}>{banner.sub}</div>
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.g900 }}>Marking Scheme</span>
-            <Badge color={C.tealDk} bg={C.tealLt}>5 questions · 10 marks</Badge>
-          </div>
-          {SCHEME.slice(0, 3).map(q => (
-            <div key={q.q} style={{ fontSize: 10, color: C.g500, padding: '2px 0', borderBottom: `1px solid ${C.g100}` }}>
-              <span style={{ fontWeight: 600, color: C.g700 }}>{q.q}: </span>{q.ans}
-            </div>
-          ))}
-          <div style={{ fontSize: 10, color: C.teal, marginTop: 4, fontWeight: 600 }}>+ 2 more</div>
-        </Card>
-
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g900, marginBottom: 8 }}>Submissions ({subCount})</div>
-
-        {subCount === 0 ? (
-          <div style={{ backgroundColor: C.white, borderRadius: 12, padding: 18, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-            <div style={{ fontSize: 22, marginBottom: 6 }}>📤</div>
-            <div style={{ fontSize: 12, color: C.g500 }}>No submissions yet.</div>
-            <div style={{ fontSize: 10, color: C.g400, marginTop: 4 }}>Students can submit via app, WhatsApp, or email.</div>
-          </div>
-        ) : (
-          <button onClick={() => gradingStatus === 'complete' && setShowAnnotated(true)} style={{ width: '100%', background: 'none', border: 'none', padding: 0, textAlign: 'left', cursor: gradingStatus === 'complete' ? 'pointer' : 'default' }}>
-            <Card style={{ border: `1px solid ${C.g200}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>Tendai Moyo</div>
-                  <div style={{ fontSize: 10, color: C.g500 }}>Submitted 8 Apr · 14:32</div>
-                </div>
-                {gradingStatus === 'complete' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-                    <Badge color={approved ? C.tealDk : C.blue} bg={approved ? C.tealLt : C.blueLt}>{approved ? '✓ Approved' : '7/10 — 70%'}</Badge>
-                    {!approved && <span style={{ fontSize: 10, color: C.teal, fontWeight: 600 }}>Tap to review →</span>}
-                  </div>
-                ) : (
-                  <Badge color={C.amberDk} bg={C.amberLt}>Pending</Badge>
-                )}
-              </div>
-            </Card>
-          </button>
-        )}
-      </div>
-
-      <div style={{ padding: 12, backgroundColor: C.white, borderTop: `1px solid ${C.g200}`, flexShrink: 0 }}>
-        {gradingStatus === 'none' && studentSubmitted && <TealBtn onClick={closeAndGrade}>Close & Grade All</TealBtn>}
-        {gradingStatus === 'none' && !studentSubmitted && <OutlineBtn>Close Submissions</OutlineBtn>}
-        {gradingStatus === 'grading' && (
-          <div style={{ backgroundColor: C.tealLt, borderRadius: 10, padding: 11, textAlign: 'center' }}>
-            <div style={{ fontSize: 12, color: C.tealDk, fontWeight: 600 }}>Grading in progress…</div>
-          </div>
-        )}
-        {gradingStatus === 'complete' && !approved && <TealBtn onClick={approveAll}>Approve All Results</TealBtn>}
-        {gradingStatus === 'complete' && approved && (
-          <div style={{ backgroundColor: C.greenLt, borderRadius: 10, padding: 11, textAlign: 'center', border: `1px solid ${C.green}` }}>
-            <div style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>✓ All results approved & released to students</div>
-          </div>
-        )}
-      </div>
-
-      {showAnnotated && (
-        <AnnotatedImageModal
-          onClose={() => setShowAnnotated(false)}
-          onApprove={() => { approveAll(); setShowAnnotated(false); }}
-          alreadyApproved={approved}
-        />
-      )}
-    </div>
-  );
-}
-
-function TeacherAnalytics() {
-  const { gradingStatus } = useDemo();
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Analytics" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        {gradingStatus !== 'complete' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 60, textAlign: 'center' }}>
-            <div style={{ fontSize: 42, marginBottom: 10 }}>📊</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.g900, marginBottom: 6 }}>No data yet</div>
-            <div style={{ fontSize: 11, color: C.g500 }}>Grade homework to see class analytics</div>
-          </div>
-        ) : (
-          <>
-            <Card style={{ textAlign: 'center', padding: 18, marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Form 2A Class Average</div>
-              <div style={{ position: 'relative', width: 90, height: 90, margin: '0 auto 10px' }}>
-                <svg viewBox="0 0 36 36" style={{ width: 90, height: 90, transform: 'rotate(-90deg)' }}>
-                  <circle cx="18" cy="18" r="15.9" fill="none" stroke={C.g200} strokeWidth="3" />
-                  <circle cx="18" cy="18" r="15.9" fill="none" stroke={C.teal} strokeWidth="3" strokeDasharray="70 30" strokeLinecap="round" />
-                </svg>
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: C.g900 }}>70%</div>
-                  <div style={{ fontSize: 9, color: C.g500 }}>7/10</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 11, color: C.g500 }}>1 student graded</div>
-            </Card>
-            <Card>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.g900, marginBottom: 8 }}>Question Analysis</div>
-              {SCHEME.map((q, i) => {
-                const v = VERDICTS[i];
-                const pct = (v.awarded / q.marks) * 100;
-                return (
-                  <div key={q.q} style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <span style={{ fontSize: 10, color: C.g700 }}>{q.q}: {q.text.slice(0, 22)}…</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: pct >= 100 ? C.green : pct > 0 ? C.amber : C.red }}>{v.awarded}/{q.marks}</span>
-                    </div>
-                    <div style={{ height: 4, backgroundColor: C.g200, borderRadius: 4 }}>
-                      <div style={{ height: 4, width: `${pct}%`, backgroundColor: pct >= 100 ? C.green : pct > 0 ? C.amber : C.red, borderRadius: 4, transition: 'width 0.5s ease' }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </Card>
-          </>
-        )}
-      </div>
-      <TeacherTabs active="teacher-analytics" />
-    </div>
-  );
-}
-
-function TeacherSettings() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Settings" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>PROFILE</div>
-        <Card style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 42, height: 42, borderRadius: '50%', backgroundColor: C.tealLt, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>👨‍🏫</div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.g900 }}>Mr. Maisiri</div>
-              <div style={{ fontSize: 10, color: C.g500 }}>Form 2A · Neriah Demo School</div>
-              <div style={{ marginTop: 3 }}><Badge color={C.tealDk} bg={C.tealLt}>Teacher</Badge></div>
-            </div>
-          </div>
-        </Card>
-
-        <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>ON-DEVICE AI</div>
-        <Card style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>Gemma 4</span>
-            <Badge color={C.green} bg={C.greenLt}>● Ready</Badge>
-          </div>
-          <div style={{ fontSize: 10, color: C.g500, marginBottom: 6 }}>Downloaded · 2.1 GB · Marks offline</div>
-          <div style={{ height: 4, backgroundColor: C.g200, borderRadius: 4 }}>
-            <div style={{ height: 4, width: '100%', backgroundColor: C.teal, borderRadius: 4 }} />
-          </div>
-        </Card>
-
-        <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>SECURITY</div>
-        <Card style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: C.g900 }}>Set PIN Lock</span>
-            <span style={{ color: C.g400 }}>›</span>
-          </div>
-        </Card>
-
-        <button style={{ width: '100%', backgroundColor: C.redLt, color: C.red, border: `1px solid #FECACA`, borderRadius: 10, padding: 11, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Log Out</button>
-      </div>
-      <TeacherTabs active="teacher-settings" />
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// STUDENT SCREENS
-// ══════════════════════════════════════════════════════════════════════════════
-
-function StudentHome() {
-  const { homeworkCreated, studentSubmitted, approved, sPush, sGoTo } = useDemo();
-  const [notifVisible, setNotifVisible] = useState(false);
-  const prevCreated = useRef(false);
-
-  useEffect(() => {
-    if (homeworkCreated && !prevCreated.current) {
-      setNotifVisible(true);
-      setTimeout(() => setNotifVisible(false), 3500);
-    }
-    prevCreated.current = homeworkCreated;
-  }, [homeworkCreated]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      {notifVisible && (
-        <div style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 20, backgroundColor: C.white, borderRadius: 14, padding: '9px 12px', boxShadow: '0 4px 20px rgba(0,0,0,0.22)', display: 'flex', gap: 10, alignItems: 'center', animation: 'neriah-slide-down 0.4s ease' }}>
-          <span style={{ fontSize: 18 }}>📚</span>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.g900 }}>New Homework — Neriah</div>
-            <div style={{ fontSize: 10, color: C.g500 }}>Maths Chapter 5 Test assigned</div>
-          </div>
-        </div>
-      )}
-
-      <div style={{ backgroundColor: C.teal, padding: '12px 16px 10px', flexShrink: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Hello, Tendai 👋</div>
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', marginTop: 1 }}>Form 2A · Mathematics</div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: C.g700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>OPEN ASSIGNMENTS</div>
-
-        {!homeworkCreated ? (
-          <div style={{ backgroundColor: C.white, borderRadius: 12, padding: 22, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-            <div style={{ fontSize: 30, marginBottom: 8 }}>📭</div>
-            <div style={{ fontSize: 12, color: C.g500 }}>No homework yet.</div>
-            <div style={{ fontSize: 10, color: C.g400, marginTop: 4 }}>Your teacher hasn't assigned anything.</div>
-          </div>
-        ) : (
-          <button onClick={() => sPush('student-submit')} style={{ width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-            <Card style={{ border: `1px solid ${C.g200}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>Maths Chapter 5 Test</div>
-                  <div style={{ fontSize: 10, color: C.g500, marginTop: 2 }}>Form 2A · Due: 10 Apr 2026</div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, marginLeft: 8 }}>
-                  {studentSubmitted ? (
-                    <Badge color={C.tealDk} bg={C.tealLt}>Submitted ✓</Badge>
-                  ) : (
-                    <Badge color={C.green} bg={C.greenLt}>Open</Badge>
-                  )}
-                  {approved && <Badge color={C.blue} bg={C.blueLt}>Results Ready!</Badge>}
-                </div>
-              </div>
-              {approved && (
-                <div style={{ marginTop: 8, padding: '7px 10px', backgroundColor: C.tealLt, borderRadius: 8, textAlign: 'center' }}>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: C.teal }}>70%</span>
-                  <span style={{ fontSize: 11, color: C.g500, marginLeft: 6 }}>7 / 10 marks</span>
-                </div>
-              )}
-            </Card>
-          </button>
-        )}
-
-        {/* Study suggestions card — shown after teacher approves */}
-        {approved && (
-          <div style={{ marginTop: 12, backgroundColor: '#FEF3C7', borderRadius: 14, padding: 12, border: '1px solid #FCD34D' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 18 }}>📚</span>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E' }}>Practice Opportunities</div>
-                <div style={{ fontSize: 10, color: '#B45309' }}>Based on your Maths Chapter 5 Test</div>
-              </div>
-            </div>
-            {[
-              { topic: 'Simplifying expressions', reason: 'You scored 0/2 in Maths Chapter 5 Test', priority: 'Review', prompt: 'Help me simplify 3(2x+4) − 2(x−1) step by step' },
-              { topic: 'Probability', reason: 'You scored 1/2 in Maths Chapter 5 Test', priority: 'Practice', prompt: 'Help me understand probability with red and blue balls' },
-            ].map(s => (
-              <button
-                key={s.topic}
-                onClick={() => sGoTo('student-tutor')}
-                style={{ width: '100%', background: '#fff', border: '1px solid #FCD34D', borderRadius: 10, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'inherit' }}
-              >
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#1C1C1C' }}>{s.topic}</div>
-                  <div style={{ fontSize: 10, color: '#6B7280', marginTop: 1 }}>{s.reason}</div>
-                </div>
-                <span style={{ backgroundColor: s.priority === 'Review' ? '#FEE2E2' : '#FEF3C7', color: '#92400E', fontSize: 9, fontWeight: 700, borderRadius: 5, padding: '2px 6px', marginLeft: 6, flexShrink: 0 }}>{s.priority}</span>
-              </button>
-            ))}
-            <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #FCD34D' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#92400E', marginBottom: 5 }}>Your strengths 💪</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {['Solving linear equations', 'Percentages', 'Area of rectangles'].map(t => (
-                  <span key={t} style={{ backgroundColor: '#D1FAE5', color: '#065F46', fontSize: 10, fontWeight: 600, borderRadius: 8, padding: '3px 8px' }}>{t}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-      <StudentTabs active="student-home" resultsLocked={!approved} />
-    </div>
-  );
-}
-
-function StudentSubmit() {
-  const { sPop, sPush, sGoTo, homeworkCreated } = useDemo();
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Submit Homework" onBack={sPop} />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        {!homeworkCreated ? (
-          <div style={{ textAlign: 'center', paddingTop: 60 }}>
-            <div style={{ fontSize: 30, marginBottom: 8 }}>📭</div>
-            <div style={{ fontSize: 12, color: C.g500 }}>No open assignments</div>
-          </div>
-        ) : (
-          <>
-            <Card style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>OPEN ASSIGNMENT</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.g900 }}>Maths Chapter 5 Test</div>
-              <div style={{ fontSize: 10, color: C.g500 }}>Form 2A · Due: 10 Apr 2026</div>
-            </Card>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.g900, marginBottom: 10 }}>How would you like to submit?</div>
-            <TealBtn onClick={() => sPush('student-camera')} style={{ marginBottom: 10 }}>📷  Take Photo of Exercise Book</TealBtn>
-            <OutlineBtn style={{ marginBottom: 10 }}>💬  Submit via WhatsApp</OutlineBtn>
-            <OutlineBtn>📧  Submit via Email</OutlineBtn>
-          </>
-        )}
-      </div>
-      <StudentTabs active="student-submit" resultsLocked={true} />
-    </div>
-  );
-}
-
-function StudentCamera() {
-  const { sPop, sPush } = useDemo();
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#000' }}>
-      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        <button onClick={sPop} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>✕</button>
-        <div style={{ color: '#fff', fontSize: 12, fontWeight: 600 }}>Point at your exercise book</div>
-      </div>
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', margin: '0 12px', borderRadius: 8 }}>
-        {/* Simulated book */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#FEFDF5', backgroundImage: `repeating-linear-gradient(transparent, transparent 22px, #CBD5E1 22px, #CBD5E1 23px)`, backgroundPositionY: '30px' }}>
-          <div style={{ position: 'absolute', left: 30, top: 0, bottom: 0, width: 1.5, backgroundColor: '#FCA5A5' }} />
-          <div style={{ padding: '10px 10px 10px 38px', fontFamily: 'monospace', fontSize: 10, color: '#374151' }}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>NAME: Tendai Moyo</div>
-            <div style={{ marginBottom: 10 }}>1. 2x + 5 = 11</div>
-            <div style={{ paddingLeft: 12, marginBottom: 4 }}>2x = 11 − 5 = 6</div>
-            <div style={{ paddingLeft: 12 }}>x = 3 ✓</div>
-          </div>
-        </div>
-        {/* Corner brackets */}
-        {[
-          { top: 10, left: 10 }, { top: 10, right: 10 },
-          { bottom: 10, left: 10 }, { bottom: 10, right: 10 },
-        ].map((pos, i) => (
-          <div key={i} style={{ position: 'absolute', width: 26, height: 26, ...pos,
-            borderTop: 'top' in pos ? '3px solid #fff' : 'none',
-            borderBottom: 'bottom' in pos ? '3px solid #fff' : 'none',
-            borderLeft: 'left' in pos ? '3px solid #fff' : 'none',
-            borderRight: 'right' in pos ? '3px solid #fff' : 'none',
-          }} />
-        ))}
-        <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 10, padding: '3px 10px', borderRadius: 10, whiteSpace: 'nowrap' }}>
-          Align page within the frame
-        </div>
-      </div>
-      <div style={{ padding: '14px 0 18px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-        <button onClick={() => sPush('student-preview')} style={{ width: 64, height: 64, borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', border: '3px solid rgba(255,255,255,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 50, height: 50, borderRadius: '50%', backgroundColor: '#fff' }} />
+        {/* Student */}
+        <button
+          style={{
+            background: C.amber, border: 'none', borderRadius: 16, padding: '24px 20px',
+            cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
+            gap: 8, minHeight: 130, justifyContent: 'center',
+            boxShadow: '0 4px 14px rgba(245,166,35,0.30)', transition: 'opacity 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+        >
+          <span style={{ fontSize: 36 }}>🎓</span>
+          <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Student</span>
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+            Submit work and get feedback
+          </span>
         </button>
       </div>
-    </div>
+
+      {/* Sign in link */}
+      <div style={{ marginTop: 32, textAlign: 'center', fontSize: 14, color: C.g500 }}>
+        Already have an account?{' '}
+        <button
+          onClick={onSignIn}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, padding: 0 }}
+        >
+          Sign in
+        </button>
+      </div>
+    </Screen>
   );
 }
 
-function StudentPreview() {
-  const { sPop, sGoTo, studentSubmit } = useDemo();
-  const [status, setStatus] = useState<'optimizing' | 'ready'>('optimizing');
-
-  useEffect(() => { setTimeout(() => setStatus('ready'), 1600); }, []);
-
-  const handleSubmit = () => { studentSubmit(); sGoTo('student-home'); };
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Phone (Login)
+// ──────────────────────────────────────────────────────────────────────────────
+function PhoneScreen({
+  onContinue, onRegister,
+}: { onContinue: (phone: string) => void; onRegister: () => void }) {
+  const [number, setNumber] = useState('');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Preview" subtitle="Maths Chapter 5 Test" onBack={sPop} />
-      <div style={{ flex: 1, margin: 12, backgroundColor: '#FEFDF5', borderRadius: 12, position: 'relative', overflow: 'hidden', backgroundImage: `repeating-linear-gradient(transparent, transparent 22px, #E5E7EB 22px, #E5E7EB 23px)`, backgroundPositionY: '28px' }}>
-        <div style={{ position: 'absolute', left: 30, top: 0, bottom: 0, width: 1.5, backgroundColor: '#FCA5A5' }} />
-        <div style={{ padding: '10px 10px 10px 38px', fontFamily: 'monospace', fontSize: 10, color: '#374151' }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>NAME: Tendai Moyo · Form 2A</div>
-          {['1. 2x + 5 = 11 → x = 3', '2. 15% × 200 = 30', '3. 8 × 5 = 40 cm²', '4. 3(2x+4)−2(x−1) = 4x + 12', '5. 3/10'].map((line, i) => (
-            <div key={i} style={{ marginBottom: 8 }}>{line}</div>
-          ))}
+    <Screen style={{ justifyContent: 'center', padding: 20 }}>
+      {/* Branding */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}>
+        <div style={{
+          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 12,
+          background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Image
+            src="/images/logo/logo-dark-brackground.png"
+            alt="Neriah"
+            width={80} height={80}
+            style={{ objectFit: 'contain', width: '100%', height: '100%' }}
+          />
         </div>
-        <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', backgroundColor: status === 'ready' ? C.greenLt : 'rgba(0,0,0,0.6)', border: status === 'ready' ? `1px solid ${C.green}` : 'none', borderRadius: 18, padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', transition: 'all 0.3s' }}>
-          {status === 'optimizing' ? (
-            <><div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#fff', animation: 'neriah-pulse 1s infinite' }} /><span style={{ color: '#fff', fontSize: 10 }}>Optimizing…</span></>
-          ) : (
-            <><span>✅</span><span style={{ color: C.green, fontSize: 10, fontWeight: 700 }}>Looks good! Ready to submit</span></>
-          )}
+        <div style={{ fontSize: 26, fontWeight: 800, color: C.g900 }}>Neriah</div>
+        <div style={{ fontSize: 13, color: C.g500, marginTop: 4, textAlign: 'center', lineHeight: 1.4 }}>
+          AI homework marking for African schools
         </div>
       </div>
-      <div style={{ padding: '0 12px 12px' }}>
-        <TealBtn onClick={handleSubmit} disabled={status === 'optimizing'}>
-          {status === 'optimizing' ? 'Checking image quality…' : 'Submit Homework'}
-        </TealBtn>
+
+      {/* Form */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: C.g900, marginTop: 8 }}>Phone number</div>
+        <PhoneInputRow value={number} onChange={setNumber} />
+
+        <button
+          onClick={() => onContinue('+263' + number)}
+          disabled={number.length < 7}
+          style={{
+            marginTop: 20, background: number.length >= 7 ? C.teal : C.teal100,
+            border: 'none', borderRadius: 10, padding: 16, cursor: number.length >= 7 ? 'pointer' : 'not-allowed',
+            color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit', transition: 'background 0.15s',
+          }}
+        >
+          Continue
+        </button>
       </div>
-    </div>
+
+      <div style={{ marginTop: 36, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6 }}>
+        By continuing you agree to Neriah's terms of service.{'\n'}Standard SMS rates may apply.
+      </div>
+
+      <button
+        onClick={onRegister}
+        style={{ marginTop: 14, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit' }}
+      >
+        New user? Register here
+      </button>
+    </Screen>
   );
 }
 
-function StudentResults() {
-  const { approved, sGoTo } = useDemo();
-  if (!approved) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <ScreenHeader title="My Results" />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center' }}>
-          <div style={{ fontSize: 42, marginBottom: 12 }}>🔒</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.g900, marginBottom: 6 }}>Results not yet released</div>
-          <div style={{ fontSize: 11, color: C.g500 }}>Waiting for your teacher to review and approve.</div>
-        </div>
-        <StudentTabs active="student-results" resultsLocked={false} />
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="My Results" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        <Card style={{ textAlign: 'center', padding: 18, marginBottom: 12 }}>
-          <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Maths Chapter 5 Test</div>
-          <div style={{ fontSize: 40, fontWeight: 800, color: C.teal, lineHeight: 1 }}>70%</div>
-          <div style={{ fontSize: 13, color: C.g500, marginTop: 4, marginBottom: 6 }}>7 / 10 marks</div>
-          <Badge color={C.amberDk} bg={C.amberLt}>Good work! 🎉</Badge>
-        </Card>
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g900, marginBottom: 8 }}>Question Breakdown</div>
-        {VERDICTS.map(v => (
-          <Card key={v.q} style={{ marginBottom: 6 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-              <span style={{ fontWeight: 700, fontSize: 11, color: C.g900 }}>{v.q}</span>
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: v.correct ? C.green : v.awarded > 0 ? C.amber : C.red }}>
-                  {v.awarded}/{SCHEME.find(s => s.q === v.q)!.marks}
-                </span>
-                <Badge color={v.correct ? C.green : v.awarded > 0 ? C.amberDk : C.red} bg={v.correct ? C.greenLt : v.awarded > 0 ? C.amberLt : C.redLt}>
-                  {v.correct ? '✓ Correct' : v.awarded > 0 ? '~ Partial' : '✗ Wrong'}
-                </Badge>
-              </div>
-            </div>
-            <div style={{ fontSize: 10, color: C.g500 }}>{v.feedback}</div>
-          </Card>
-        ))}
-        <TealBtn onClick={() => sGoTo('student-tutor')} style={{ marginTop: 6 }}>💬 Didn't understand? Ask Neriah</TealBtn>
-      </div>
-      <StudentTabs active="student-results" resultsLocked={false} />
-    </div>
-  );
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: OTP
+// ──────────────────────────────────────────────────────────────────────────────
+function OTPScreen({ phone, onVerify, onBack }: { phone: string; onVerify: () => void; onBack: () => void }) {
+  const [otp, setOtp] = useState('');
+  const [cooldown, setCooldown] = useState(60);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-function StudentTutor() {
-  const { tutorMessages, sendTutorMsg, sGoTo, approved } = useDemo();
-  const [input, setInput] = useState('');
-  const [typing, setTyping] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 300); }, []);
+  useEffect(() => { if (cooldown <= 0) return; const t = setTimeout(() => setCooldown(s => s - 1), 1000); return () => clearTimeout(t); }, [cooldown]);
+  useEffect(() => { if (otp.length === 6) onVerify(); }, [otp]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [tutorMessages, typing]);
-
-  const send = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setInput('');
-    setTyping(true);
-    sendTutorMsg(text);
-    setTimeout(() => setTyping(false), 1500);
-  }, [sendTutorMsg]);
-
-  const CHIPS = ['How do I solve 2x + 5?', 'Explain percentages', 'Help with area'];
+  const masked = phone.replace(/(\+\d{4})\d+(\d{3})/, '$1 *** ***$2');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Neriah Tutor" subtitle="AI-powered · Socratic method" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {tutorMessages.length === 0 && (
-          <>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-              <div style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#fff', fontWeight: 700, flexShrink: 0 }}>N</div>
-              <div style={{ backgroundColor: C.white, borderRadius: '12px 12px 12px 3px', padding: '9px 12px', maxWidth: '80%', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', fontSize: 11, color: C.g900, lineHeight: 1.5 }}>
-                {approved
-                  ? 'Hi Tendai! 👋 I noticed you had some trouble with Simplifying expressions and Probability in your last homework. Want to work on one of those?'
-                  : 'Hi Tendai! 👋 I\'m Neriah, your AI study tutor. I guide you through problems with questions — not just answers. What do you need help with?'
-                }
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, paddingLeft: 36 }}>
-              {(approved
-                ? ['Simplifying expressions', 'Probability', 'How do I solve 2x + 5?']
-                : CHIPS
-              ).map(c => (
-                <button key={c} onClick={() => send(c)} style={{ backgroundColor: C.tealLt, color: C.teal, border: `1px solid ${C.teal100}`, borderRadius: 12, padding: '4px 9px', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{c}</button>
-              ))}
-            </div>
-          </>
-        )}
-        {tutorMessages.map((msg, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: 6, alignItems: 'flex-end' }}>
-            {msg.role === 'bot' && <div style={{ width: 26, height: 26, borderRadius: '50%', backgroundColor: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#fff', fontWeight: 700, flexShrink: 0 }}>N</div>}
-            <div style={{ backgroundColor: msg.role === 'user' ? C.teal : C.white, color: msg.role === 'user' ? '#fff' : C.g900, borderRadius: msg.role === 'user' ? '12px 12px 3px 12px' : '12px 12px 12px 3px', padding: '7px 11px', maxWidth: '75%', fontSize: 11, boxShadow: '0 1px 3px rgba(0,0,0,0.07)', lineHeight: 1.5 }}>
-              {msg.text}
-            </div>
-          </div>
-        ))}
-        {typing && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
-            <div style={{ width: 26, height: 26, borderRadius: '50%', backgroundColor: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#fff', fontWeight: 700, flexShrink: 0 }}>N</div>
-            <div style={{ backgroundColor: C.white, borderRadius: '12px 12px 12px 3px', padding: '10px 14px', boxShadow: '0 1px 3px rgba(0,0,0,0.07)', display: 'flex', gap: 4 }}>
-              {[0, 1, 2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: C.g400, animation: `neriah-bounce 0.8s ${i * 0.2}s ease-in-out infinite alternate` }} />)}
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
+    <Screen style={{ padding: 20, paddingTop: 28 }}>
+      <button
+        onClick={onBack}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 16, textAlign: 'left', marginBottom: 28, fontFamily: 'inherit', padding: 0 }}
+      >
+        ← Back
+      </button>
+
+      <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>Enter your code</div>
+      <div style={{ fontSize: 14, color: C.g500, lineHeight: 1.6, marginBottom: 28 }}>
+        We sent a 6-digit code to{'\n'}
+        <span style={{ color: C.text, fontWeight: 600 }}>{masked}</span>
       </div>
-      <div style={{ padding: '7px 10px 8px', borderTop: `1px solid ${C.g200}`, backgroundColor: C.white, display: 'flex', gap: 7, alignItems: 'center', flexShrink: 0 }}>
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') send(input); }}
-          placeholder="Ask a question…"
-          style={{ flex: 1, border: `1.5px solid ${C.g200}`, borderRadius: 18, padding: '7px 12px', fontSize: 11, outline: 'none', fontFamily: 'inherit' }}
-        />
-        <button onClick={() => send(input)} style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: input.trim() ? C.teal : C.g200, color: '#fff', border: 'none', cursor: input.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontFamily: 'inherit' }}>›</button>
-      </div>
-      <StudentTabs active="student-tutor" resultsLocked={!approved} />
-    </div>
+
+      {/* OTP input */}
+      <input
+        ref={inputRef}
+        type="tel"
+        inputMode="numeric"
+        maxLength={6}
+        value={otp}
+        onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        placeholder="——————"
+        style={{
+          fontSize: 32, fontWeight: 800, letterSpacing: 12, textAlign: 'center',
+          border: `2px solid ${C.teal}`, borderRadius: 12, padding: '14px 12px',
+          marginBottom: 20, color: C.text, outline: 'none', width: '100%',
+          boxSizing: 'border-box', fontFamily: 'monospace', background: C.white,
+        }}
+      />
+
+      <button
+        onClick={onVerify}
+        disabled={otp.length < 6}
+        style={{
+          background: otp.length === 6 ? C.teal : C.teal100,
+          border: 'none', borderRadius: 10, padding: 16, cursor: otp.length === 6 ? 'pointer' : 'not-allowed',
+          color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit', marginBottom: 14,
+        }}
+      >
+        Verify
+      </button>
+
+      <button
+        disabled={cooldown > 0}
+        style={{
+          background: 'none', border: 'none', cursor: cooldown > 0 ? 'not-allowed' : 'pointer',
+          color: cooldown > 0 ? C.g400 : C.teal, fontWeight: 600, fontSize: 15,
+          fontFamily: 'inherit', padding: 6,
+        }}
+      >
+        {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
+      </button>
+
+      {cooldown <= 0 && (
+        <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 13, fontFamily: 'inherit', padding: '4px 0' }}>
+          Send via SMS instead
+        </button>
+      )}
+    </Screen>
   );
 }
 
-function StudentSettings() {
-  const { approved } = useDemo();
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <ScreenHeader title="Settings" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-        <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>PROFILE</div>
-        <Card style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 42, height: 42, borderRadius: '50%', backgroundColor: C.amberLt, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>👩‍🎓</div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.g900 }}>Tendai Moyo</div>
-              <div style={{ fontSize: 10, color: C.g500 }}>Form 2A · Neriah Demo School</div>
-              <div style={{ marginTop: 3 }}><Badge color={C.blue} bg={C.blueLt}>Student</Badge></div>
-            </div>
-          </div>
-        </Card>
-        <div style={{ fontSize: 10, color: C.g500, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>ON-DEVICE AI</div>
-        <Card style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.g900 }}>Gemma 4 Nano</span>
-            <Badge color={C.green} bg={C.greenLt}>● Ready</Badge>
-          </div>
-          <div style={{ fontSize: 10, color: C.g500 }}>Powers offline AI tutor · 890 MB</div>
-        </Card>
-        <button style={{ width: '100%', backgroundColor: C.redLt, color: C.red, border: `1px solid #FECACA`, borderRadius: 10, padding: 11, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Log Out</button>
-      </div>
-      <StudentTabs active="student-settings" resultsLocked={!approved} />
-    </div>
-  );
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Teacher Register
+// ──────────────────────────────────────────────────────────────────────────────
+const TITLES = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof', 'Sir', 'Eng', 'Rev'];
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ROUTERS
-// ══════════════════════════════════════════════════════════════════════════════
+function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onContinue: (phone: string) => void }) {
+  const [title, setTitle] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [surname, setSurname] = useState('');
+  const [number, setNumber] = useState('');
+  const [school, setSchool] = useState('');
 
-function TeacherRouter() {
-  const { tScreen } = useDemo();
-  const map: Record<string, React.ReactNode> = {
-    'teacher-home': <TeacherHome />,
-    'teacher-add-homework': <TeacherAddHomework />,
-    'teacher-generate-scheme': <TeacherGenerateScheme />,
-    'teacher-homework-detail': <TeacherHomeworkDetail />,
-    'teacher-analytics': <TeacherAnalytics />,
-    'teacher-settings': <TeacherSettings />,
+  const inputStyle: React.CSSProperties = {
+    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 14px',
+    fontSize: 15, color: C.text, outline: 'none', width: '100%', boxSizing: 'border-box',
+    fontFamily: 'inherit', background: C.white,
   };
-  return <>{map[tScreen] ?? <TeacherHome />}</>;
-}
-
-function StudentRouter() {
-  const { sScreen } = useDemo();
-  const map: Record<string, React.ReactNode> = {
-    'student-home': <StudentHome />,
-    'student-submit': <StudentSubmit />,
-    'student-camera': <StudentCamera />,
-    'student-preview': <StudentPreview />,
-    'student-results': <StudentResults />,
-    'student-tutor': <StudentTutor />,
-    'student-settings': <StudentSettings />,
+  const labelStyle: React.CSSProperties = {
+    fontSize: 14, fontWeight: 600, color: C.g900, marginTop: 10, marginBottom: 4, display: 'block',
   };
-  return <>{map[sScreen] ?? <StudentHome />}</>;
-}
 
-// ══════════════════════════════════════════════════════════════════════════════
-// FLOW LIST DATA
-// ══════════════════════════════════════════════════════════════════════════════
-
-const TEACHER_FLOW = [
-  { num: 1,  label: 'Create Class',               screen: 'teacher-home' },
-  { num: 2,  label: 'Add Students',               screen: 'teacher-home' },
-  { num: 3,  label: 'Create Homework',            screen: 'teacher-add-homework' },
-  { num: 4,  label: 'Generate Scheme with AI',    screen: 'teacher-generate-scheme' },
-  { num: 5,  label: 'Close Submissions',          screen: 'teacher-homework-detail' },
-  { num: 6,  label: 'Grade All with Gemma 4',     screen: 'teacher-homework-detail' },
-  { num: 7,  label: 'Review Annotated Results',   screen: 'teacher-homework-detail' },
-  { num: 8,  label: 'Approve or Override Grades', screen: 'teacher-homework-detail' },
-  { num: 9,  label: 'View Class Analytics',       screen: 'teacher-analytics' },
-  { num: 10, label: 'Review via WhatsApp',        screen: 'teacher-settings' },
-];
-
-const STUDENT_FLOW = [
-  { num: 1, label: 'Register',               screen: 'student-settings' },
-  { num: 2, label: 'View Assigned Homework', screen: 'student-home' },
-  { num: 3, label: 'Submit Photos',          screen: 'student-camera' },
-  { num: 4, label: 'View Graded Results',    screen: 'student-results' },
-  { num: 5, label: 'Ask AI Tutor',           screen: 'student-tutor' },
-];
-
-// ── Vertical flow list (desktop/tablet sidebar) ───────────────────────────────
-function FlowList({
-  title, items, activeScreen, onSelect, width = 190,
-}: {
-  title: string;
-  items: { num: number; label: string; screen: string }[];
-  activeScreen: string;
-  onSelect: (s: string) => void;
-  width?: number;
-}) {
   return (
-    <div style={{ width, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>
-        {title}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 700, overflowY: 'auto' }}>
-        {items.map(item => {
-          const active = item.screen === activeScreen;
-          return (
-            <button
-              key={item.num}
-              onClick={() => onSelect(item.screen)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '7px 10px', borderRadius: 8, border: `1px solid ${active ? C.teal : 'rgba(255,255,255,0.08)'}`,
-                backgroundColor: active ? C.teal : 'rgba(255,255,255,0.04)',
-                cursor: 'pointer', textAlign: 'left', width: '100%', fontFamily: 'inherit',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(13,148,136,0.12)'; }}
-              onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.04)'; }}
-            >
-              <div style={{
-                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                backgroundColor: active ? 'rgba(255,255,255,0.25)' : C.teal,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 9, fontWeight: 800, color: '#fff',
-              }}>
-                {item.num}
-              </div>
-              <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, color: active ? '#fff' : '#94A3B8', lineHeight: 1.3 }}>
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+    <Screen style={{ padding: 20, paddingTop: 28 }}>
+      <button
+        onClick={onSignIn}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 16, textAlign: 'left', marginBottom: 20, fontFamily: 'inherit', padding: 0 }}
+      >
+        ← Back
+      </button>
 
-// ── Horizontal pill strip (mobile) ────────────────────────────────────────────
-function MobilePills({
-  items, activeScreen, onSelect,
-}: {
-  items: { num: number; label: string; screen: string }[];
-  activeScreen: string;
-  onSelect: (s: string) => void;
-}) {
-  return (
-    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 12, width: '100%', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
-      {items.map(item => {
-        const active = item.screen === activeScreen;
-        return (
+      {/* Icon badge */}
+      <div style={{
+        width: 64, height: 64, borderRadius: 18, background: C.teal50,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+      }}>
+        <span style={{ fontSize: 30 }}>📋</span>
+      </div>
+
+      <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 4 }}>Create teacher account</div>
+      <div style={{ fontSize: 13, color: C.g500, marginBottom: 24, lineHeight: 1.5 }}>Enter your details to get started.</div>
+
+      {/* Title chips */}
+      <label style={labelStyle}>
+        Title <span style={{ fontWeight: 400, color: C.g500 }}>(optional)</span>
+      </label>
+      <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBlock: 4, paddingBottom: 6 }}>
+        {TITLES.map(t => (
           <button
-            key={item.num}
-            onClick={() => onSelect(item.screen)}
+            key={t}
+            onClick={() => setTitle(prev => prev === t ? '' : t)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-              padding: '5px 10px', borderRadius: 16,
-              border: `1px solid ${active ? C.teal : 'rgba(255,255,255,0.15)'}`,
-              backgroundColor: active ? C.teal : 'transparent',
-              cursor: 'pointer', fontFamily: 'inherit',
+              flexShrink: 0, paddingInline: 13, paddingBlock: 7, borderRadius: 20,
+              border: `1.5px solid ${title === t ? C.teal : C.g200}`,
+              background: title === t ? C.teal : C.white,
+              color: title === t ? C.white : C.g900,
+              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              transition: 'all 0.12s',
             }}
           >
-            <div style={{ width: 16, height: 16, borderRadius: '50%', backgroundColor: active ? 'rgba(255,255,255,0.3)' : C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
-              {item.num}
-            </div>
-            <span style={{ fontSize: 10, fontWeight: 600, color: active ? '#fff' : '#94A3B8', whiteSpace: 'nowrap' }}>
-              {item.label}
-            </span>
+            {t}
           </button>
-        );
-      })}
-    </div>
+        ))}
+      </div>
+
+      {/* First name */}
+      <label style={labelStyle}>First name</label>
+      <input
+        type="text"
+        placeholder="e.g. Tendai"
+        value={firstName}
+        onChange={e => setFirstName(e.target.value)}
+        style={inputStyle}
+      />
+
+      {/* Surname */}
+      <label style={labelStyle}>Surname</label>
+      <input
+        type="text"
+        placeholder="e.g. Moyo"
+        value={surname}
+        onChange={e => setSurname(e.target.value)}
+        style={inputStyle}
+      />
+
+      {/* Phone */}
+      <label style={labelStyle}>Phone number</label>
+      <PhoneInputRow value={number} onChange={setNumber} />
+
+      {/* School */}
+      <label style={labelStyle}>School</label>
+      <button
+        onClick={() => setSchool(prev => prev ? '' : 'Harare High School')}
+        style={{
+          width: '100%', border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 14px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: C.white, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: 15, color: school ? C.text : C.g500 }}>
+          {school || 'Select your school'}
+        </span>
+        <span style={{ fontSize: 13, color: C.g500 }}>▾</span>
+      </button>
+
+      {/* Create account button */}
+      <button
+        onClick={() => onContinue('+263' + number)}
+        style={{
+          marginTop: 22, background: C.teal, border: 'none', borderRadius: 10, padding: 16,
+          cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit',
+          width: '100%', boxSizing: 'border-box',
+        }}
+      >
+        Create account
+      </button>
+
+      <button
+        onClick={onSignIn}
+        style={{ marginTop: 20, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit', padding: 4 }}
+      >
+        Already have an account? Sign in
+      </button>
+
+      <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 24 }}>
+        A 6-digit verification code will be sent to your phone.
+      </div>
+    </Screen>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SYNC ARROW
-// ══════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Add Homework
+// ──────────────────────────────────────────────────────────────────────────────
 
-function SyncArrow({ active }: { active: boolean }) {
-  return (
-    <div style={{ width: 52, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-      <div style={{ fontSize: 18, color: active ? C.teal : 'rgba(255,255,255,0.15)', animation: active ? 'neriah-flow 1.2s ease-in-out infinite' : 'none', transition: 'color 0.4s' }}>⟶</div>
-      {active && <div style={{ fontSize: 8, color: C.teal, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase' }}>sync</div>}
-    </div>
-  );
-}
+interface QPFile { name: string; mimeType: string; label: string; base64: string }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// VIEWPORT HOOK
-// ══════════════════════════════════════════════════════════════════════════════
+function AddHomeworkScreen({
+  onBack, onSuccess, demoToken,
+}: { onBack: () => void; onSuccess: (data: { answer_key_id: string; questions: ReviewQuestion[] }) => void; demoToken: string | null }) {
+  const [title, setTitle]       = useState('');
+  const [subject, setSubject]   = useState('');
+  const [showSubjects, setShowSubjects] = useState(false);
+  const [subjectSearch, setSubjectSearch] = useState('');
+  const [qpFile, setQpFile]     = useState<QPFile | null>(null);
+  const [qpText, setQpText]     = useState('');
+  const [textMode, setTextMode] = useState(false);
+  const [textDraft, setTextDraft] = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
 
-function useViewport() {
-  const [vw, setVw] = useState(1400);
+  // Hidden file inputs
+  const cameraRef  = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const pdfRef     = useRef<HTMLInputElement>(null);
+  const wordRef    = useRef<HTMLInputElement>(null);
+
+  // Animated loading dots
+  const [dots, setDots] = useState('');
   useEffect(() => {
-    const update = () => setVw(window.innerWidth);
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
+    if (!loading) { setDots(''); return; }
+    const t = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 450);
+    return () => clearInterval(t);
+  }, [loading]);
 
-  const isMobile = vw < 820;
-
-  // Flow list widths: narrow on smaller viewports
-  const flowListWidth = vw < 1020 ? 140 : 190;
-
-  // Phone scale: fit two phones + two flow lists + arrow + gaps inside viewport
-  let phoneScale: number;
-  if (isMobile) {
-    // Single phone; fill available width, cap at 375px natural width
-    const avail = Math.min(vw - 32, 375);
-    phoneScale = avail / 340;
-  } else {
-    // Desktop/tablet: [list][phone][arrow][phone][list] with 8px gaps
-    const listTotal = flowListWidth * 2;       // both lists
-    const arrowW    = 40;                       // sync arrow
-    const pageH     = 32;                       // left+right page padding
-    const gapTotal  = 8 * 4;                   // 4 gaps between 5 items
-    const forPhones = (vw - listTotal - arrowW - pageH - gapTotal);
-    phoneScale = Math.min((forPhones / 2) / 340, 1);
+  // ── FileReader helper ───────────────────────────────────────────────────────
+  function readFile(file: File, label: string) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const base64 = dataUrl.split(',')[1];
+      const mimeType = file.type || 'application/octet-stream';
+      setQpFile({ name: file.name, mimeType, label, base64 });
+      setQpText('');
+      setTextMode(false);
+      setError('');
+    };
+    reader.onerror = () => setError('Could not read file. Please try again.');
+    reader.readAsDataURL(file);
   }
-  phoneScale = Math.max(Math.min(phoneScale, 1), 0.5);
 
-  return { vw, isMobile, phoneScale, flowListWidth };
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>, labelPrefix: string) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    readFile(file, `${labelPrefix} ${file.name}`);
+    e.target.value = '';
+  }
+
+  // ── Text mode ───────────────────────────────────────────────────────────────
+  function handleTextDone() {
+    const t = textDraft.trim();
+    if (t) { setQpText(t); setQpFile(null); setError(''); }
+    setTextMode(false);
+  }
+
+  function clearQP() { setQpFile(null); setQpText(''); setTextMode(false); setTextDraft(''); }
+
+  // ── Create & Generate ───────────────────────────────────────────────────────
+  async function handleCreate() {
+    setError('');
+    if (!title.trim()) { setError('Please enter a homework title.'); return; }
+    if (!subject.trim()) { setError('Please select a subject.'); return; }
+    if (!qpFile && !qpText) { setError('Please upload the homework paper.'); return; }
+
+    setLoading(true);
+    try {
+      const body: Record<string, string> = {
+        class_id:        'demo',
+        title:           title.trim(),
+        subject:         subject.trim(),
+        education_level: 'Form 2',
+        status:          'draft',
+        input_type:      'question_paper',
+      };
+      if (qpFile) {
+        body.file_data  = qpFile.base64;
+        body.media_type = qpFile.mimeType;
+      } else {
+        body.text = qpText;
+      }
+
+      const res = await demoFetch('/homework/generate-scheme', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }, demoToken);
+
+      const questions: ReviewQuestion[] = res?.questions
+        ? (res.questions as any[]).map((q: any, i: number) => normaliseQ(q, i))
+        : DEMO_QUESTIONS;
+      const answer_key_id: string = res?.answer_key_id ?? 'demo-key';
+      onSuccess({ answer_key_id, questions });
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Subject filter ──────────────────────────────────────────────────────────
+  const filteredSubjects = subjectSearch.trim()
+    ? COMMON_SUBJECTS.filter(s => s.toLowerCase().includes(subjectSearch.toLowerCase()))
+    : COMMON_SUBJECTS;
+  const isExact = COMMON_SUBJECTS.some(s => s.toLowerCase() === subjectSearch.toLowerCase());
+
+  const inputStyle: React.CSSProperties = {
+    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '11px 13px',
+    fontSize: 14, color: C.text, outline: 'none', width: '100%',
+    boxSizing: 'border-box', fontFamily: 'inherit', background: C.white,
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 12, fontWeight: 700, color: C.g900, marginTop: 14, marginBottom: 5,
+    display: 'block', letterSpacing: '0.02em',
+  };
+
+  const hasQP = !!(qpFile || qpText);
+
+  return (
+    <Screen style={{ background: C.white }}>
+      <div style={{ flex: 1, padding: '20px 18px', paddingBottom: 24 }}>
+        {/* Back */}
+        <button
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, textAlign: 'left', marginBottom: 16, fontFamily: 'inherit', padding: 0 }}
+        >
+          ← Back
+        </button>
+
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>Add Homework</div>
+        <div style={{ fontSize: 13, color: C.g500, marginBottom: 20, lineHeight: 1.5 }}>
+          Upload the homework paper and Neriah will generate the marking scheme for you.
+        </div>
+
+        {/* Title */}
+        <label style={labelStyle}>Title</label>
+        <input
+          type="text"
+          placeholder="e.g. Chapter 5 Revision Test"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          style={inputStyle}
+        />
+
+        {/* Subject picker */}
+        <label style={labelStyle}>Subject</label>
+        <button
+          onClick={() => { setShowSubjects(v => !v); setSubjectSearch(''); }}
+          style={{
+            width: '100%', border: `1px solid ${C.g200}`, borderRadius: 10, padding: '11px 13px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: C.white, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+            boxSizing: 'border-box',
+          }}
+        >
+          <span style={{ fontSize: 14, color: subject ? C.text : C.g500 }}>
+            {subject || 'Select or type a subject'}
+          </span>
+          <span style={{ fontSize: 12, color: C.g500, transition: 'transform 0.15s', display: 'inline-block', transform: showSubjects ? 'rotate(180deg)' : 'none' }}>▾</span>
+        </button>
+
+        {/* Subject dropdown */}
+        {showSubjects && (
+          <div style={{
+            border: `1px solid ${C.g200}`, borderRadius: 10, background: C.white,
+            marginTop: 4, overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+          }}>
+            <input
+              type="text"
+              placeholder="Search subjects…"
+              autoFocus
+              value={subjectSearch}
+              onChange={e => setSubjectSearch(e.target.value)}
+              style={{
+                width: '100%', border: 'none', borderBottom: `1px solid ${C.g200}`,
+                padding: '10px 13px', fontSize: 13, outline: 'none',
+                fontFamily: 'inherit', boxSizing: 'border-box', color: C.text,
+              }}
+            />
+            <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+              {filteredSubjects.map(s => (
+                <button
+                  key={s}
+                  onClick={() => { setSubject(s); setShowSubjects(false); setSubjectSearch(''); }}
+                  style={{
+                    width: '100%', background: s === subject ? C.teal50 : 'none', border: 'none',
+                    borderBottom: `1px solid ${C.g200}`, padding: '10px 13px', textAlign: 'left',
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+                    color: s === subject ? C.teal : C.text, fontWeight: s === subject ? 600 : 400,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}
+                >
+                  <span>{s}</span>
+                  {s === subject && <span style={{ color: C.teal, fontSize: 12 }}>✓</span>}
+                </button>
+              ))}
+              {subjectSearch.trim() && !isExact && (
+                <button
+                  onClick={() => { setSubject(subjectSearch.trim()); setShowSubjects(false); setSubjectSearch(''); }}
+                  style={{
+                    width: '100%', background: C.teal50, border: 'none', padding: '10px 13px',
+                    textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: C.teal,
+                  }}
+                >
+                  Use "<strong>{subjectSearch.trim()}</strong>"
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── HOMEWORK PAPER section ────────────────────────────────────────── */}
+        <div style={{
+          marginTop: 20, marginBottom: 6,
+          fontSize: 11, fontWeight: 800, color: C.g500,
+          letterSpacing: '0.07em', textTransform: 'uppercase',
+        }}>
+          Homework Paper <span style={{ color: C.red }}>required</span>
+        </div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 10, lineHeight: 1.5 }}>
+          Upload the question paper. Neriah will read it and auto-generate the marking scheme.
+        </div>
+
+        {/* Upload buttons row */}
+        {!textMode && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[
+              { icon: '📷', label: 'Camera',  onClick: () => cameraRef.current?.click() },
+              { icon: '🖼',  label: 'Gallery', onClick: () => galleryRef.current?.click() },
+              { icon: '📄', label: 'PDF',     onClick: () => pdfRef.current?.click() },
+              { icon: '📝', label: 'Word',    onClick: () => wordRef.current?.click() },
+              { icon: '✏️',  label: 'Text',    onClick: () => { setTextDraft(qpText); setTextMode(true); } },
+            ].map(btn => (
+              <button
+                key={btn.label}
+                onClick={btn.onClick}
+                style={{
+                  flex: 1, border: `1px solid ${C.g200}`, borderRadius: 10,
+                  padding: '10px 4px', background: C.white, cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                  fontFamily: 'inherit', transition: 'border-color 0.12s, background 0.12s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = C.teal; e.currentTarget.style.background = C.teal50; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = C.g200; e.currentTarget.style.background = C.white; }}
+              >
+                <span style={{ fontSize: 18 }}>{btn.icon}</span>
+                <span style={{ fontSize: 10, color: C.g700, fontWeight: 600 }}>{btn.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Text input mode */}
+        {textMode && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <textarea
+              autoFocus
+              placeholder={"1. Solve for x: 2x + 5 = 13\n2. State Newton's first law of motion\n..."}
+              value={textDraft}
+              onChange={e => setTextDraft(e.target.value)}
+              style={{
+                border: `1px solid ${C.teal}`, borderRadius: 10, padding: '10px 12px',
+                fontSize: 13, color: C.text, outline: 'none', fontFamily: 'inherit',
+                resize: 'none', height: 100, lineHeight: 1.5,
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleTextDone}
+                style={{
+                  flex: 1, background: C.teal, border: 'none', borderRadius: 8, padding: '9px 0',
+                  color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Done
+              </button>
+              <button
+                onClick={() => setTextMode(false)}
+                style={{
+                  flex: 1, background: 'none', border: `1px solid ${C.g200}`, borderRadius: 8,
+                  padding: '9px 0', color: C.g500, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* File preview row */}
+        {hasQP && !textMode && (
+          <div style={{
+            marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
+            background: C.teal50, border: `1px solid ${C.teal100}`, borderRadius: 10,
+            padding: '9px 12px',
+          }}>
+            <span style={{ color: C.teal, fontWeight: 700, fontSize: 13 }}>✓</span>
+            <span style={{ flex: 1, fontSize: 12, color: C.teal, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {qpFile ? qpFile.label : `✏️ ${qpText.length} chars of text`}
+            </span>
+            <button
+              onClick={clearQP}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 14, padding: '0 2px', fontFamily: 'inherit' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div style={{ marginTop: 10, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>
+        )}
+
+        {/* Create & Generate button */}
+        <button
+          onClick={handleCreate}
+          disabled={loading}
+          style={{
+            marginTop: 22, width: '100%', background: loading ? C.teal100 : C.teal,
+            border: 'none', borderRadius: 10, padding: '14px 0',
+            cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
+            fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            boxSizing: 'border-box', transition: 'background 0.15s',
+          }}
+        >
+          {loading ? (
+            <>
+              <span style={{ fontSize: 16 }}>✨</span>
+              <span>Generating marking scheme{dots}</span>
+            </>
+          ) : (
+            <span>Create &amp; Generate Answers</span>
+          )}
+        </button>
+      </div>
+
+      {/* Hidden file inputs */}
+      <input ref={cameraRef}  type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => handleFileInput(e, '📷')} />
+      <input ref={galleryRef} type="file" accept="image/*"                       style={{ display: 'none' }} onChange={e => handleFileInput(e, '🖼')} />
+      <input ref={pdfRef}     type="file" accept=".pdf,application/pdf"          style={{ display: 'none' }} onChange={e => handleFileInput(e, '📄')} />
+      <input ref={wordRef}    type="file" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: 'none' }} onChange={e => handleFileInput(e, '📝')} />
+    </Screen>
+  );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE
-// ══════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Review Marking Scheme
+// ──────────────────────────────────────────────────────────────────────────────
+function ReviewSchemeScreen({
+  answerKeyId,
+  initialQuestions,
+  onBack,
+  onConfirm,
+  demoToken,
+}: {
+  answerKeyId: string;
+  initialQuestions: ReviewQuestion[];
+  onBack: () => void;
+  onConfirm: () => void;
+  demoToken: string | null;
+}) {
+  const [questions, setQuestions] = useState<ReviewQuestion[]>(initialQuestions);
+  const [saving, setSaving]       = useState(false);
+  const [regen, setRegen]         = useState(false);
+  const [error, setError]         = useState('');
 
-export default function DemoPage() {
-  const [homeworkCreated, setHomeworkCreated] = useState(false);
-  const [schemeReady, setSchemeReady] = useState(false);
-  const [studentSubmitted, setStudentSubmitted] = useState(false);
-  const [gradingStatus, setGradingStatus] = useState<'none' | 'grading' | 'complete'>('none');
-  const [approved, setApproved] = useState(false);
-  const [tutorMessages, setTutorMessages] = useState<{ role: 'user' | 'bot'; text: string }[]>([]);
+  const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
 
-  // Demo backend tokens + IDs (null = not yet initialised or backend unreachable)
-  const [teacherToken, setTeacherToken] = useState<string | null>(null);
-  const [studentToken, setStudentToken] = useState<string | null>(null);
-  const answerKeyId = useRef<string>('demo-homework-1');
-  const markId = useRef<string | null>(null);
-  const [resetting, setResetting] = useState(false);
+  function updateQ(idx: number, patch: Partial<ReviewQuestion>) {
+    setQuestions(qs => qs.map((q, i) => i === idx ? { ...q, ...patch } : q));
+  }
 
-  const [tStack, setTStack] = useState(['teacher-home']);
-  const tScreen = tStack[tStack.length - 1];
-  const tPush = useCallback((s: string) => setTStack(p => [...p, s]), []);
-  const tPop  = useCallback(() => setTStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
-  const tGoTo = useCallback((s: string) => setTStack([s]), []);
+  function deleteQ(idx: number) {
+    setQuestions(qs => qs.filter((_, i) => i !== idx));
+  }
 
-  const [sStack, setSStack] = useState(['student-home']);
-  const sScreen = sStack[sStack.length - 1];
-  const sPush = useCallback((s: string) => setSStack(p => [...p, s]), []);
-  const sPop  = useCallback(() => setSStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
-  const sGoTo = useCallback((s: string) => setSStack([s]), []);
+  function addQ() {
+    setQuestions(qs => [
+      ...qs,
+      { question_number: qs.length + 1, question_text: '', answer: '', marks: 1, marking_notes: null },
+    ]);
+  }
 
-  // ── Init: seed demo DB and fetch tokens ────────────────────────────────────
-  const initBackend = useCallback(async () => {
-    // Fetch teacher token via OTP bypass (phone = "+1234567890", otp = "1234")
-    const loginRes = await demoFetch('/auth/login', {
-      method: 'POST', body: JSON.stringify({ phone: '+1234567890' }),
-    });
-    if (loginRes) {
-      const verifyRes = await demoFetch('/auth/verify', {
-        method: 'POST', body: JSON.stringify({ phone: '+1234567890', otp: '1234' }),
-      });
-      if (verifyRes?.token) setTeacherToken(verifyRes.token);
-    }
-
-    // Fetch student token directly (no OTP needed in demo mode)
-    const studentRes = await demoFetch('/demo/student-token', { method: 'POST' });
-    if (studentRes?.token) setStudentToken(studentRes.token);
-  }, []);
-
-  useEffect(() => { initBackend(); }, [initBackend]);
-
-  // ── Reset ──────────────────────────────────────────────────────────────────
-  const resetDemo = useCallback(async () => {
-    setResetting(true);
-    await demoFetch('/demo/reset', { method: 'POST' });
-    // Reset local state
-    setHomeworkCreated(false);
-    setSchemeReady(false);
-    setStudentSubmitted(false);
-    setGradingStatus('none');
-    setApproved(false);
-    setTutorMessages([]);
-    setTStack(['teacher-home']);
-    setSStack(['student-home']);
-    markId.current = null;
-    answerKeyId.current = 'demo-homework-1';
-    await initBackend();
-    setResetting(false);
-  }, [initBackend]);
-
-  const createHomework = useCallback(() => {
-    setHomeworkCreated(true);
-    // Fire-and-forget: create answer key record on backend
-    if (teacherToken) {
-      demoFetch('/answer-keys', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${teacherToken}` },
-        body: JSON.stringify({
-          class_id: 'demo-class-1',
-          title: 'Maths Chapter 5 Test',
-          education_level: 'form_2',
-          subject: 'Mathematics',
-        }),
-      }).then(res => { if (res?.id) answerKeyId.current = res.id; });
-    }
-  }, [teacherToken]);
-
-  const saveScheme = useCallback(() => {
-    setSchemeReady(true);
-    if (teacherToken) {
-      demoFetch(`/answer-keys/${answerKeyId.current}`, {
+  async function handleConfirm() {
+    setError('');
+    setSaving(true);
+    try {
+      await demoFetch(`/answer-keys/${answerKeyId}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${teacherToken}` },
         body: JSON.stringify({
-          questions: SCHEME.map((s, i) => ({
-            question_number: i + 1, question_text: s.text,
-            answer: s.ans, marks: s.marks,
+          questions: questions.map(q => ({
+            question_number: q.question_number,
+            question_text:   q.question_text,
+            correct_answer:  q.answer,
+            marks:           q.marks,
+            marking_notes:   q.marking_notes ?? '',
           })),
-          open_for_submission: true,
-          status: 'active', ai_generated: true,
+          status: 'confirmed',
         }),
-      });
+      }, demoToken);
+    } catch {
+      // proceed anyway — demo may not have real auth
+    } finally {
+      setSaving(false);
     }
-  }, [teacherToken]);
+    onConfirm();
+  }
 
-  const studentSubmit = useCallback(() => {
-    setStudentSubmitted(true);
-    if (studentToken) {
-      demoFetch('/submissions/student', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${studentToken}` },
-        body: JSON.stringify({
-          answer_key_id: answerKeyId.current,
-          student_id: 'demo-student-1',
-          class_id: 'demo-class-1',
-          submission_type: 'photo',
-          notes: 'Demo submission',
-        }),
-      });
-    }
-  }, [studentToken]);
+  async function handleRegenerate() {
+    setRegen(true);
+    await new Promise(r => setTimeout(r, 1800));
+    setQuestions(DEMO_QUESTIONS.map(q => ({ ...q })));
+    setRegen(false);
+  }
 
-  const closeAndGrade = useCallback(() => {
-    setGradingStatus('grading');
-    // Call demo/grade (pre-canned, no AI needed)
-    demoFetch('/demo/grade', {
-      method: 'POST',
-      body: JSON.stringify({ answer_key_id: answerKeyId.current }),
-    }).then(res => { if (res?.id) markId.current = res.id; });
-    setTimeout(() => setGradingStatus('complete'), 2600);
-  }, []);
-
-  const approveAll = useCallback(() => {
-    setApproved(true);
-    if (markId.current) {
-      demoFetch('/demo/approve', {
-        method: 'POST',
-        body: JSON.stringify({ mark_id: markId.current }),
-      });
-    }
-  }, []);
-
-  const sendTutorMsg = useCallback((text: string) => {
-    setTutorMessages(prev => {
-      const reply = getTutorReply(text);
-      setTimeout(() => setTutorMessages(p => [...p, { role: 'bot', text: reply }]), 1500);
-      return [...prev, { role: 'user', text }];
-    });
-  }, []);
-
-  const [mobileTab, setMobileTab] = useState<'teacher' | 'student'>('teacher');
-  const { isMobile, phoneScale, flowListWidth } = useViewport();
-
-  const flowActive = homeworkCreated || studentSubmitted || approved;
-  const hint = getHint({ homeworkCreated, schemeReady, studentSubmitted, gradingStatus, approved, tScreen, sScreen });
-  const steps = [homeworkCreated, schemeReady, studentSubmitted, gradingStatus === 'complete', approved];
-  const doneCount = steps.filter(Boolean).length;
-
-  const ctx: DemoCtx = {
-    homeworkCreated, schemeReady, studentSubmitted, gradingStatus, approved,
-    tScreen, tPush, tPop, tGoTo,
-    sScreen, sPush, sPop, sGoTo,
-    createHomework, saveScheme, studentSubmit, closeAndGrade, approveAll,
-    tutorMessages, sendTutorMsg,
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, fontWeight: 700, color: C.g500, marginBottom: 3,
+    display: 'block', letterSpacing: '0.03em',
+  };
+  const taStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box', border: `1px solid ${C.g200}`,
+    borderRadius: 8, padding: '8px 10px', fontSize: 13, color: C.text,
+    fontFamily: 'inherit', outline: 'none', resize: 'none', lineHeight: 1.5,
+    background: C.white,
   };
 
   return (
-    <Demo.Provider value={ctx}>
-      <style>{`
-        @keyframes neriah-bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-        @keyframes neriah-slide-down { from{transform:translateY(-70px);opacity:0} to{transform:translateY(0);opacity:1} }
-        @keyframes neriah-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes neriah-flow { 0%,100%{opacity:0.5;transform:translateX(-3px)} 50%{opacity:1;transform:translateX(3px)} }
-        @keyframes neriah-fade { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
-        * { box-sizing: border-box; }
-        button:focus { outline: none; }
-        input:focus { border-color: #0D9488 !important; }
-      `}</style>
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+        {/* Back */}
+        <button
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, textAlign: 'left', marginBottom: 14, fontFamily: 'inherit', padding: 0 }}
+        >
+          ← Back
+        </button>
 
-      {/* Full-page scroll container */}
-      <div style={{ minHeight: '100vh', backgroundColor: '#0B1120', padding: isMobile ? '20px 12px 40px' : '28px 16px 48px', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", overflowX: 'hidden' }}>
-
-        {/* Page header */}
-        <div style={{ textAlign: 'center', marginBottom: isMobile ? 18 : 28, maxWidth: 600, width: '100%' }}>
-          <div style={{ display: 'inline-block', backgroundColor: 'rgba(13,148,136,0.15)', color: C.teal, borderRadius: 20, padding: '3px 14px', fontSize: 10, fontWeight: 700, marginBottom: 10, letterSpacing: 1, textTransform: 'uppercase', border: `1px solid rgba(13,148,136,0.3)` }}>
-            Interactive Demo
-          </div>
-          <h1 style={{ fontSize: isMobile ? 20 : 28, fontWeight: 800, color: '#F1F5F9', margin: '0 0 8px', lineHeight: 1.2 }}>
-            Try Neriah Live
-          </h1>
-          <p style={{ fontSize: 13, color: '#64748B', margin: 0, lineHeight: 1.6 }}>
-            Fully interactive — click buttons, type messages, and navigate screens just like the real app
-          </p>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 }}>Review Marking Scheme</div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 16, lineHeight: 1.5 }}>
+          Check each answer. Edit anything that looks wrong, then confirm.
         </div>
 
-        {/* Mobile: tab toggle + pills above single phone */}
-        {isMobile && (
+        {/* Summary row */}
+        <div style={{
+          display: 'flex', gap: 10, marginBottom: 14,
+          background: C.teal50, borderRadius: 10, padding: '10px 13px',
+          alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.teal }}>
+            {questions.length} question{questions.length !== 1 ? 's' : ''}
+          </span>
+          <span style={{ width: 1, height: 14, background: C.teal100 }} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.teal }}>
+            {totalMarks} marks total
+          </span>
+        </div>
+
+        {/* Question cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {questions.map((q, idx) => (
+            <div key={idx} style={{
+              background: C.white, borderRadius: 12, padding: '12px 13px',
+              border: `1px solid ${C.border}`,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+            }}>
+              {/* Card header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 8, background: C.teal,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, fontWeight: 800, color: C.white, flexShrink: 0,
+                }}>
+                  {q.question_number}
+                </div>
+                <button
+                  onClick={() => deleteQ(idx)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: C.g400, fontSize: 14, padding: '2px 4px', fontFamily: 'inherit',
+                  }}
+                  title="Remove question"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Question text */}
+              <label style={labelStyle}>Question</label>
+              <textarea
+                rows={2}
+                value={q.question_text}
+                onChange={e => updateQ(idx, { question_text: e.target.value })}
+                style={taStyle}
+              />
+
+              {/* Correct answer */}
+              <label style={{ ...labelStyle, marginTop: 8 }}>Correct Answer</label>
+              <textarea
+                rows={2}
+                value={q.answer}
+                onChange={e => updateQ(idx, { answer: e.target.value })}
+                style={{ ...taStyle, borderColor: C.teal100, background: C.tealLt }}
+              />
+
+              {/* Marks + notes row */}
+              <div style={{ display: 'flex', gap: 10, marginTop: 8, alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 72 }}>
+                  <label style={labelStyle}>Marks</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={q.marks}
+                    onChange={e => updateQ(idx, { marks: Math.max(1, Number(e.target.value)) })}
+                    style={{
+                      border: `1px solid ${C.g200}`, borderRadius: 8, padding: '7px 10px',
+                      fontSize: 14, fontWeight: 700, color: C.teal, width: '100%',
+                      boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit',
+                      textAlign: 'center', background: C.white,
+                    }}
+                  />
+                </div>
+                {q.marking_notes !== undefined && (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <label style={labelStyle}>Marking Notes <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                    <textarea
+                      rows={2}
+                      value={q.marking_notes ?? ''}
+                      onChange={e => updateQ(idx, { marking_notes: e.target.value || null })}
+                      placeholder="e.g. Accept equivalent forms"
+                      style={{ ...taStyle, fontSize: 12, color: C.g500 }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add question */}
+        <button
+          onClick={addQ}
+          style={{
+            marginTop: 10, width: '100%', border: `1.5px dashed ${C.teal300}`,
+            borderRadius: 10, padding: '11px 0', background: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            fontFamily: 'inherit',
+          }}
+        >
+          <span style={{ fontSize: 16, color: C.teal }}>+</span>
+          <span style={{ fontSize: 13, color: C.teal, fontWeight: 600 }}>Add Question</span>
+        </button>
+
+        {error && <div style={{ marginTop: 10, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
+
+        {/* Confirm & Save */}
+        <button
+          onClick={handleConfirm}
+          disabled={saving}
+          style={{
+            marginTop: 16, width: '100%', background: saving ? C.teal100 : C.teal,
+            border: 'none', borderRadius: 10, padding: '14px 0',
+            cursor: saving ? 'not-allowed' : 'pointer', color: C.white,
+            fontWeight: 700, fontSize: 15, fontFamily: 'inherit', boxSizing: 'border-box',
+            transition: 'background 0.15s',
+          }}
+        >
+          {saving ? 'Saving…' : 'Confirm & Save'}
+        </button>
+
+        {/* Regenerate */}
+        <button
+          onClick={handleRegenerate}
+          disabled={regen || saving}
+          style={{
+            marginTop: 10, width: '100%', background: 'none',
+            border: `1.5px solid ${C.teal}`, borderRadius: 10, padding: '12px 0',
+            cursor: regen || saving ? 'not-allowed' : 'pointer', color: C.teal,
+            fontWeight: 700, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box',
+            transition: 'opacity 0.15s', opacity: regen ? 0.6 : 1,
+          }}
+        >
+          {regen ? '✨ Regenerating…' : '↻ Regenerate'}
+        </button>
+      </div>
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Homework Created
+// ──────────────────────────────────────────────────────────────────────────────
+function HomeworkCreatedScreen({
+  answerKeyId,
+  onDone,
+  demoToken,
+}: {
+  answerKeyId: string;
+  onDone: () => void;
+  demoToken: string | null;
+}) {
+  const [opening, setOpening] = useState(false);
+
+  async function handleOpen() {
+    setOpening(true);
+    try {
+      await demoFetch(`/answer-keys/${answerKeyId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ open_for_submission: true }),
+      }, demoToken);
+    } catch {
+      // proceed
+    } finally {
+      setOpening(false);
+    }
+    onDone();
+  }
+
+  return (
+    <Screen style={{ justifyContent: 'center', padding: 28, alignItems: 'center' }}>
+      {/* Checkmark */}
+      <div style={{
+        width: 80, height: 80, borderRadius: 40,
+        background: '#E6F4EA',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        marginBottom: 22,
+      }}>
+        <svg width={40} height={40} viewBox="0 0 40 40" fill="none">
+          <path d="M8 21l8 8L32 12" stroke="#2E7D32" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 10, textAlign: 'center' }}>
+        Homework Created!
+      </div>
+      <div style={{ fontSize: 14, color: C.g500, lineHeight: 1.6, textAlign: 'center', marginBottom: 30, maxWidth: 260 }}>
+        The marking scheme is saved. Open it for submissions so students can start submitting their work.
+      </div>
+
+      <button
+        onClick={handleOpen}
+        disabled={opening}
+        style={{
+          width: '100%', background: opening ? C.teal100 : C.teal,
+          border: 'none', borderRadius: 10, padding: '14px 0',
+          cursor: opening ? 'not-allowed' : 'pointer', color: C.white,
+          fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
+          boxSizing: 'border-box', transition: 'background 0.15s',
+        }}
+      >
+        {opening ? 'Opening…' : 'Open for Submissions'}
+      </button>
+
+      <button
+        onClick={onDone}
+        style={{
+          marginTop: 14, background: 'none', border: 'none', cursor: 'pointer',
+          color: C.g500, fontWeight: 600, fontSize: 14, fontFamily: 'inherit', padding: 4,
+        }}
+      >
+        I'll do this later
+      </button>
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: My Classes
+// ──────────────────────────────────────────────────────────────────────────────
+function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () => void; onOpenHomework: () => void }) {
+  const [fabOpen, setFabOpen] = useState(false);
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg, position: 'relative' }}>
+      {/* Header */}
+      <div style={{
+        background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14,
+        borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+      }}>
+        <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginTop: 2 }}>My Classes</div>
+      </div>
+
+      {/* List */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 80 }}>
+        {/* Class group */}
+        <div style={{ marginBottom: 18 }}>
+          {/* Class card */}
+          <div style={{
+            background: C.white, borderRadius: 12, marginBottom: 0,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Form 2A</div>
+                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Form 2</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ textAlign: 'center', minWidth: 40 }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>3</div>
+                  <div style={{ fontSize: 10, color: C.g500 }}>students</div>
+                </div>
+                <div style={{ width: 1, height: 28, background: C.border }} />
+                <div style={{ textAlign: 'center', minWidth: 40 }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>1</div>
+                  <div style={{ fontSize: 10, color: C.g500 }}>homework</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Homework under this class */}
+          <div style={{ marginTop: 4, marginLeft: 12, borderLeft: `2px solid ${C.teal100}`, paddingLeft: 10 }}>
+            {/* Homework card — tappable */}
+            <button
+              onClick={onOpenHomework}
+              style={{
+                width: '100%', background: C.white, borderRadius: 10, marginBottom: 6, padding: '11px 12px',
+                display: 'flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontFamily: 'inherit', textAlign: 'left',
+                transition: 'box-shadow 0.12s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(13,115,119,0.14)')}
+              onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)')}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Chapter 5 Maths Test</div>
+                <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Created 12 Apr 2026</div>
+                <div style={{ fontSize: 11, color: C.teal, marginTop: 3, fontWeight: 600 }}>2 submissions</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{
+                  background: C.teal50, borderRadius: 8, paddingInline: 7, paddingBlock: 5,
+                  fontSize: 10, color: C.teal, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
+                }}>
+                  Ready to{'\n'}Grade
+                </div>
+                <span style={{ fontSize: 18, color: C.g400 }}>›</span>
+              </div>
+            </button>
+
+            {/* Add homework */}
+            <button
+              onClick={onAddHomework}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', gap: 6, paddingBlock: 8, paddingInline: 4, fontFamily: 'inherit',
+              }}
+            >
+              <span style={{ fontSize: 15, color: C.teal }}>⊕</span>
+              <span style={{ fontSize: 13, color: C.teal, fontWeight: 600 }}>Add Homework</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Empty-state second class hint */}
+        <button
+          style={{
+            width: '100%', border: `1.5px dashed ${C.teal300}`, borderRadius: 12,
+            padding: '18px 16px', background: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontFamily: 'inherit',
+          }}
+          onClick={() => setFabOpen(true)}
+        >
+          <span style={{ fontSize: 18, color: C.teal }}>+</span>
+          <span style={{ fontSize: 14, color: C.teal, fontWeight: 600 }}>New Class</span>
+        </button>
+      </div>
+
+      {/* Speed-dial overlay */}
+      {fabOpen && (
+        <div
+          onClick={() => setFabOpen(false)}
+          style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.22)', zIndex: 10 }}
+        />
+      )}
+
+      {/* Mini FABs */}
+      {fabOpen && (
+        <div style={{ position: 'absolute', bottom: 78, right: 16, zIndex: 11, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ background: C.g900, color: C.white, fontSize: 12, fontWeight: 600, paddingInline: 9, paddingBlock: 5, borderRadius: 7 }}>New Class</div>
+            <div style={{
+              width: 40, height: 40, borderRadius: 20, background: C.teal,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 3px 8px rgba(13,115,119,0.4)',
+            }}>
+              <span style={{ fontSize: 16, color: C.white }}>👥</span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setFabOpen(false); onAddHomework(); }}>
+            <div style={{ background: C.g900, color: C.white, fontSize: 12, fontWeight: 600, paddingInline: 9, paddingBlock: 5, borderRadius: 7, cursor: 'pointer' }}>Add Homework</div>
+            <div style={{
+              width: 40, height: 40, borderRadius: 20, background: C.teal, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 3px 8px rgba(13,115,119,0.4)',
+            }}>
+              <span style={{ fontSize: 16, color: C.white }}>📖</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main FAB */}
+      <button
+        onClick={() => setFabOpen(v => !v)}
+        style={{
+          position: 'absolute', bottom: 64, right: 16, zIndex: 11,
+          width: 52, height: 52, borderRadius: 26,
+          background: fabOpen ? '#085041' : C.teal, border: 'none', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 12px rgba(13,115,119,0.45)', transition: 'background 0.15s',
+          fontSize: 26, color: C.white, fontFamily: 'inherit',
+        }}
+      >
+        {fabOpen ? '✕' : '+'}
+      </button>
+
+      {/* Bottom tab bar */}
+      <div style={{
+        height: 50, background: C.white, borderTop: `1px solid ${C.border}`,
+        display: 'flex', flexShrink: 0,
+      }}>
+        {[
+          { icon: '🏠', label: 'Classes', active: true },
+          { icon: '📊', label: 'Analytics', active: false },
+          { icon: '⚙️', label: 'Settings', active: false },
+        ].map(tab => (
+          <div
+            key={tab.label}
+            style={{
+              flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', gap: 2, cursor: 'pointer',
+              borderTop: tab.active ? `2px solid ${C.teal}` : '2px solid transparent',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.teal : C.g500 }}>
+              {tab.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Homework Detail
+// ──────────────────────────────────────────────────────────────────────────────
+function HomeworkDetailScreen({
+  hw, isOpen, onToggleOpen, onBack, onGradeAll, demoToken,
+}: {
+  hw: HomeworkInfo;
+  isOpen: boolean;
+  onToggleOpen: (next: boolean) => void;
+  onBack: () => void;
+  onGradeAll: () => void;
+  demoToken: string | null;
+}) {
+  const [toggling, setToggling] = useState(false);
+
+  async function handleToggle() {
+    setToggling(true);
+    const next = !isOpen;
+    try {
+      await demoFetch(`/answer-keys/${hw.answer_key_id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ open_for_submission: next }),
+      }, demoToken);
+    } catch { /* proceed */ }
+    onToggleOpen(next);
+    setToggling(false);
+  }
+
+  const badgeBase: React.CSSProperties = {
+    fontSize: 11, fontWeight: 700, paddingInline: 9, paddingBlock: 4,
+    borderRadius: 20, display: 'inline-block',
+  };
+
+  const DEMO_STUDENTS = ['Tendai Moyo', 'Chipo Dube'];
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+
+        {/* Back */}
+        <button
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, textAlign: 'left', marginBottom: 14, fontFamily: 'inherit', padding: 0 }}
+        >
+          ← Back
+        </button>
+
+        {/* Header card */}
+        <div style={{ background: C.white, borderRadius: 14, padding: '14px 16px', marginBottom: 12, border: `1px solid ${C.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: C.text, marginBottom: 10, lineHeight: 1.3 }}>{hw.title}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ ...badgeBase, background: C.teal50, color: C.teal }}>{hw.subject}</span>
+            <span style={{ ...badgeBase, background: C.amber50, color: C.amber700 }}>{hw.education_level}</span>
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          {[
+            { icon: '❓', value: hw.question_count,   label: 'Questions' },
+            { icon: '⭐', value: hw.total_marks,       label: 'Total marks' },
+            { icon: '📬', value: hw.submission_count,  label: 'Submissions' },
+          ].map(s => (
+            <div key={s.label} style={{
+              flex: 1, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
+              padding: '10px 8px', textAlign: 'center',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            }}>
+              <div style={{ fontSize: 16 }}>{s.icon}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.teal, marginTop: 3 }}>{s.value}</div>
+              <div style={{ fontSize: 10, color: C.g500, marginTop: 1 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Accepting submissions toggle */}
+        <div style={{
+          background: C.white, borderRadius: 12, padding: '13px 16px', marginBottom: 12,
+          border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Accepting Submissions</div>
+            <div style={{ fontSize: 12, color: isOpen ? C.teal : C.g500, marginTop: 2, fontWeight: isOpen ? 600 : 400 }}>
+              {isOpen ? 'Students can submit their work' : 'Submissions are closed'}
+            </div>
+          </div>
+          {/* Toggle switch */}
+          <button
+            onClick={handleToggle}
+            disabled={toggling}
+            aria-label={isOpen ? 'Close submissions' : 'Open submissions'}
+            style={{
+              flexShrink: 0, width: 48, height: 26, borderRadius: 13,
+              background: isOpen ? C.teal : C.g200, border: 'none', cursor: toggling ? 'not-allowed' : 'pointer',
+              position: 'relative', transition: 'background 0.2s', padding: 0,
+            }}
+          >
+            <div style={{
+              position: 'absolute', top: 3,
+              left: isOpen ? 25 : 3,
+              width: 20, height: 20, borderRadius: 10,
+              background: C.white, transition: 'left 0.2s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+            }} />
+          </button>
+        </div>
+
+        {/* Submission list */}
+        <div style={{
+          background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+          overflow: 'hidden', marginBottom: 18,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        }}>
+          <div style={{
+            padding: '11px 16px', borderBottom: `1px solid ${C.border}`,
+            fontSize: 13, fontWeight: 700, color: C.g700,
+          }}>
+            Submissions ({hw.submission_count})
+          </div>
+          {DEMO_STUDENTS.map((name, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 10,
+                borderBottom: i < DEMO_STUDENTS.length - 1 ? `1px solid ${C.g100}` : 'none',
+              }}
+            >
+              <div style={{
+                width: 32, height: 32, borderRadius: 16, background: C.teal50,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 700, color: C.teal, flexShrink: 0,
+              }}>
+                {name.charAt(0)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name}</div>
+                <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>Submitted · Awaiting grade</div>
+              </div>
+              <div style={{
+                background: C.amber50, color: C.amber700,
+                fontSize: 10, fontWeight: 700, paddingInline: 7, paddingBlock: 4, borderRadius: 6,
+              }}>
+                Pending
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Grade All */}
+        <button
+          onClick={onGradeAll}
+          style={{
+            width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '15px 0',
+            cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
+            boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            boxShadow: '0 4px 14px rgba(13,115,119,0.30)', transition: 'opacity 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+        >
+          <span>✨ Grade All with AI</span>
+          <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>Powered by Gemma 4</span>
+        </button>
+      </div>
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Grade All
+// ──────────────────────────────────────────────────────────────────────────────
+type GradePhase = 'loading' | 'revealing' | 'done';
+
+function GradeAllScreen({
+  hw, onBack, demoToken, onGradingDone,
+}: {
+  hw: HomeworkInfo;
+  onBack: () => void;
+  demoToken: string | null;
+  onGradingDone?: () => void;
+}) {
+  const [phase, setPhase]         = useState<GradePhase>('loading');
+  const [allGrades, setAllGrades] = useState<StudentGrade[]>([]);
+  const [revealed, setRevealed]   = useState(0);
+  const [dots, setDots]           = useState('');
+
+  // Animated dots during loading
+  useEffect(() => {
+    if (phase !== 'loading') { setDots(''); return; }
+    const t = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 420);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  // On mount: call API, then start revealing
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await demoFetch(`/homework/${hw.id}/grade-all`, {
+        method: 'POST',
+        body: JSON.stringify({ answer_key_id: hw.answer_key_id }),
+      }, demoToken);
+
+      if (cancelled) return;
+
+      const grades: StudentGrade[] = (res?.results && Array.isArray(res.results) && res.results.length > 0)
+        ? (res.results as any[]).map((g: any, i: number) => normaliseGrade(g, i))
+        : DEMO_GRADES;
+
+      setAllGrades(grades);
+      setPhase('revealing');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Reveal one result every 700ms once in revealing phase
+  useEffect(() => {
+    if (phase !== 'revealing') return;
+    if (revealed >= allGrades.length) { setPhase('done'); return; }
+    const t = setTimeout(() => setRevealed(r => r + 1), 700);
+    return () => clearTimeout(t);
+  }, [phase, revealed, allGrades.length]);
+
+  // Notify parent when all results are shown
+  useEffect(() => {
+    if (phase === 'done') onGradingDone?.();
+  }, [phase]);
+
+  const visibleGrades = allGrades.slice(0, revealed);
+  const avgPct = allGrades.length > 0
+    ? Math.round(allGrades.reduce((s, g) => s + g.percentage, 0) / allGrades.length)
+    : 0;
+  const passCount = allGrades.filter(g => g.percentage >= 50).length;
+
+  const verdictIcon = (v: 'correct' | 'incorrect' | 'partial') =>
+    v === 'correct' ? '✓' : v === 'partial' ? '½' : '✗';
+  const verdictBg = (v: 'correct' | 'incorrect' | 'partial') =>
+    v === 'correct' ? C.greenLt : v === 'partial' ? C.amber50 : C.redLt;
+  const verdictColor = (v: 'correct' | 'incorrect' | 'partial') =>
+    v === 'correct' ? C.green : v === 'partial' ? C.amber500 : C.red;
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+
+        {/* Back */}
+        <button
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, textAlign: 'left', marginBottom: 14, fontFamily: 'inherit', padding: 0 }}
+        >
+          ← Back
+        </button>
+
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 2 }}>Grade All</div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 16 }}>{hw.title} · {hw.subject}</div>
+
+        {/* Loading state */}
+        {phase === 'loading' && (
+          <div style={{
+            background: C.white, border: `1px solid ${C.border}`, borderRadius: 14,
+            padding: '32px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+          }}>
+            <div style={{
+              width: 52, height: 52, borderRadius: 26, background: C.teal50,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+            }}>✨</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Grading with Gemma 4{dots}</div>
+            <div style={{ fontSize: 12, color: C.g500, textAlign: 'center', lineHeight: 1.5 }}>
+              Reading student answers and comparing to the marking scheme
+            </div>
+            <div style={{ width: '100%', height: 4, borderRadius: 2, background: C.g100, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 2, background: C.teal,
+                width: '60%', animation: 'none',
+                transition: 'width 1.2s ease',
+              }} />
+            </div>
+          </div>
+        )}
+
+        {/* Revealing / done: student result cards */}
+        {(phase === 'revealing' || phase === 'done') && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+            {/* Progress label while revealing */}
+            {phase === 'revealing' && (
+              <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 4 }}>
+                ✨ Grading student {revealed} of {allGrades.length}…
+              </div>
+            )}
+
+            {visibleGrades.map((g, idx) => (
+              <div
+                key={g.student_id}
+                style={{
+                  background: C.white, borderRadius: 13, border: `1px solid ${C.border}`,
+                  padding: '13px 14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                  opacity: 1, transform: 'translateY(0)',
+                  transition: 'opacity 0.3s, transform 0.3s',
+                }}
+              >
+                {/* Student name + score */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: 17, background: scoreBg(g.percentage),
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 13, fontWeight: 800, color: scoreColor(g.percentage), flexShrink: 0,
+                    }}>
+                      {g.student_name.charAt(0)}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{g.student_name}</div>
+                      <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>
+                        {g.percentage >= 70 ? '🟢 Pass' : g.percentage >= 50 ? '🟡 Borderline' : '🔴 Needs support'}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{
+                    background: scoreBg(g.percentage), borderRadius: 10, padding: '6px 10px',
+                    textAlign: 'center',
+                  }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>
+                      {g.score}/{g.max_score}
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: scoreColor(g.percentage), marginTop: 2 }}>
+                      {g.percentage}%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score bar */}
+                <div style={{ height: 4, borderRadius: 2, background: C.g100, overflow: 'hidden', marginBottom: 10 }}>
+                  <div style={{
+                    height: '100%', borderRadius: 2, background: scoreColor(g.percentage),
+                    width: `${g.percentage}%`, transition: 'width 0.6s ease',
+                  }} />
+                </div>
+
+                {/* Per-question verdict chips */}
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {g.verdicts.map(v => (
+                    <div
+                      key={v.question_number}
+                      title={`Q${v.question_number}: ${v.verdict} (${v.awarded}/${v.max})`}
+                      style={{
+                        background: verdictBg(v.verdict), borderRadius: 7,
+                        paddingInline: 7, paddingBlock: 4,
+                        display: 'flex', alignItems: 'center', gap: 3,
+                      }}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 700, color: verdictColor(v.verdict) }}>
+                        Q{v.question_number}
+                      </span>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: verdictColor(v.verdict) }}>
+                        {verdictIcon(v.verdict)}
+                      </span>
+                      <span style={{ fontSize: 9, color: verdictColor(v.verdict), fontWeight: 600 }}>
+                        {v.awarded}/{v.max}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Next-student loading shimmer */}
+            {phase === 'revealing' && revealed < allGrades.length && (
+              <div style={{
+                background: C.white, borderRadius: 13, border: `1px dashed ${C.teal100}`,
+                padding: '13px 14px', display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+                <div style={{ width: 34, height: 34, borderRadius: 17, background: C.teal50 }} />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ height: 12, borderRadius: 6, background: C.g100, width: '55%' }} />
+                  <div style={{ height: 10, borderRadius: 5, background: C.g100, width: '35%' }} />
+                </div>
+                <div style={{ width: 46, height: 40, borderRadius: 10, background: C.g100 }} />
+              </div>
+            )}
+
+            {/* Summary panel once done */}
+            {phase === 'done' && allGrades.length > 0 && (
+              <div style={{
+                background: C.teal, borderRadius: 14, padding: '14px 16px', marginTop: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.8)' }}>Class average</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: C.white, lineHeight: 1.1 }}>{avgPct}%</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.8)' }}>Passed</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: C.white, lineHeight: 1.1 }}>
+                    {passCount}/{allGrades.length}
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// STUDENT SCREENS
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ── S1: Register / Join Class ─────────────────────────────────────────────────
+function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void }) {
+  const [joinCode, setJoinCode]   = useState('NR2A01');
+  const [firstName, setFirstName] = useState('Chipo');
+  const [surname, setSurname]     = useState('Dube');
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
+
+  async function handleJoin() {
+    if (!joinCode.trim() || !firstName.trim() || !surname.trim()) {
+      setError('Please fill in all fields.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await demoFetch('/auth/student/lookup', {
+        method: 'POST',
+        body: JSON.stringify({ join_code: joinCode.trim().toUpperCase() }),
+      });
+    } catch { /* proceed on error — demo fallback */ }
+    setLoading(false);
+    onJoined(`${firstName.trim()} ${surname.trim()}`);
+  }
+
+  const inp: React.CSSProperties = {
+    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 14px',
+    fontSize: 15, color: C.text, outline: 'none', width: '100%',
+    boxSizing: 'border-box', fontFamily: 'inherit', background: C.white,
+  };
+  const lbl: React.CSSProperties = {
+    fontSize: 13, fontWeight: 700, color: C.g900, marginTop: 14, marginBottom: 5, display: 'block',
+  };
+
+  return (
+    <Screen style={{ padding: '24px 20px' }}>
+      <div style={{ width: 60, height: 60, borderRadius: 18, background: C.amber50, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+        <span style={{ fontSize: 28 }}>🎓</span>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>Join a Class</div>
+      <div style={{ fontSize: 13, color: C.g500, marginBottom: 22, lineHeight: 1.5 }}>
+        Enter the code your teacher gave you to get started.
+      </div>
+
+      <label style={lbl}>Class Join Code</label>
+      <input
+        type="text"
+        value={joinCode}
+        onChange={e => setJoinCode(e.target.value.toUpperCase())}
+        maxLength={10}
+        placeholder="e.g. NR2A01"
+        style={{ ...inp, textTransform: 'uppercase', letterSpacing: '0.12em', textAlign: 'center', fontWeight: 800, fontSize: 20, border: `2px solid ${C.amber}` }}
+      />
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 0 }}>
+        <div style={{ flex: 1 }}>
+          <label style={lbl}>First Name</label>
+          <input type="text" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Chipo" style={inp} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={lbl}>Surname</label>
+          <input type="text" value={surname} onChange={e => setSurname(e.target.value)} placeholder="Dube" style={inp} />
+        </div>
+      </div>
+
+      {error && <div style={{ marginTop: 10, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
+
+      <button
+        onClick={handleJoin}
+        disabled={loading}
+        style={{
+          marginTop: 22, width: '100%', background: loading ? C.amber100 : C.amber,
+          border: 'none', borderRadius: 10, padding: '15px 0',
+          cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
+          fontWeight: 700, fontSize: 16, fontFamily: 'inherit', boxSizing: 'border-box', transition: 'background 0.15s',
+        }}
+      >
+        {loading ? 'Joining…' : 'Join Class →'}
+      </button>
+
+      <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: C.g500 }}>
+        Already registered?{' '}
+        <button
+          onClick={() => onJoined('Chipo Dube')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.amber700, fontWeight: 600, fontSize: 12, padding: 0, fontFamily: 'inherit' }}
+        >
+          Sign in
+        </button>
+      </div>
+    </Screen>
+  );
+}
+
+// ── S2: Home ──────────────────────────────────────────────────────────────────
+function StudentHomeScreen({
+  studentName, submissionsOpen, onSubmit, onResults, onTutor,
+}: { studentName: string; submissionsOpen: boolean; onSubmit: () => void; onResults: () => void; onTutor: () => void }) {
+  const firstName = studentName.split(' ')[0];
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
+      {/* Header */}
+      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>{firstName} 👋</div>
+        <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Form 2A · Harare High School</div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 70 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', marginBottom: 10, textTransform: 'uppercase' }}>
+          My Homework
+        </div>
+
+        {/* Homework card */}
+        <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+          <div style={{ padding: '13px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ flex: 1, paddingRight: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>Chapter 5 Maths Test</div>
+                <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Mathematics · Form 2</div>
+              </div>
+              <div style={{
+                background: submissionsOpen ? C.greenLt : C.redLt,
+                color: submissionsOpen ? C.green : C.red,
+                fontSize: 10, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 20,
+                flexShrink: 0, whiteSpace: 'nowrap', transition: 'background 0.3s, color 0.3s',
+              }}>
+                {submissionsOpen ? '● Open' : '● Closed'}
+              </div>
+            </div>
+
+            {submissionsOpen ? (
+              <button
+                onClick={onSubmit}
+                style={{
+                  width: '100%', background: C.amber, border: 'none', borderRadius: 8, padding: '10px 0',
+                  cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  boxShadow: '0 2px 8px rgba(245,166,35,0.30)',
+                }}
+              >
+                <span>📤</span><span>Submit Work</span>
+              </button>
+            ) : (
+              <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic', paddingTop: 2 }}>
+                Submissions closed by your teacher.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={onResults}
+          style={{
+            width: '100%', border: `1.5px solid ${C.amber}`, borderRadius: 10, padding: '11px 0', background: 'none',
+            cursor: 'pointer', color: C.amber700, fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            marginBottom: 12,
+          }}
+        >
+          <span>📊</span><span>View My Results</span>
+        </button>
+
+        {/* AI Tutor card */}
+        <button
+          onClick={onTutor}
+          style={{
+            width: '100%', background: `linear-gradient(135deg, ${C.teal} 0%, ${C.tealMd} 100%)`,
+            border: 'none', borderRadius: 12, padding: '14px 16px',
+            cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+            boxShadow: '0 4px 14px rgba(13,115,119,0.30)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+              🤖
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.white, marginBottom: 2 }}>AI Tutor</div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.80)', lineHeight: 1.3 }}>Ask questions · Get Socratic hints · Send a photo</div>
+            </div>
+            <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.70)' }}>›</div>
+          </div>
+          <div style={{ marginTop: 10, background: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 6, height: 6, borderRadius: 3, background: C.amber, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)' }}>Powered by Gemma 4 · Socratic learning mode</span>
+          </div>
+        </button>
+      </div>
+
+      {/* Bottom tabs */}
+      <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
+        {[{ icon: '🏠', label: 'Home', active: true }, { icon: '📊', label: 'Results', active: false }, { icon: '⚙️', label: 'Settings', active: false }].map(tab => (
+          <div
+            key={tab.label}
+            onClick={tab.label === 'Results' ? onResults : undefined}
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer', borderTop: tab.active ? `2px solid ${C.amber}` : '2px solid transparent' }}
+          >
+            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.amber700 : C.g500 }}>{tab.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── S3: Submit Work ───────────────────────────────────────────────────────────
+function StudentSubmitScreen({
+  onBack, onSubmitted, demoToken,
+}: { onBack: () => void; onSubmitted: (sub: { id: string; fileName: string }) => void; demoToken: string | null }) {
+  const [file, setFile]       = useState<{ name: string; mimeType: string; base64: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+  const [dots, setDots]       = useState('');
+
+  const cameraRef  = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const pdfRef     = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!loading) { setDots(''); return; }
+    const t = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 450);
+    return () => clearInterval(t);
+  }, [loading]);
+
+  function readFile(f: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      setFile({ name: f.name, mimeType: f.type || 'application/octet-stream', base64: dataUrl.split(',')[1] });
+      setError('');
+    };
+    reader.onerror = () => setError('Could not read file. Please try again.');
+    reader.readAsDataURL(f);
+  }
+  function handleInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) readFile(f);
+    e.target.value = '';
+  }
+
+  async function handleSubmit() {
+    if (!file) { setError('Please upload your work first.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const res = await demoFetch('/submissions/student', {
+        method: 'POST',
+        body: JSON.stringify({ homework_id: DEMO_HOMEWORK.id, answer_key_id: DEMO_HOMEWORK.answer_key_id, file_data: file.base64, media_type: file.mimeType, file_name: file.name }),
+      }, demoToken);
+      onSubmitted({ id: res?.submission_id ?? res?.id ?? `sub-${Date.now()}`, fileName: file.name });
+    } catch {
+      onSubmitted({ id: `sub-${Date.now()}`, fileName: file.name });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const btnBase: React.CSSProperties = {
+    flex: 1, border: `1.5px solid ${C.g200}`, borderRadius: 12, padding: '14px 4px',
+    background: C.white, cursor: 'pointer', display: 'flex', flexDirection: 'column',
+    alignItems: 'center', gap: 5, fontFamily: 'inherit', transition: 'border-color 0.12s',
+  };
+
+  return (
+    <Screen style={{ background: C.white }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', padding: 0 }}>
+          ← Back
+        </button>
+
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 }}>Submit Work</div>
+        <div style={{ fontSize: 13, color: C.g500, marginBottom: 20, lineHeight: 1.5 }}>Chapter 5 Maths Test · Mathematics</div>
+
+        {!file && (
           <>
-            <div style={{ display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginBottom: 12, gap: 4 }}>
-              {(['teacher', 'student'] as const).map(tab => (
-                <button key={tab} onClick={() => setMobileTab(tab)} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', backgroundColor: mobileTab === tab ? C.teal : 'transparent', color: mobileTab === tab ? '#fff' : '#94A3B8', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-                  {tab === 'teacher' ? '👨‍🏫 Teacher' : '👩‍🎓 Student'}
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+              Upload Your Work
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {([
+                { icon: '📷', label: 'Camera',  ref: cameraRef },
+                { icon: '🖼',  label: 'Gallery', ref: galleryRef },
+                { icon: '📄', label: 'PDF',     ref: pdfRef },
+              ] as const).map(btn => (
+                <button
+                  key={btn.label}
+                  onClick={() => btn.ref.current?.click()}
+                  style={btnBase}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = C.amber)}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = C.g200)}
+                >
+                  <span style={{ fontSize: 26 }}>{btn.icon}</span>
+                  <span style={{ fontSize: 11, color: C.g700, fontWeight: 600 }}>{btn.label}</span>
                 </button>
               ))}
             </div>
-            <MobilePills
-              items={mobileTab === 'teacher' ? TEACHER_FLOW : STUDENT_FLOW}
-              activeScreen={mobileTab === 'teacher' ? tScreen : sScreen}
-              onSelect={mobileTab === 'teacher' ? tGoTo : sGoTo}
-            />
           </>
         )}
 
-        {/* Main layout: [TeacherList] [TeacherPhone] [SyncArrow] [StudentPhone] [StudentList] */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: '100%', gap: 8,
-        }}>
-          {!isMobile && (
-            <FlowList
-              title="Teacher Flow"
-              items={TEACHER_FLOW}
-              activeScreen={tScreen}
-              onSelect={tGoTo}
-              width={flowListWidth}
-            />
-          )}
+        {file && (
+          <div style={{ background: C.amber50, border: `1px solid ${C.amber100}`, borderRadius: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 22 }}>{file.mimeType.startsWith('image') ? '🖼' : '📄'}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.amber700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{(file.base64.length * 0.75 / 1024).toFixed(1)} KB · Ready to submit</div>
+            </div>
+            <button onClick={() => setFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g400, fontSize: 16, padding: 2, flexShrink: 0 }}>✕</button>
+          </div>
+        )}
 
-          {(!isMobile || mobileTab === 'teacher') && (
-            <PhoneFrame label="Teacher — Mr. Maisiri" scale={phoneScale}>
-              <TeacherRouter />
-            </PhoneFrame>
-          )}
+        {error && <div style={{ marginTop: 8, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
 
-          {!isMobile && <SyncArrow active={flowActive} />}
+        <button
+          onClick={handleSubmit}
+          disabled={loading || !file}
+          style={{
+            marginTop: 20, width: '100%', background: (!file || loading) ? C.amber100 : C.amber,
+            border: 'none', borderRadius: 10, padding: '14px 0',
+            cursor: (!file || loading) ? 'not-allowed' : 'pointer',
+            color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
+            boxSizing: 'border-box', transition: 'background 0.15s',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          }}
+        >
+          <span>📤</span>
+          <span>{loading ? `Submitting${dots}` : 'Submit Work'}</span>
+        </button>
 
-          {(!isMobile || mobileTab === 'student') && (
-            <PhoneFrame label="Student — Tendai Moyo" scale={phoneScale}>
-              <StudentRouter />
-            </PhoneFrame>
-          )}
+        <input ref={cameraRef}  type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleInput} />
+        <input ref={galleryRef} type="file" accept="image/*"                       style={{ display: 'none' }} onChange={handleInput} />
+        <input ref={pdfRef}     type="file" accept=".pdf,application/pdf"          style={{ display: 'none' }} onChange={handleInput} />
+      </div>
+    </Screen>
+  );
+}
 
-          {!isMobile && (
-            <FlowList
-              title="Student Flow"
-              items={STUDENT_FLOW}
-              activeScreen={sScreen}
-              onSelect={sGoTo}
-              width={flowListWidth}
-            />
-          )}
+// ── S4: Submission Success ─────────────────────────────────────────────────────
+function StudentSubmissionSuccessScreen({
+  fileName, onViewResults, onHome,
+}: { fileName: string; onViewResults: () => void; onHome: () => void }) {
+  return (
+    <Screen style={{ justifyContent: 'center', padding: 28, alignItems: 'center' }}>
+      <div style={{ width: 80, height: 80, borderRadius: 40, background: '#E6F4EA', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+        <svg width={40} height={40} viewBox="0 0 40 40" fill="none">
+          <path d="M8 21l8 8L32 12" stroke="#2E7D32" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 8, textAlign: 'center' }}>Submitted!</div>
+      <div style={{ fontSize: 14, color: C.g500, textAlign: 'center', lineHeight: 1.6, marginBottom: 22, maxWidth: 250 }}>
+        Your work has been submitted. You'll be notified as soon as it's marked.
+      </div>
+      <div style={{ background: C.g50, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24, width: '100%', boxSizing: 'border-box' }}>
+        <span style={{ fontSize: 18 }}>📄</span>
+        <span style={{ fontSize: 12, color: C.g700, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
+      </div>
+      <button
+        onClick={onViewResults}
+        style={{ width: '100%', background: C.amber, border: 'none', borderRadius: 10, padding: '14px 0', cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: 12 }}
+      >
+        View My Submissions
+      </button>
+      <button onClick={onHome} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontWeight: 600, fontSize: 14, fontFamily: 'inherit', padding: 4 }}>
+        Back to Home
+      </button>
+    </Screen>
+  );
+}
+
+// ── S5: Results (Pending / Graded tabs) ───────────────────────────────────────
+function StudentResultsScreen({
+  onBack, gradingComplete, onViewFeedback,
+}: { onBack: () => void; gradingComplete: boolean; onViewFeedback: () => void }) {
+  const [tab, setTab] = useState<'pending' | 'graded'>('pending');
+
+  useEffect(() => { if (gradingComplete) setTab('graded'); }, [gradingComplete]);
+
+  const g = DEMO_STUDENT_GRADE;
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', padding: 0 }}>
+          ← Back
+        </button>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 16 }}>My Submissions</div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
+          {(['pending', 'graded'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                flex: 1, padding: '9px 0', border: 'none', background: 'none', cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 13, fontWeight: tab === t ? 700 : 400,
+                color: tab === t ? C.amber700 : C.g500,
+                borderBottom: `2px solid ${tab === t ? C.amber : 'transparent'}`, marginBottom: -1,
+              }}
+            >
+              {t === 'pending' ? 'Pending' : 'Graded'}
+              {t === 'graded' && gradingComplete && (
+                <span style={{ marginLeft: 5, background: C.green, color: C.white, borderRadius: 10, paddingInline: 6, paddingBlock: 1, fontSize: 10, fontWeight: 700, verticalAlign: 'middle' }}>
+                  1
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
-        {/* Hint */}
-        <div style={{ marginTop: 20, textAlign: 'center', maxWidth: 520, minHeight: 36, padding: '0 12px', width: '100%' }}>
-          <div key={hint} style={{ fontSize: isMobile ? 12 : 13, color: '#94A3B8', lineHeight: 1.6, animation: 'neriah-fade 0.4s ease' }}>
-            {hint}
+        {/* Pending: has submission, not yet graded */}
+        {tab === 'pending' && !gradingComplete && (
+          <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '13px 14px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 3 }}>Chapter 5 Maths Test</div>
+            <div style={{ fontSize: 12, color: C.g500, marginBottom: 10 }}>Mathematics · Submitted</div>
+            <div style={{ background: C.amber50, color: C.amber700, fontSize: 11, fontWeight: 700, paddingInline: 10, paddingBlock: 5, borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span>⏳</span> Awaiting grade
+            </div>
+          </div>
+        )}
+        {tab === 'pending' && gradingComplete && (
+          <div style={{ textAlign: 'center', color: C.g400, fontSize: 13, padding: '32px 0' }}>No pending submissions</div>
+        )}
+
+        {/* Graded: empty until teacher grades */}
+        {tab === 'graded' && !gradingComplete && (
+          <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
+            <div style={{ fontSize: 28, marginBottom: 10 }}>📭</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>No results yet</div>
+            <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Your teacher hasn't graded the homework yet. Check back soon!</div>
+          </div>
+        )}
+
+        {/* Graded: result card */}
+        {tab === 'graded' && gradingComplete && (
+          <button
+            onClick={onViewFeedback}
+            style={{ width: '100%', background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '13px 14px', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', transition: 'box-shadow 0.12s' }}
+            onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(245,166,35,0.15)')}
+            onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Chapter 5 Maths Test</div>
+                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Mathematics · Form 2</div>
+              </div>
+              <div style={{ background: scoreBg(g.percentage), borderRadius: 10, padding: '6px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 17, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>{g.score}/{g.max_score}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: scoreColor(g.percentage), marginTop: 2 }}>{g.percentage}%</div>
+              </div>
+            </div>
+            <div style={{ height: 4, borderRadius: 2, background: C.g100, overflow: 'hidden', marginBottom: 8 }}>
+              <div style={{ height: '100%', borderRadius: 2, background: scoreColor(g.percentage), width: `${g.percentage}%` }} />
+            </div>
+            <div style={{ fontSize: 11, color: C.amber700, fontWeight: 600 }}>Tap for full feedback →</div>
+          </button>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ── S6: Feedback (full detail) ────────────────────────────────────────────────
+function StudentFeedbackScreen({ onBack }: { onBack: () => void }) {
+  const g = DEMO_STUDENT_GRADE;
+  const vIcon = (v: string) => v === 'correct' ? '✓' : v === 'partial' ? '½' : '✗';
+  const vBg   = (v: string) => v === 'correct' ? C.greenLt : v === 'partial' ? C.amber50 : C.redLt;
+  const vClr  = (v: string) => v === 'correct' ? C.green   : v === 'partial' ? C.amber500 : C.red;
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', padding: 0 }}>
+          ← Back
+        </button>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 2 }}>Your Results</div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 18 }}>Chapter 5 Maths Test · Mathematics</div>
+
+        {/* Score circle */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <div style={{ width: 96, height: 96, borderRadius: 48, background: scoreBg(g.percentage), border: `4px solid ${scoreColor(g.percentage)}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 26, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>{g.score}/{g.max_score}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: scoreColor(g.percentage), marginTop: 2 }}>{g.percentage}%</div>
           </div>
         </div>
 
-        {/* Progress dots + step labels */}
-        <div style={{ display: 'flex', gap: isMobile ? 10 : 16, marginTop: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
-          {['Homework', 'Scheme', 'Submitted', 'Graded', 'Approved'].map((label, i) => (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <div title={label} style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: steps[i] ? C.teal : 'rgba(255,255,255,0.15)', transition: 'background-color 0.4s ease', boxShadow: steps[i] ? `0 0 6px ${C.teal}` : 'none' }} />
-              {!isMobile && <div style={{ fontSize: 9, color: steps[i] ? C.teal : '#475569', fontWeight: 600 }}>{label}</div>}
-            </div>
-          ))}
+        {/* Score bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: 12, color: C.g500 }}>Score</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: scoreColor(g.percentage) }}>
+            {g.percentage >= 70 ? '🟢 Pass' : g.percentage >= 50 ? '🟡 Borderline' : '🔴 Needs support'}
+          </span>
         </div>
-        <div style={{ fontSize: 10, color: '#475569', marginTop: 5 }}>{doneCount}/5 steps complete</div>
+        <div style={{ height: 8, borderRadius: 4, background: C.g100, overflow: 'hidden', marginBottom: 20 }}>
+          <div style={{ height: '100%', borderRadius: 4, background: scoreColor(g.percentage), width: `${g.percentage}%`, transition: 'width 1s ease' }} />
+        </div>
 
-        {/* Reset button */}
-        <button
-          onClick={resetDemo}
-          disabled={resetting}
-          style={{
-            marginTop: 14, padding: '7px 20px', borderRadius: 8,
-            border: '1px solid rgba(255,255,255,0.15)',
-            backgroundColor: 'transparent', color: resetting ? '#475569' : '#94A3B8',
-            fontSize: 12, fontWeight: 600, cursor: resetting ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit', letterSpacing: 0.3, minWidth: 110,
-          }}
-        >
-          {resetting ? 'Resetting…' : '↺ Reset Demo'}
-        </button>
-
-        {/* CTA */}
-        <div style={{ marginTop: 32, textAlign: 'center', padding: '0 16px' }}>
-          <a href="/site/contact?subject=demo" style={{ display: 'inline-block', backgroundColor: C.teal, color: '#fff', borderRadius: 12, padding: isMobile ? '12px 24px' : '13px 30px', fontWeight: 700, fontSize: isMobile ? 13 : 14, textDecoration: 'none', boxShadow: `0 4px 20px rgba(13,148,136,0.4)` }}>
-            Request Full Access →
-          </a>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>Free for the first 3 months · No credit card</div>
+        {/* Question breakdown */}
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.g700, marginBottom: 10 }}>Question Breakdown</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {DEMO_QUESTIONS.map((q, idx) => {
+            const v = g.verdicts[idx];
+            return (
+              <div key={q.question_number} style={{
+                background: C.white, borderRadius: 10, padding: '11px 13px',
+                border: `1px solid ${C.border}`,
+                borderLeft: `3px solid ${v ? vClr(v.verdict) : C.g200}`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, background: v ? vBg(v.verdict) : C.g100, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 900, color: v ? vClr(v.verdict) : C.g500 }}>
+                      {v ? vIcon(v.verdict) : '?'}
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.g700 }}>Q{q.question_number}</span>
+                  </div>
+                  {v && <span style={{ fontSize: 12, fontWeight: 800, color: vClr(v.verdict) }}>{v.awarded}/{v.max}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: C.text, marginBottom: 5, lineHeight: 1.4 }}>{q.question_text}</div>
+                <div style={{ fontSize: 11, color: C.g500, lineHeight: 1.4 }}>
+                  <span style={{ fontWeight: 700, color: C.g700 }}>Answer: </span>{q.answer}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-    </Demo.Provider>
+    </Screen>
+  );
+}
+
+// ── S7: AI Tutor ──────────────────────────────────────────────────────────────
+function StudentTutorScreen({
+  studentName, onBack, demoToken,
+}: { studentName: string; onBack: () => void; demoToken: string | null }) {
+  const firstName = studentName.split(' ')[0];
+
+  const welcomeMsg: TutorMessage = {
+    id:      'welcome',
+    role:    'ai',
+    content: `Hi ${firstName}! I'm your AI tutor powered by Gemma 4. Ask me anything about Chapter 5 Maths, or send a photo of a problem you're stuck on. 🌟`,
+    ts:      Date.now(),
+  };
+
+  const [messages,  setMessages]  = useState<TutorMessage[]>([welcomeMsg]);
+  const [input,     setInput]     = useState('');
+  const [typing,    setTyping]    = useState(false);
+  const [dotPhase,  setDotPhase]  = useState(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileRef        = useRef<HTMLInputElement>(null);
+  const demoIdxRef     = useRef(0);
+
+  // Cycle typing dots
+  useEffect(() => {
+    if (!typing) return;
+    const t = setInterval(() => setDotPhase(p => (p + 1) % 4), 400);
+    return () => clearInterval(t);
+  }, [typing]);
+
+  // Auto-scroll on new messages or typing indicator
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, typing]);
+
+  async function sendMessage(text: string, imageBase64?: string, imageMimeType?: string) {
+    if (!text.trim() && !imageBase64) return;
+
+    const userMsg: TutorMessage = {
+      id:   `u-${Date.now()}`,
+      role: 'user',
+      content: text.trim(),
+      imageBase64,
+      imageMimeType,
+      ts: Date.now(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setTyping(true);
+
+    // Build last-6-message history for context
+    const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }));
+
+    let aiText: string | null = null;
+
+    // Try real API first
+    if (demoToken) {
+      const res = await demoFetch('/tutor', {
+        method: 'POST',
+        body: JSON.stringify({
+          message:         text.trim(),
+          history,
+          student_name:    studentName,
+          subject:         'Mathematics',
+          education_level: 'Form 2',
+          ...(imageBase64   ? { image_data: imageBase64 }   : {}),
+          ...(imageMimeType ? { media_type: imageMimeType }  : {}),
+        }),
+      }, demoToken);
+      if (res) {
+        aiText = res?.response ?? res?.message ?? res?.text ?? res?.reply ?? null;
+      }
+    }
+
+    // Fallback with simulated delay
+    if (!aiText) {
+      await new Promise(r => setTimeout(r, 1400));
+      aiText = DEMO_TUTOR_RESPONSES[demoIdxRef.current % DEMO_TUTOR_RESPONSES.length];
+      demoIdxRef.current += 1;
+    }
+
+    setTyping(false);
+    const aiMsg: TutorMessage = {
+      id:      `a-${Date.now()}`,
+      role:    'ai',
+      content: aiText,
+      ts:      Date.now(),
+    };
+    setMessages(prev => [...prev, aiMsg]);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(input);
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const b64     = dataUrl.split(',')[1];
+      sendMessage(input || 'Can you help me with this problem?', b64, f.type || 'image/jpeg');
+      setInput('');
+    };
+    reader.readAsDataURL(f);
+  }
+
+  const dots = ['', '.', '..', '...'][dotPhase];
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
+      {/* Header */}
+      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 14, paddingBottom: 12, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={onBack}
+            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: C.white, fontSize: 16, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >
+            ←
+          </button>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.white, lineHeight: 1.2 }}>AI Tutor</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', marginTop: 1 }}>
+              {typing ? `Thinking${dots}` : 'Gemma 4 · Socratic mode · Chapter 5 Maths'}
+            </div>
+          </div>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
+            🤖
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {messages.map(msg => {
+          const isUser = msg.role === 'user';
+          return (
+            <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
+              {!isUser && (
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0, marginBottom: 2 }}>
+                  🤖
+                </div>
+              )}
+              <div style={{
+                maxWidth: '75%',
+                background: isUser ? C.amber : C.white,
+                borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                padding: '9px 12px',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                border: isUser ? 'none' : `1px solid ${C.border}`,
+              }}>
+                {msg.imageBase64 && (
+                  <img
+                    src={`data:${msg.imageMimeType ?? 'image/jpeg'};base64,${msg.imageBase64}`}
+                    alt="uploaded"
+                    style={{ width: '100%', borderRadius: 8, marginBottom: msg.content ? 8 : 0, display: 'block', maxHeight: 160, objectFit: 'cover' }}
+                  />
+                )}
+                {msg.content && (
+                  <div style={{ fontSize: 13, color: isUser ? C.white : C.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                    {msg.content}
+                  </div>
+                )}
+              </div>
+              {isUser && (
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.amber100, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0, marginBottom: 2, fontWeight: 800, color: C.amber700 }}>
+                  {firstName[0]}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Typing indicator */}
+        {typing && (
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+            <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0, marginBottom: 2 }}>
+              🤖
+            </div>
+            <div style={{
+              background: C.white, borderRadius: '14px 14px 14px 4px', padding: '10px 14px',
+              border: `1px solid ${C.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+              display: 'flex', gap: 5, alignItems: 'center',
+            }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{
+                  width: 7, height: 7, borderRadius: '50%', background: C.teal,
+                  opacity: dotPhase === i + 1 ? 1 : 0.3,
+                  transform: `scale(${dotPhase === i + 1 ? 1.25 : 1})`,
+                  transition: 'opacity 0.2s, transform 0.2s',
+                }} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input bar */}
+      <div style={{ background: C.white, borderTop: `1px solid ${C.border}`, padding: '10px 12px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Camera button */}
+          <button
+            onClick={() => fileRef.current?.click()}
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.g100, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, flexShrink: 0 }}
+            title="Send a photo"
+          >
+            📷
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+
+          {/* Text input */}
+          <input
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anything…"
+            disabled={typing}
+            style={{
+              flex: 1, border: `1.5px solid ${input.trim() ? C.teal : C.g200}`, borderRadius: 20,
+              padding: '9px 14px', fontSize: 13, color: C.text, outline: 'none',
+              fontFamily: 'inherit', background: C.white, transition: 'border-color 0.15s',
+            }}
+          />
+
+          {/* Send button */}
+          <button
+            onClick={() => sendMessage(input)}
+            disabled={typing || !input.trim()}
+            style={{
+              width: 36, height: 36, borderRadius: 10, border: 'none', cursor: (typing || !input.trim()) ? 'default' : 'pointer',
+              background: (typing || !input.trim()) ? C.g100 : C.amber,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              transition: 'background 0.15s', boxShadow: (typing || !input.trim()) ? 'none' : '0 2px 8px rgba(245,166,35,0.35)',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke={(typing || !input.trim()) ? C.g400 : C.white} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div style={{ marginTop: 7, fontSize: 10, color: C.g400, textAlign: 'center' }}>
+          Socratic AI — guides you to the answer, doesn't give it away
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PHONE FRAME
+// ──────────────────────────────────────────────────────────────────────────────
+interface PhoneFrameProps { label: string; labelColor?: string; children: React.ReactNode }
+
+function PhoneFrame({ label, labelColor = C.teal, children }: PhoneFrameProps) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <div style={{
+        fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase',
+        color: labelColor, background: labelColor + '18', borderRadius: 20,
+        paddingInline: 14, paddingBlock: 5,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        width: 320, height: 640, borderRadius: 44, border: `3px solid ${C.g200}`,
+        background: C.white, boxShadow: '0 8px 40px rgba(13,115,119,0.10), 0 2px 8px rgba(0,0,0,0.07)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
+      }}>
+        {/* Status bar */}
+        <div style={{ height: 36, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: 80, height: 10, borderRadius: 6, background: 'rgba(255,255,255,0.25)' }} />
+        </div>
+        {/* Screen area */}
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {children}
+        </div>
+        {/* Home indicator */}
+        <div style={{ height: 28, background: C.white, borderTop: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: 56, height: 4, borderRadius: 2, background: C.g200 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PAGE
+// ──────────────────────────────────────────────────────────────────────────────
+export default function DemoPage() {
+  const [screen, setScreen]         = useState<TScreen>('welcome');
+  const [prevScreen, setPrevScreen] = useState<TScreen>('welcome');
+  const [otpPhone, setOtpPhone]     = useState('+263771234567');
+  const [demoToken, setDemoToken]   = useState<string | null>(null);
+  const [schemeData, setSchemeData] = useState<{ answer_key_id: string; questions: ReviewQuestion[] } | null>(null);
+  const [hwInfo, setHwInfo]         = useState<HomeworkInfo>(DEMO_HOMEWORK);
+
+  // ── Shared real-time state (lifted so both phones react instantly) ──────────
+  const [submissionsOpen, setSubmissionsOpen]   = useState(true);
+  const [gradingComplete, setGradingComplete]   = useState(false);
+  const [syncPulse, setSyncPulse]               = useState(false);
+
+  // ── Student phone state ────────────────────────────────────────────────────
+  const [sScreen, setSScreen]                   = useState<SStudentScreen>('s-register');
+  const [studentName, setStudentName]           = useState('Chipo Dube');
+  const [submissionFileName, setSubmissionFileName] = useState('');
+
+  function triggerSync() {
+    setSyncPulse(true);
+    setTimeout(() => setSyncPulse(false), 1200);
+  }
+
+  const go = (to: TScreen) => { setPrevScreen(screen); setScreen(to); };
+  const back = () => setScreen(prevScreen);
+
+  function renderTeacherScreen() {
+    switch (screen) {
+      case 'welcome':
+        return <WelcomeScreen onTeacher={() => go('register')} onSignIn={() => go('phone')} />;
+      case 'phone':
+        return <PhoneScreen onContinue={(p) => { setOtpPhone(p); go('otp'); }} onRegister={() => go('welcome')} />;
+      case 'otp':
+        return <OTPScreen phone={otpPhone} onVerify={() => go('classes')} onBack={back} />;
+      case 'register':
+        return <RegisterScreen onSignIn={() => go('phone')} onContinue={(p) => { setOtpPhone(p); go('otp'); }} />;
+      case 'classes':
+        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} />;
+      case 'add-homework':
+        return (
+          <AddHomeworkScreen
+            onBack={() => go('classes')}
+            onSuccess={(data) => { setSchemeData(data); go('review-scheme'); }}
+            demoToken={demoToken}
+          />
+        );
+      case 'review-scheme':
+        return (
+          <ReviewSchemeScreen
+            answerKeyId={schemeData?.answer_key_id ?? 'demo-key'}
+            initialQuestions={schemeData?.questions ?? DEMO_QUESTIONS}
+            onBack={() => go('add-homework')}
+            onConfirm={() => go('homework-created')}
+            demoToken={demoToken}
+          />
+        );
+      case 'homework-created':
+        return (
+          <HomeworkCreatedScreen
+            answerKeyId={schemeData?.answer_key_id ?? 'demo-key'}
+            onDone={() => go('classes')}
+            demoToken={demoToken}
+          />
+        );
+      case 'homework-detail':
+        return (
+          <HomeworkDetailScreen
+            hw={hwInfo}
+            isOpen={submissionsOpen}
+            onToggleOpen={(next) => { setSubmissionsOpen(next); setHwInfo(h => ({ ...h, is_open: next })); triggerSync(); }}
+            onBack={() => go('classes')}
+            onGradeAll={() => go('grade-all')}
+            demoToken={demoToken}
+          />
+        );
+      case 'grade-all':
+        return (
+          <GradeAllScreen
+            hw={hwInfo}
+            onBack={() => go('homework-detail')}
+            demoToken={demoToken}
+            onGradingDone={() => { setGradingComplete(true); triggerSync(); }}
+          />
+        );
+      default:
+        return null;
+    }
+  }
+
+  function renderStudentScreen() {
+    switch (sScreen) {
+      case 's-register':
+        return <StudentRegisterScreen onJoined={(name) => { setStudentName(name); setSScreen('s-home'); }} />;
+      case 's-home':
+        return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} />;
+      case 's-submit':
+        return (
+          <StudentSubmitScreen
+            onBack={() => setSScreen('s-home')}
+            onSubmitted={(sub) => {
+              setSubmissionFileName(sub.fileName);
+              setHwInfo(h => ({ ...h, submission_count: h.submission_count + 1 }));
+              triggerSync();
+              setSScreen('s-success');
+            }}
+            demoToken={demoToken}
+          />
+        );
+      case 's-success':
+        return <StudentSubmissionSuccessScreen fileName={submissionFileName || 'homework.jpg'} onViewResults={() => setSScreen('s-results')} onHome={() => setSScreen('s-home')} />;
+      case 's-results':
+        return <StudentResultsScreen onBack={() => setSScreen('s-home')} gradingComplete={gradingComplete} onViewFeedback={() => setSScreen('s-feedback')} />;
+      case 's-feedback':
+        return <StudentFeedbackScreen onBack={() => setSScreen('s-results')} />;
+      case 's-tutor':
+        return <StudentTutorScreen studentName={studentName} onBack={() => setSScreen('s-home')} demoToken={demoToken} />;
+      default:
+        return null;
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column' }}>
+
+      {/* Header */}
+      <header style={{
+        background: C.teal, boxShadow: '0 2px 12px rgba(13,115,119,0.18)',
+        position: 'sticky', top: 0, zIndex: 50,
+      }}>
+        <div style={{
+          maxWidth: 1100, margin: '0 auto', padding: '0 24px', height: 64,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+        }}>
+          <Image src="/images/logo/logo-light-background.png" alt="Neriah" width={120} height={36} style={{ objectFit: 'contain', height: 36, width: 'auto' }} priority />
+          <div style={{
+            fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+            color: C.teal, background: C.white, borderRadius: 20, paddingInline: 14, paddingBlock: 5,
+          }}>
+            Live Demo
+          </div>
+        </div>
+      </header>
+
+      {/* Hero text */}
+      <div style={{ textAlign: 'center', padding: '40px 24px 0', maxWidth: 640, margin: '0 auto' }}>
+        <h1 style={{ fontSize: 'clamp(22px, 4vw, 32px)', fontWeight: 800, color: C.g900, marginBottom: 10, lineHeight: 1.25 }}>
+          See Neriah in action
+        </h1>
+        <p style={{ fontSize: 15, color: C.g500, lineHeight: 1.6, margin: 0 }}>
+          Teacher (left) creates homework and grades with AI. Student (right) submits work and sees instant results. Try both phones.
+        </p>
+      </div>
+
+      {/* Step indicator */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, padding: '20px 24px 0' }}>
+        {(['welcome', 'register', 'otp', 'classes', 'add-homework', 'review-scheme', 'homework-created', 'homework-detail', 'grade-all'] as TScreen[]).map((s, i) => (
+          <div key={s} style={{
+            width: screen === s ? 24 : 8, height: 8, borderRadius: 4,
+            background: screen === s ? C.teal : C.g200,
+            transition: 'width 0.25s, background 0.25s',
+          }} />
+        ))}
+      </div>
+
+      {/* Phone frames */}
+      <main style={{
+        flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+        padding: '28px 16px 48px', gap: 0, flexWrap: 'wrap',
+      }}>
+        <PhoneFrame label="Teacher" labelColor={C.teal}>
+          {renderTeacherScreen()}
+        </PhoneFrame>
+
+        {/* Live sync connector */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          width: 52, alignSelf: 'center', gap: 6, flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 800, color: C.teal, letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>⚡ LIVE</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} style={{
+                width: 5, height: 5, borderRadius: 2.5,
+                background: syncPulse ? C.teal : C.g200,
+                transition: `background 0.2s ${i * 80}ms`,
+              }} />
+            ))}
+          </div>
+        </div>
+
+        <PhoneFrame label="Student" labelColor={C.amber700}>
+          {renderStudentScreen()}
+        </PhoneFrame>
+      </main>
+
+      {/* Footer */}
+      <footer style={{
+        textAlign: 'center', padding: '16px 24px', borderTop: `1px solid ${C.g200}`,
+        fontSize: 12, color: C.g400,
+      }}>
+        © {new Date().getFullYear()} Neriah Africa · Powered by Gemma 4
+      </footer>
+    </div>
   );
 }
