@@ -1561,7 +1561,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () =>
 // SCREEN: Homework Detail
 // ──────────────────────────────────────────────────────────────────────────────
 function HomeworkDetailScreen({
-  hw, isOpen, onToggleOpen, onBack, onGradeAll, demoToken,
+  hw, isOpen, onToggleOpen, onBack, onGradeAll, demoToken, gradingComplete,
 }: {
   hw: HomeworkInfo;
   isOpen: boolean;
@@ -1569,8 +1569,17 @@ function HomeworkDetailScreen({
   onBack: () => void;
   onGradeAll: () => void;
   demoToken: string | null;
+  gradingComplete: boolean;
 }) {
   const [toggling, setToggling] = useState(false);
+
+  // Inline question editing (Fix 1)
+  const [editingQIdx, setEditingQIdx]   = useState<number | null>(null);
+  const [qDraftText, setQDraftText]     = useState('');
+  const [qDraftAnswer, setQDraftAnswer] = useState('');
+  const [qDraftMarks, setQDraftMarks]   = useState('');
+  const [savingQ, setSavingQ]           = useState(false);
+  const [questions, setQuestions]       = useState<ReviewQuestion[]>(DEMO_QUESTIONS);
 
   async function handleToggle() {
     setToggling(true);
@@ -1585,12 +1594,46 @@ function HomeworkDetailScreen({
     setToggling(false);
   }
 
+  async function handleSaveQuestion(idx: number) {
+    setSavingQ(true);
+    const updated = questions.map((q, i) =>
+      i !== idx ? q : {
+        ...q,
+        question_text: qDraftText,
+        answer: qDraftAnswer,
+        marks: Math.max(1, Number(qDraftMarks) || 1),
+      },
+    );
+    try {
+      await demoFetch(`/answer-keys/${hw.answer_key_id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          questions: updated.map(q => ({
+            number: q.question_number,
+            question_text: q.question_text,
+            correct_answer: q.answer,
+            max_marks: q.marks,
+            marking_notes: q.marking_notes ?? '',
+          })),
+        }),
+      }, demoToken);
+    } catch { /* proceed — demo may lack auth */ }
+    setQuestions(updated);
+    setEditingQIdx(null);
+    setSavingQ(false);
+  }
+
+  // Submissions sorted earliest-first with real grades when grading is complete
+  const DEMO_SUBMISSIONS = [
+    { name: 'Tendai Moyo',    submittedAt: '2026-04-13T08:00:00Z', grade: DEMO_GRADES[0] },
+    { name: 'Chipo Dube',     submittedAt: '2026-04-13T08:14:00Z', grade: DEMO_GRADES[1] },
+    { name: 'Takudzwa Ncube', submittedAt: '2026-04-13T09:01:00Z', grade: DEMO_GRADES[2] },
+  ].sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime());
+
   const badgeBase: React.CSSProperties = {
     fontSize: 11, fontWeight: 700, paddingInline: 9, paddingBlock: 4,
     borderRadius: 20, display: 'inline-block',
   };
-
-  const DEMO_STUDENTS = ['Tendai Moyo', 'Chipo Dube'];
 
   return (
     <Screen style={{ background: C.bg }}>
@@ -1665,7 +1708,91 @@ function HomeworkDetailScreen({
           </button>
         </div>
 
-        {/* Submission list */}
+        {/* MARKING SCHEME section (Fix 1) */}
+        <div style={{
+          background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+          overflow: 'hidden', marginBottom: 12,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        }}>
+          <div style={{ padding: '11px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.g700 }}>Marking Scheme</span>
+            <span style={{ fontSize: 11, color: C.g500 }}>Tap a row to edit</span>
+          </div>
+          {questions.map((q, idx) =>
+            editingQIdx === idx ? (
+              /* Inline edit form */
+              <div key={q.question_number} style={{ padding: '12px 16px', background: C.tealLt, borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.teal, marginBottom: 8 }}>Q{q.question_number}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.g500, marginBottom: 3 }}>Question</div>
+                <textarea
+                  rows={2}
+                  value={qDraftText}
+                  onChange={e => setQDraftText(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${C.g200}`, borderRadius: 7, padding: '7px 9px', fontSize: 13, fontFamily: 'inherit', resize: 'none', outline: 'none', marginBottom: 8 }}
+                />
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.g500, marginBottom: 3 }}>Correct Answer</div>
+                <textarea
+                  rows={2}
+                  value={qDraftAnswer}
+                  onChange={e => setQDraftAnswer(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', border: `1.5px solid ${C.teal100}`, borderRadius: 7, padding: '7px 9px', fontSize: 13, fontFamily: 'inherit', resize: 'none', outline: 'none', background: C.white, marginBottom: 8 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.g500, marginBottom: 3 }}>Marks</div>
+                    <input
+                      type="number"
+                      min={1}
+                      value={qDraftMarks}
+                      onChange={e => setQDraftMarks(e.target.value)}
+                      style={{ width: 64, border: `1px solid ${C.g200}`, borderRadius: 7, padding: '7px 9px', fontSize: 13, fontFamily: 'inherit', outline: 'none', textAlign: 'center' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => handleSaveQuestion(idx)}
+                    disabled={savingQ}
+                    style={{ flex: 1, background: savingQ ? C.teal100 : C.teal, border: 'none', borderRadius: 8, padding: '9px 0', cursor: savingQ ? 'not-allowed' : 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}
+                  >
+                    {savingQ ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => setEditingQIdx(null)}
+                    disabled={savingQ}
+                    style={{ flex: 1, background: C.white, border: `1px solid ${C.g200}`, borderRadius: 8, padding: '9px 0', cursor: 'pointer', color: C.g700, fontWeight: 600, fontSize: 13, fontFamily: 'inherit' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Display row — tappable */
+              <button
+                key={q.question_number}
+                onClick={() => {
+                  setEditingQIdx(idx);
+                  setQDraftText(q.question_text ?? '');
+                  setQDraftAnswer(q.answer ?? '');
+                  setQDraftMarks(String(q.marks ?? 1));
+                }}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 16px', background: 'none', border: 'none',
+                  borderBottom: idx < questions.length - 1 ? `1px solid ${C.g100}` : 'none',
+                  cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.teal, minWidth: 24 }}>Q{q.question_number}</span>
+                <span style={{ flex: 1, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.answer}</span>
+                <span style={{ fontSize: 12, color: C.g500, whiteSpace: 'nowrap', marginRight: 4 }}>{q.marks}mk</span>
+                <span style={{ fontSize: 15, color: C.g500 }}>›</span>
+              </button>
+            ),
+          )}
+        </div>
+
+        {/* SUBMISSIONS section (Fix 2) — sorted earliest first, shows scores when graded */}
         <div style={{
           background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
           overflow: 'hidden', marginBottom: 18,
@@ -1675,35 +1802,53 @@ function HomeworkDetailScreen({
             padding: '11px 16px', borderBottom: `1px solid ${C.border}`,
             fontSize: 13, fontWeight: 700, color: C.g700,
           }}>
-            Submissions ({hw.submission_count})
+            Submissions ({DEMO_SUBMISSIONS.length})
           </div>
-          {DEMO_STUDENTS.map((name, i) => (
-            <div
-              key={i}
-              style={{
-                display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 10,
-                borderBottom: i < DEMO_STUDENTS.length - 1 ? `1px solid ${C.g100}` : 'none',
-              }}
-            >
-              <div style={{
-                width: 32, height: 32, borderRadius: 16, background: C.teal50,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 700, color: C.teal, flexShrink: 0,
-              }}>
-                {name.charAt(0)}
+          {DEMO_SUBMISSIONS.map((sub, i) => {
+            const isGraded = gradingComplete;
+            const grade = sub.grade;
+            return (
+              <div
+                key={sub.name}
+                style={{
+                  display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 10,
+                  borderBottom: i < DEMO_SUBMISSIONS.length - 1 ? `1px solid ${C.g100}` : 'none',
+                  transition: 'background 0.15s',
+                }}
+              >
+                <div style={{
+                  width: 32, height: 32, borderRadius: 16, background: C.teal50,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 13, fontWeight: 700, color: C.teal, flexShrink: 0,
+                }}>
+                  {sub.name.charAt(0)}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{sub.name}</div>
+                  <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>
+                    {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {isGraded ? ' · Graded' : ' · Awaiting grade'}
+                  </div>
+                </div>
+                {isGraded ? (
+                  <div style={{
+                    background: scoreBg(grade.percentage), color: scoreColor(grade.percentage),
+                    fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 6,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {grade.score}/{grade.max_score}
+                  </div>
+                ) : (
+                  <div style={{
+                    background: C.amber50, color: C.amber700,
+                    fontSize: 10, fontWeight: 700, paddingInline: 7, paddingBlock: 4, borderRadius: 6,
+                  }}>
+                    Pending
+                  </div>
+                )}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name}</div>
-                <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>Submitted · Awaiting grade</div>
-              </div>
-              <div style={{
-                background: C.amber50, color: C.amber700,
-                fontSize: 10, fontWeight: 700, paddingInline: 7, paddingBlock: 4, borderRadius: 6,
-              }}>
-                Pending
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Grade All */}
@@ -2873,6 +3018,7 @@ export default function DemoPage() {
             onBack={() => go('classes')}
             onGradeAll={() => go('grade-all')}
             demoToken={demoToken}
+            gradingComplete={gradingComplete}
           />
         );
       case 'grade-all':
