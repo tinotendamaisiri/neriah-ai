@@ -179,6 +179,18 @@ function normaliseGrade(g: any, i: number): StudentGrade {
   };
 }
 
+// Safety-net JSON cleaner — handles code fences and pre-parsed objects
+function cleanJson(raw: unknown): { questions?: unknown[]; total_marks?: number; answer_key_id?: string; [key: string]: unknown } {
+  if (raw !== null && typeof raw === 'object') return raw as ReturnType<typeof cleanJson>;
+  if (typeof raw !== 'string') return { questions: [], total_marks: 0 };
+  try {
+    const clean = raw.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch {
+    return { questions: [], total_marks: 0 };
+  }
+}
+
 function scoreColor(pct: number): string {
   if (pct >= 70) return C.green;
   if (pct >= 50) return C.amber500;
@@ -633,8 +645,9 @@ function AddHomeworkScreen({
   const [qpText, setQpText]     = useState('');
   const [textMode, setTextMode] = useState(false);
   const [textDraft, setTextDraft] = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState('');
+  const [generateError, setGenerateError] = useState(false);
 
   // Hidden file inputs
   const cameraRef  = useRef<HTMLInputElement>(null);
@@ -685,6 +698,7 @@ function AddHomeworkScreen({
   // ── Create & Generate ───────────────────────────────────────────────────────
   async function handleCreate() {
     setError('');
+    setGenerateError(false);
     if (!title.trim()) { setError('Please enter a homework title.'); return; }
     if (!subject.trim()) { setError('Please select a subject.'); return; }
     if (!qpFile && !qpText) { setError('Please upload the homework paper.'); return; }
@@ -706,15 +720,26 @@ function AddHomeworkScreen({
         body.text = qpText;
       }
 
-      const res = await demoFetch('/homework/generate-scheme', {
+      const rawRes = await demoFetch('/homework/generate-scheme', {
         method: 'POST',
         body: JSON.stringify(body),
       }, demoToken);
 
-      const questions: ReviewQuestion[] = res?.questions
-        ? (res.questions as any[]).map((q: any, i: number) => normaliseQ(q, i))
-        : DEMO_QUESTIONS;
-      const answer_key_id: string = res?.answer_key_id ?? 'demo-key';
+      // Apply client-side JSON cleaning in case the API returned raw text or fenced JSON
+      const res = rawRes ? cleanJson(rawRes) : null;
+      const rawQuestions = Array.isArray(res?.questions) ? res!.questions as any[] : [];
+      const questions: ReviewQuestion[] = rawQuestions.length > 0
+        ? rawQuestions.map((q: any, i: number) => normaliseQ(q, i))
+        : [];
+
+      if (questions.length === 0) {
+        // API returned no questions — show the specific error UI instead of falling back to demo data
+        setGenerateError(true);
+        setLoading(false);
+        return;
+      }
+
+      const answer_key_id: string = (res?.answer_key_id as string) ?? 'demo-key';
       onSuccess({ answer_key_id, questions });
     } catch {
       setError('Something went wrong. Please try again.');
@@ -938,28 +963,72 @@ function AddHomeworkScreen({
           <div style={{ marginTop: 10, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>
         )}
 
+        {/* Generate error — Gemma couldn't read the file */}
+        {generateError && (
+          <div style={{
+            marginTop: 16, background: C.redLt, border: `1px solid #FCA5A5`,
+            borderRadius: 12, padding: '14px 16px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#B91C1C', marginBottom: 4 }}>
+                  Gemma could not read this file
+                </div>
+                <div style={{ fontSize: 12, color: '#7F1D1D', lineHeight: 1.5 }}>
+                  Try uploading a clearer image or paste the question text instead.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setGenerateError(false); handleCreate(); }}
+                style={{
+                  flex: 1, background: C.red, border: 'none', borderRadius: 8,
+                  padding: '10px 0', cursor: 'pointer', color: C.white,
+                  fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+                }}
+              >
+                ↻ Retry
+              </button>
+              <button
+                onClick={() => { setGenerateError(false); onSuccess({ answer_key_id: 'demo-key', questions: [] }); }}
+                style={{
+                  flex: 1, background: C.white, border: `1.5px solid ${C.g200}`, borderRadius: 8,
+                  padding: '10px 0', cursor: 'pointer', color: C.g700,
+                  fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
+                }}
+              >
+                ✏️ Type manually
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Create & Generate button */}
-        <button
-          onClick={handleCreate}
-          disabled={loading}
-          style={{
-            marginTop: 22, width: '100%', background: loading ? C.teal100 : C.teal,
-            border: 'none', borderRadius: 10, padding: '14px 0',
-            cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
-            fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            boxSizing: 'border-box', transition: 'background 0.15s',
-          }}
-        >
-          {loading ? (
-            <>
-              <span style={{ fontSize: 16 }}>✨</span>
-              <span>Generating marking scheme{dots}</span>
-            </>
-          ) : (
-            <span>Create &amp; Generate Answers</span>
-          )}
-        </button>
+        {!generateError && (
+          <button
+            onClick={handleCreate}
+            disabled={loading}
+            style={{
+              marginTop: 22, width: '100%', background: loading ? C.teal100 : C.teal,
+              border: 'none', borderRadius: 10, padding: '14px 0',
+              cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
+              fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              boxSizing: 'border-box', transition: 'background 0.15s',
+            }}
+          >
+            {loading ? (
+              <>
+                <span style={{ fontSize: 16 }}>✨</span>
+                <span>Generating marking scheme{dots}</span>
+              </>
+            ) : (
+              <span>Create &amp; Generate Answers</span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Hidden file inputs */}
@@ -1067,6 +1136,21 @@ function ReviewSchemeScreen({
         <div style={{ fontSize: 12, color: C.g500, marginBottom: 16, lineHeight: 1.5 }}>
           Check each answer. Edit anything that looks wrong, then confirm.
         </div>
+
+        {/* Empty-state notice — shown when Gemma returned no questions */}
+        {initialQuestions.length === 0 && questions.length === 0 && (
+          <div style={{
+            background: C.amber50, border: `1px solid ${C.amber100}`,
+            borderRadius: 10, padding: '12px 14px', marginBottom: 14,
+            display: 'flex', gap: 10, alignItems: 'flex-start',
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>✏️</span>
+            <div style={{ fontSize: 12, color: C.amber700, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 700 }}>No questions detected. </span>
+              Use the form below to add questions manually, then confirm when ready.
+            </div>
+          </div>
+        )}
 
         {/* Summary row */}
         <div style={{
