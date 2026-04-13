@@ -12,7 +12,6 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
-  Image,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import {
@@ -74,8 +73,14 @@ export default function HomeworkDetailScreen() {
   // Generate-with-AI modal state
   const [aiModalVisible, setAiModalVisible] = useState(false);
   const [qpText, setQpText] = useState('');
-  const [localImageUri, setLocalImageUri] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+
+  // Inline question editing (Fix 1)
+  const [editingQIdx, setEditingQIdx]   = useState<number | null>(null);
+  const [qDraftText, setQDraftText]     = useState('');
+  const [qDraftAnswer, setQDraftAnswer] = useState('');
+  const [qDraftMarks, setQDraftMarks]   = useState('');
+  const [savingQ, setSavingQ]           = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -146,31 +151,23 @@ export default function HomeworkDetailScreen() {
       uploadFile: t('upload_file'),
       cancel: t('cancel'),
     });
-    if (!file) return;
+    if (!file || !answerKey) return;
 
-    if (file.isImage) {
-      // Silently enhance the image (resize to 2048px max, normalise EXIF rotation)
-      const enhanced = await enhanceImage(file.uri);
-      setLocalImageUri(enhanced);
-      setAiModalVisible(true);
-    } else {
-      // PDF / Word: send to backend for extraction
-      if (!answerKey) return;
-      setGenerating(true);
-      try {
-        const updated = await uploadAnswerKeyFile(
-          answerKey.id,
-          file.uri,
-          file.name,
-          file.mimeType,
-        );
-        setAnswerKey(updated);
-        Alert.alert('Done', `Generated ${updated.questions.length} questions from your file.`);
-      } catch (err: any) {
-        Alert.alert(t('error'), err.message ?? 'Could not generate marking scheme. Please try again.');
-      } finally {
-        setGenerating(false);
-      }
+    setGenerating(true);
+    try {
+      const uri = file.isImage ? await enhanceImage(file.uri) : file.uri;
+      const updated = await uploadAnswerKeyFile(
+        answerKey.id,
+        uri,
+        file.isImage ? 'question_paper.jpg' : file.name,
+        file.isImage ? 'image/jpeg' : file.mimeType,
+      );
+      setAnswerKey(updated);
+      Alert.alert('Done', `Generated ${updated.questions.length} questions from your ${file.isImage ? 'photo' : 'file'}.`);
+    } catch (err: any) {
+      Alert.alert(t('error'), err.message ?? 'Could not generate marking scheme. Please try again.');
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -190,7 +187,6 @@ export default function HomeworkDetailScreen() {
       setAnswerKey(updated);
       setAiModalVisible(false);
       setQpText('');
-      setLocalImageUri(null);
       Alert.alert('Done', `Generated ${updated.questions.length} questions from your marking scheme.`);
     } catch (err: any) {
       Alert.alert(t('error'), err.message ?? 'Could not generate marking scheme. Please try again.');
@@ -199,10 +195,39 @@ export default function HomeworkDetailScreen() {
     }
   };
 
+  const handleSaveQuestion = async (idx: number) => {
+    if (!answerKey) return;
+    setSavingQ(true);
+    const updatedQuestions = answerKey.questions.map((q, i) =>
+      i !== idx ? q : {
+        ...q,
+        question_text: qDraftText,
+        correct_answer: qDraftAnswer,
+        max_marks: Math.max(1, Number(qDraftMarks) || 1),
+      },
+    );
+    try {
+      const updated = await updateAnswerKey(answerKey.id, {
+        questions: updatedQuestions.map(q => ({
+          number: q.number,
+          question_text: q.question_text,
+          correct_answer: q.correct_answer,
+          max_marks: q.max_marks,
+          marking_notes: q.marking_notes,
+        })),
+      });
+      setAnswerKey(updated);
+      setEditingQIdx(null);
+    } catch (err: any) {
+      Alert.alert(t('error'), err.message ?? 'Could not save question.');
+    } finally {
+      setSavingQ(false);
+    }
+  };
+
   const handleCloseModal = () => {
     setAiModalVisible(false);
     setQpText('');
-    setLocalImageUri(null);
   };
 
   const handleMarkStudents = () => {
@@ -365,17 +390,78 @@ export default function HomeworkDetailScreen() {
                 <Text style={styles.regenerateLink}>{t('regenerate')}</Text>
               </TouchableOpacity>
             </View>
-            {answerKey.questions.slice(0, 5).map(q => (
-              <View key={q.number} style={styles.questionRow}>
-                <Text style={styles.questionNum}>Q{q.number}</Text>
-                <Text style={styles.questionAnswer} numberOfLines={1}>{q.correct_answer}</Text>
-                <Text style={styles.questionMarks}>{q.max_marks}mk</Text>
-              </View>
-            ))}
-            {answerKey.questions.length > 5 && (
-              <Text style={styles.moreQuestions}>
-                + {answerKey.questions.length - 5} more questions
-              </Text>
+            {answerKey.questions.map((q, idx) =>
+              editingQIdx === idx ? (
+                <View key={q.number ?? idx} style={styles.questionEditCard}>
+                  <Text style={styles.questionEditNum}>Q{q.number ?? idx + 1}</Text>
+
+                  <Text style={styles.editLabel}>Question</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={qDraftText}
+                    onChangeText={setQDraftText}
+                    placeholder="Question text"
+                    multiline
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.editLabel}>Correct Answer</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={qDraftAnswer}
+                    onChangeText={setQDraftAnswer}
+                    placeholder="Correct answer"
+                    multiline
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.editLabel}>Marks</Text>
+                  <TextInput
+                    style={[styles.editInput, styles.editInputSmall]}
+                    value={qDraftMarks}
+                    onChangeText={setQDraftMarks}
+                    keyboardType="numeric"
+                    placeholder="1"
+                  />
+
+                  <View style={styles.editActions}>
+                    <TouchableOpacity
+                      style={[styles.editSaveBtn, savingQ && styles.editSaveBtnDisabled]}
+                      onPress={() => handleSaveQuestion(idx)}
+                      disabled={savingQ}
+                    >
+                      {savingQ
+                        ? <ActivityIndicator size="small" color={COLORS.white} />
+                        : <Text style={styles.editSaveBtnText}>{t('save')}</Text>
+                      }
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.editCancelBtn}
+                      onPress={() => setEditingQIdx(null)}
+                      disabled={savingQ}
+                    >
+                      <Text style={styles.editCancelBtnText}>{t('cancel')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  key={q.number ?? idx}
+                  style={styles.questionRow}
+                  onPress={() => {
+                    setEditingQIdx(idx);
+                    setQDraftText(q.question_text ?? '');
+                    setQDraftAnswer(q.correct_answer ?? '');
+                    setQDraftMarks(String(q.max_marks ?? 1));
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.questionNum}>Q{q.number ?? idx + 1}</Text>
+                  <Text style={styles.questionAnswer} numberOfLines={1}>{q.correct_answer}</Text>
+                  <Text style={styles.questionMarks}>{q.max_marks}mk</Text>
+                  <Text style={styles.editChevron}>›</Text>
+                </TouchableOpacity>
+              ),
             )}
           </View>
         )}
@@ -421,29 +507,53 @@ export default function HomeworkDetailScreen() {
           )}
         </View>
 
-        {/* Student submissions list */}
+        {/* Student submissions list — sorted earliest first (Fix 2) */}
         {submissions.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('student_submissions')}</Text>
-            {submissions.map(s => (
-              <View key={s.id} style={styles.submissionRow}>
-                <View style={styles.submissionLeft}>
-                  <Text style={styles.submissionName}>{s.student_name ?? 'Student'}</Text>
-                  <Text style={styles.submissionDate}>{fmtDate(s.submitted_at)}</Text>
-                </View>
-                <View style={[
-                  styles.submissionBadge,
-                  s.status === 'graded' ? styles.badgeGraded : styles.badgePending,
-                ]}>
-                  <Text style={[
-                    styles.submissionBadgeText,
-                    s.status === 'graded' ? styles.badgeGradedText : styles.badgePendingText,
+            {[...submissions]
+              .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime())
+              .map(s => (
+                <TouchableOpacity
+                  key={s.id}
+                  style={styles.submissionRow}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    if (s.status === 'graded' && s.mark_id) {
+                      navigation.navigate('GradingDetail', {
+                        mark_id: s.mark_id,
+                        student_name: s.student_name ?? 'Student',
+                        class_name,
+                        answer_key_title: answerKey?.title ?? '',
+                      });
+                    } else {
+                      Alert.alert(
+                        'Awaiting grading',
+                        `${s.student_name ?? 'Student'}'s submission has been received and is queued for AI grading.`,
+                      );
+                    }
+                  }}
+                >
+                  <View style={styles.submissionLeft}>
+                    <Text style={styles.submissionName}>{s.student_name ?? 'Student'}</Text>
+                    <Text style={styles.submissionDate}>{fmtDate(s.submitted_at)}</Text>
+                  </View>
+                  <View style={[
+                    styles.submissionBadge,
+                    s.status === 'graded' ? styles.badgeGraded : styles.badgePending,
                   ]}>
-                    {s.status === 'graded' ? `${s.score ?? 0}/${s.max_score ?? '?'}` : t('pending')}
-                  </Text>
-                </View>
-              </View>
-            ))}
+                    <Text style={[
+                      styles.submissionBadgeText,
+                      s.status === 'graded' ? styles.badgeGradedText : styles.badgePendingText,
+                    ]}>
+                      {s.status === 'graded' ? `${s.score ?? 0}/${s.max_score ?? '?'}` : t('pending')}
+                    </Text>
+                  </View>
+                  {s.status === 'graded' && (
+                    <Text style={styles.submissionChevron}>›</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
           </View>
         )}
 
@@ -492,6 +602,14 @@ export default function HomeworkDetailScreen() {
         )}
       </View>
 
+      {/* Full-screen loading overlay — shown while generating from photo/file */}
+      {generating && !aiModalVisible && (
+        <View style={styles.generatingOverlay}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+          <Text style={styles.generatingText}>Generating marking scheme…</Text>
+        </View>
+      )}
+
       {/* Generate with AI modal */}
       <Modal
         visible={aiModalVisible}
@@ -508,10 +626,6 @@ export default function HomeworkDetailScreen() {
           </View>
 
           <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-            {localImageUri && (
-              <Image source={{ uri: localImageUri }} style={styles.previewImage} resizeMode="contain" />
-            )}
-
             <Text style={styles.modalLabel}>{t('question_paper_text')}</Text>
             <Text style={styles.modalHint}>{t('question_paper_hint')}</Text>
             <TextInput
@@ -614,12 +728,41 @@ const styles = StyleSheet.create({
 
   questionRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.background,
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.background,
   },
   questionNum: { fontSize: 13, fontWeight: '700', color: COLORS.teal500, minWidth: 28 },
   questionAnswer: { flex: 1, fontSize: 14, color: COLORS.text },
   questionMarks: { fontSize: 12, color: COLORS.gray500, minWidth: 32, textAlign: 'right' },
-  moreQuestions: { fontSize: 13, color: COLORS.gray500, marginTop: 8 },
+  editChevron: { fontSize: 18, color: COLORS.gray500, marginLeft: 2 },
+
+  // Inline question edit card (Fix 1)
+  questionEditCard: {
+    backgroundColor: COLORS.teal50, borderRadius: 10, padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: COLORS.teal100,
+  },
+  questionEditNum: { fontSize: 13, fontWeight: '700', color: COLORS.teal500, marginBottom: 6 },
+  editLabel: {
+    fontSize: 12, fontWeight: '600', color: COLORS.gray500,
+    marginBottom: 4, marginTop: 8,
+  },
+  editInput: {
+    borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 8,
+    padding: 10, fontSize: 14, color: COLORS.text,
+    backgroundColor: COLORS.white, minHeight: 42,
+  },
+  editInputSmall: { minHeight: 0, width: 80 },
+  editActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  editSaveBtn: {
+    flex: 1, backgroundColor: COLORS.teal500, borderRadius: 8,
+    padding: 10, alignItems: 'center',
+  },
+  editSaveBtnDisabled: { opacity: 0.6 },
+  editSaveBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
+  editCancelBtn: {
+    flex: 1, borderWidth: 1, borderColor: COLORS.gray200,
+    borderRadius: 8, padding: 10, alignItems: 'center',
+  },
+  editCancelBtnText: { color: COLORS.gray500, fontWeight: '600', fontSize: 14 },
 
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   toggleLabel: { fontSize: 15, fontWeight: '600', color: COLORS.text },
@@ -653,6 +796,7 @@ const styles = StyleSheet.create({
   submissionBadgeText: { fontSize: 13, fontWeight: '600' },
   badgePendingText: { color: COLORS.amber700 },
   badgeGradedText: { color: COLORS.teal700 },
+  submissionChevron: { fontSize: 18, color: COLORS.gray500, marginLeft: 4 },
 
   // Bottom bar
   bottomBar: {
@@ -699,10 +843,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
     padding: 14, fontSize: 15, color: COLORS.text, height: 180, marginBottom: 20,
   },
-  previewImage: {
-    width: '100%', height: 160, borderRadius: 10, marginBottom: 16,
-    backgroundColor: COLORS.gray50,
+  generatingOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    justifyContent: 'center', alignItems: 'center', gap: 16,
+    zIndex: 10,
   },
+  generatingText: { fontSize: 16, color: COLORS.text, fontWeight: '600' },
   generateBtn: {
     backgroundColor: COLORS.teal500, borderRadius: 10, padding: 16, alignItems: 'center',
   },

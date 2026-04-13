@@ -67,9 +67,19 @@ export interface Student {
 
 export interface Question {
   number: number;
+  question_text?: string;
   correct_answer: string;
   max_marks: number;
   marking_notes?: string;
+}
+
+/** Shape returned by the backend for generated marking scheme questions. */
+export interface ReviewQuestion {
+  question_number: number;
+  question_text: string;
+  answer: string;
+  marks: number;
+  marking_notes?: string | null;
 }
 
 export interface AnswerKey {
@@ -372,6 +382,18 @@ export type RootStackParamList = {
   TeacherInbox: undefined;
   HomeworkDetail: { answer_key_id: string; class_id: string; class_name: string };
   AddHomework: { class_id?: string; class_name?: string; education_level?: string };
+  HomeworkCreated: { answer_key_id: string; class_id: string; class_name: string };
+  ReviewScheme: {
+    answer_key_id: string;
+    class_id: string;
+    class_name: string;
+    questions: ReviewQuestion[];
+    qp_text?: string;
+    /** Base64-encoded file for regeneration (avoids multipart boundary issues) */
+    qp_file_base64?: string;
+    /** MIME type matching qp_file_base64 */
+    qp_media_type?: string;
+  };
   SetPin: undefined;
   GradingResults: { answer_key_id?: string; class_id: string; class_name: string; answer_key_title?: string };
   GradingDetail: { mark_id: string; student_name: string; class_name: string; answer_key_title: string };
