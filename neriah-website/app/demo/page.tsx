@@ -67,6 +67,10 @@ const C = {
   waGreen:      '#25D366',
   bg:           '#FAFAFA',
   border:       '#E8E8E8',
+  pendingBg:    '#FEF3E2',
+  gradedBg:     '#DCFCE7',
+  greenDk:      '#166534',
+  grayTxt:      '#6B7280',
 };
 
 // ── COLORS alias (canonical names for tests + new code) ───────────────────────
@@ -116,6 +120,83 @@ function BackButton({ label = 'Back', onClick, light = false }: {
       <ChevronLeft size={20} color={iconColor} />
       <span style={{ fontSize: FONT.sm, fontWeight: 600, color: iconColor }}>{label}</span>
     </button>
+  );
+}
+
+// ── StatusBadge ───────────────────────────────────────────────────────────────
+type BadgeStatus = 'Pending' | 'Graded' | 'Closed' | 'Open' | 'Active';
+const STATUS_COLORS: Record<BadgeStatus, { bg: string; color: string }> = {
+  Pending: { bg: C.pendingBg,    color: C.amberText },
+  Graded:  { bg: C.gradedBg,     color: C.greenDk },
+  Closed:  { bg: C.g100,         color: C.grayTxt },
+  Open:    { bg: C.primaryLight,  color: C.teal },
+  Active:  { bg: C.primaryLight,  color: C.teal },
+};
+function StatusBadge({ status }: { status: BadgeStatus }) {
+  const col = STATUS_COLORS[status] ?? { bg: C.g100, color: C.g500 };
+  return (
+    <span style={{
+      background: col.bg, color: col.color,
+      fontSize: 12, fontWeight: 600,
+      borderRadius: 9999, paddingInline: 10, paddingBlock: 4,
+      whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center',
+    }}>
+      {status}
+    </span>
+  );
+}
+
+// ── DemoInput — input with teal focus border ──────────────────────────────────
+function DemoInput(props: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
+  const [focused, setFocused] = React.useState(false);
+  const { error, style, onFocus, onBlur, ...rest } = props;
+  return (
+    <input
+      {...rest}
+      onFocus={e => { setFocused(true); onFocus?.(e); }}
+      onBlur={e => { setFocused(false); onBlur?.(e); }}
+      style={{
+        border: `2px solid ${error ? C.red : focused ? C.teal : C.g200}`,
+        borderRadius: 12, padding: '12px 14px',
+        fontSize: 14, color: C.text, outline: 'none', width: '100%',
+        boxSizing: 'border-box', fontFamily: 'inherit', background: C.white,
+        boxShadow: focused ? `0 0 0 3px ${error ? 'rgba(239,68,68,0.12)' : 'rgba(13,115,119,0.10)'}` : 'none',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+        ...style,
+      }}
+    />
+  );
+}
+
+// ── Spinner & Skeleton ────────────────────────────────────────────────────────
+/** Teal spinning ring. Uses a <style> tag for @keyframes (no CSS module needed). */
+function Spinner({ size = 20, color = C.teal }: { size?: number; color?: string }) {
+  return (
+    <>
+      <style>{`@keyframes neriah-spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={{
+        width: size, height: size, borderRadius: '50%',
+        border: `2.5px solid ${color}33`,
+        borderTopColor: color,
+        animation: 'neriah-spin 0.72s linear infinite',
+        display: 'inline-block', flexShrink: 0,
+      }} />
+    </>
+  );
+}
+
+/** Single skeleton row for list loading states. */
+function SkeletonRow({ width = '100%', height = 56 }: { width?: string | number; height?: number }) {
+  return (
+    <>
+      <style>{`@keyframes neriah-shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }`}</style>
+      <div style={{
+        width, height, borderRadius: 10, marginBottom: 8,
+        background: 'linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)',
+        backgroundSize: '200% 100%',
+        animation: 'neriah-shimmer 1.4s infinite',
+      }} />
+    </>
   );
 }
 
@@ -438,6 +519,7 @@ function Screen({ children, style }: { children: React.ReactNode; style?: React.
       flex: 1,
       overflowY: 'auto',
       overflowX: 'hidden',
+      scrollBehavior: 'smooth',
       background: C.white,
       display: 'flex',
       flexDirection: 'column',
@@ -892,11 +974,11 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (v: strin
 // ──────────────────────────────────────────────────────────────────────────────
 function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignIn: () => void }) {
   return (
-    <Screen style={{ justifyContent: 'center', padding: 20 }}>
+    <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 36 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 60, marginBottom: 0 }}>
         <div style={{
-          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 12,
+          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 0,
           background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <Image
@@ -906,13 +988,13 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
             style={{ objectFit: 'contain', width: '100%', height: '100%' }}
           />
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center' }}>
+        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, textAlign: 'center', marginTop: 24 }}>
           Welcome to Neriah
         </div>
       </div>
 
       {/* Role cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 48 }}>
         {/* Teacher */}
         <button
           onClick={onTeacher}
@@ -925,9 +1007,9 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <Briefcase size={36} color={C.white} />
-          <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <Briefcase size={48} color={C.white} />
+          <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
+          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Mark exercise books with AI
           </span>
         </button>
@@ -943,9 +1025,9 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <GraduationCap size={36} color={C.white} />
-          <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Student</span>
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <GraduationCap size={48} color={C.white} />
+          <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>I'm a Student</span>
+          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Submit work and get feedback
           </span>
         </button>
@@ -987,11 +1069,11 @@ function PhoneScreen({
   };
 
   return (
-    <Screen style={{ justifyContent: 'center', padding: 20 }}>
+    <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       {/* Branding */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}>
         <div style={{
-          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 12,
+          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 0,
           background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <Image
@@ -1748,7 +1830,7 @@ function AddHomeworkScreen({
   const isExact = COMMON_SUBJECTS.some(s => s.toLowerCase() === subjectSearch.toLowerCase());
 
   const inputStyle: React.CSSProperties = {
-    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '11px 13px',
+    border: `1px solid ${C.g200}`, borderRadius: 12, padding: '12px 14px',
     fontSize: 14, color: C.text, outline: 'none', width: '100%',
     boxSizing: 'border-box', fontFamily: 'inherit', background: C.white,
   };
@@ -2777,6 +2859,14 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics,
               </div>
             </button>
 
+            {/* Empty state: no homework */}
+            {false && (
+              <div style={{ padding: '14px 8px', textAlign: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><FileText size={20} color={C.g400} /></div>
+                <div style={{ fontSize: 13, color: C.g500 }}>No homework yet</div>
+              </div>
+            )}
+
             {/* Add homework */}
             <button
               onClick={onAddHomework}
@@ -2790,6 +2880,15 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics,
             </button>
           </div>
         </div>
+
+        {/* Empty state — no classes */}
+        {([] as any[]).length === 0 && false && (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}><BookOpen size={28} color={C.g400} /></div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.g700, marginBottom: 4 }}>No classes yet</div>
+            <div style={{ fontSize: 12, color: C.g500 }}>Tap + to create your first class</div>
+          </div>
+        )}
 
         {/* Empty-state second class hint */}
         <button
@@ -3245,6 +3344,7 @@ function HomeworkDetailScreen({
           {/* Submissions list — sorted earliest first */}
           {DEMO_SUBMISSIONS.length === 0 ? (
             <div style={{ padding: '24px 16px', textAlign: 'center', color: C.g500, fontSize: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><Inbox size={24} color={C.g400} /></div>
               No submissions yet
             </div>
           ) : (
@@ -3292,7 +3392,7 @@ function HomeworkDetailScreen({
                         fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 6,
                         whiteSpace: 'nowrap',
                       }}>
-                        {grade.score}/{grade.max_score}
+                        {grade.score} / {grade.max_score}
                       </div>
                       <span style={{ fontSize: 14, color: C.g400 }}>›</span>
                     </div>
@@ -3465,7 +3565,7 @@ function GradeAllScreen({
                     textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 18, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>
-                      {g.score}/{g.max_score}
+                      {g.score} / {g.max_score}
                     </div>
                     <div style={{ fontSize: 11, fontWeight: 600, color: scoreColor(g.percentage), marginTop: 2 }}>
                       {g.percentage}%
@@ -4065,7 +4165,7 @@ function StudentResultsScreen({
         {/* Graded: empty until teacher grades */}
         {tab === 'graded' && !gradingComplete && (
           <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><MailX size={28} color={C.g500} /></div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><ClipboardList size={28} color={C.g500} /></div>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>No results yet</div>
             <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Your teacher hasn't graded the homework yet. Check back soon!</div>
           </div>
@@ -4085,7 +4185,7 @@ function StudentResultsScreen({
                 <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Mathematics · Form 2</div>
               </div>
               <div style={{ background: scoreBg(g.percentage), borderRadius: 10, padding: '6px 10px', textAlign: 'center' }}>
-                <div style={{ fontSize: 17, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>{g.score}/{g.max_score}</div>
+                <div style={{ fontSize: 17, fontWeight: 900, color: scoreColor(g.percentage), lineHeight: 1 }}>{g.score} / {g.max_score}</div>
                 <div style={{ fontSize: 11, fontWeight: 600, color: scoreColor(g.percentage), marginTop: 2 }}>{g.percentage}%</div>
               </div>
             </div>
@@ -5475,20 +5575,28 @@ function PinModal({
 }
 
 // ── Toast helper ──────────────────────────────────────────────────────────────
-function Toast({ message, onDone }: { message: string; onDone: () => void }) {
+type ToastType = 'success' | 'error' | 'info';
+const TOAST_STYLES: Record<ToastType, { bg: string; color: string; icon: string }> = {
+  success: { bg: C.greenDk, color: C.white, icon: '✓' },
+  error:   { bg: C.red800,  color: C.white, icon: '✗' },
+  info:    { bg: C.tealDk2, color: C.white, icon: 'ℹ' },
+};
+function Toast({ message, type = 'success', onDone }: { message: string; type?: ToastType; onDone: () => void }) {
   useEffect(() => {
     const t = setTimeout(onDone, 2400);
     return () => clearTimeout(t);
   }, [onDone]);
+  const ts = TOAST_STYLES[type];
   return (
     <div style={{
       position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
-      background: C.g900, color: C.white, borderRadius: 10,
+      background: ts.bg, color: ts.color, borderRadius: 10,
       padding: '10px 20px', fontSize: 14, fontWeight: 600,
       zIndex: 200, whiteSpace: 'nowrap',
       boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+      display: 'flex', alignItems: 'center', gap: 8,
     }}>
-      ✓ {message}
+      <span>{ts.icon}</span> {message}
     </div>
   );
 }
