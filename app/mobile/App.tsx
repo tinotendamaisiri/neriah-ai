@@ -69,6 +69,7 @@ import GradingResultsScreen from './src/screens/GradingResultsScreen';
 import GradingDetailScreen from './src/screens/GradingDetailScreen';
 import TeacherClassAnalyticsScreen from './src/screens/TeacherClassAnalyticsScreen';
 import TeacherStudentAnalyticsScreen from './src/screens/TeacherStudentAnalyticsScreen';
+import TeacherAssistantScreen from './src/screens/TeacherAssistantScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
 import TermsOfServiceScreen from './src/screens/TermsOfServiceScreen';
 import UserAgreementScreen from './src/screens/UserAgreementScreen';
@@ -77,6 +78,7 @@ import UserAgreementScreen from './src/screens/UserAgreementScreen';
 import StudentHomeScreen from './src/screens/StudentHomeScreen';
 import StudentSubmitScreen from './src/screens/StudentSubmitScreen';
 import StudentResultsScreen from './src/screens/StudentResultsScreen';
+import StudentTutorScreen from './src/screens/StudentTutorScreen';
 import StudentSettingsScreen from './src/screens/StudentSettingsScreen';
 import StudentCameraScreen from './src/screens/StudentCameraScreen';
 import StudentPreviewScreen from './src/screens/StudentPreviewScreen';
@@ -137,6 +139,7 @@ function TeacherTabs() {
           const icons: Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap> = {
             Home: 'home-outline',
             Analytics: 'bar-chart-outline',
+            Assistant: 'sparkles-outline',
             Settings: 'settings-outline',
           };
           return <Ionicons name={icons[route.name]} size={size} color={color} />;
@@ -152,6 +155,11 @@ function TeacherTabs() {
         name="Analytics"
         component={AnalyticsScreen}
         options={{ tabBarLabel: t('analytics') }}
+      />
+      <TeacherTab.Screen
+        name="Assistant"
+        component={TeacherAssistantScreen}
+        options={{ tabBarLabel: t('assistant') }}
       />
       <TeacherTab.Screen
         name="Settings"
@@ -264,6 +272,7 @@ function StudentTabs() {
             StudentHome: 'home-outline',
             StudentSubmit: 'camera-outline',
             StudentResults: 'checkmark-circle-outline',
+            StudentTutor: 'chatbubble-ellipses-outline',
             StudentSettings: 'settings-outline',
           };
           return <Ionicons name={icons[route.name]} size={size} color={color} />;
@@ -284,6 +293,11 @@ function StudentTabs() {
         name="StudentResults"
         component={StudentResultsScreen}
         options={{ title: 'My Results', tabBarLabel: 'Results', headerShown: false }}
+      />
+      <StudentTab.Screen
+        name="StudentTutor"
+        component={StudentTutorScreen}
+        options={{ title: 'Tutor', tabBarLabel: 'Tutor', headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentSettings"

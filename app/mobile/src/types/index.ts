@@ -364,7 +364,7 @@ export interface StudentClassAnalytics {
 export type AuthStackParamList = {
   RoleSelect: undefined;    // Landing screen — role selection or "sign in"
   Phone: undefined;         // Login flow (existing users)
-  OTP: { phone: string; verification_id: string; debug_otp?: string };
+  OTP: { phone: string; verification_id: string; debug_otp?: string; channel?: 'whatsapp' | 'sms' | 'email' };
   TeacherRegister: undefined;
   StudentRegister: undefined;
 };
@@ -372,6 +372,7 @@ export type AuthStackParamList = {
 export type MainTabParamList = {
   Home: undefined;
   Analytics: { class_id?: string } | undefined;
+  Assistant: undefined;
   Settings: undefined;
 };
 
@@ -409,6 +410,7 @@ export type StudentTabParamList = {
   StudentHome: undefined;
   StudentSubmit: undefined;
   StudentResults: undefined;
+  StudentTutor: undefined;
   StudentSettings: undefined;
 };
 

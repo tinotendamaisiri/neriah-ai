@@ -7,6 +7,7 @@ export const translations = {
     my_classes: 'My Classes',
     settings: 'Settings',
     analytics: 'Analytics',
+    assistant: 'Assistant',
 
     // Home screen
     hello: 'Hello',
@@ -119,6 +120,9 @@ export const translations = {
     no_account_msg: 'We could not find an account for this number. Would you like to register?',
 
     // Auth — OTP screen
+    check_your_whatsapp: 'Check your WhatsApp',
+    check_your_sms: 'Check your SMS',
+    check_your_email: 'Check your email',
     enter_code: 'Enter your code',
     code_sent_to: 'We sent a 6-digit code to',
     verify: 'Verify',
@@ -217,6 +221,7 @@ export const translations = {
     my_classes: 'Makirasi Angu',
     settings: 'Zvigadziriso',
     analytics: 'Ongororo',
+    assistant: 'Mubatsiri',
 
     hello: 'Mhoro',
     add_homework: 'Wedzera Homeworiki',
@@ -319,6 +324,9 @@ export const translations = {
     no_account_found: 'Akaunti haiwanirwi',
     no_account_msg: 'Hatina kuwana akaunti yenhamba iyi. Unoda kunyoresa here?',
 
+    check_your_whatsapp: 'Tarisa WhatsApp yako',
+    check_your_sms: 'Tarisa SMS yako',
+    check_your_email: 'Tarisa email yako',
     enter_code: 'Isa kodhi yako',
     code_sent_to: 'Takatumira kodhi yenambaremba nhanhatu kuna',
     verify: 'Simbisa',
@@ -414,6 +422,7 @@ export const translations = {
     my_classes: 'Amakilasi Ami',
     settings: 'Izilungiselelo',
     analytics: 'Ukuhlola',
+    assistant: 'Umsizi',
 
     hello: 'Sawubona',
     add_homework: 'Engeza Umsebenzi',
@@ -516,6 +525,9 @@ export const translations = {
     no_account_found: 'I-akhawunti ayitholakalanga',
     no_account_msg: 'Asitholanga i-akhawunti yenombolo le. Ufuna ukubhalisa?',
 
+    check_your_whatsapp: 'Hlola i-WhatsApp yakho',
+    check_your_sms: 'Hlola i-SMS yakho',
+    check_your_email: 'Hlola i-email yakho',
     enter_code: 'Faka ikhodi yakho',
     code_sent_to: 'Sithumele ikhodi yamadijithi ayisithupha',
     verify: 'Qinisekisa',

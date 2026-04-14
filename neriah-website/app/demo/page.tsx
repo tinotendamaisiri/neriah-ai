@@ -71,6 +71,16 @@ const C = {
   gradedBg:     '#DCFCE7',
   greenDk:      '#166534',
   grayTxt:      '#6B7280',
+  // ── AI Assistant dark theme ─────────────────────────────────────────────────
+  aiDark:       '#1A1A2E',
+  aiCard:       '#16213E',
+  aiUser:       '#1E3A5F',
+  aiBorder:     '#2A2A4A',
+  aiPurple:     '#7C3AED',
+  aiPurpleLt:   '#A78BFA',
+  aiText:       '#E8E8F0',
+  aiSub:        '#8888AA',
+  aiChip:       '#2A2A4A',
 };
 
 // ── COLORS alias (canonical names for tests + new code) ───────────────────────
@@ -217,7 +227,7 @@ export async function demoFetch(path: string, opts: RequestInit = {}, token?: st
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics';
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 't-assistant';
 
 // ── DemoClass ─────────────────────────────────────────────────────────────────
 interface DemoClass {
@@ -2785,9 +2795,306 @@ function ClassJoinCodeScreen({ cls, onDone }: { cls: DemoClass; onDone: () => vo
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Teacher AI Assistant
+// ──────────────────────────────────────────────────────────────────────────────
+
+const AI_CURRICULUMS = ['ZIMSEC', 'Cambridge', 'IB', 'National Curriculum'] as const;
+
+const AI_CURRICULUM_LEVELS: Record<string, string[]> = {
+  ZIMSEC: ['Grade 1','Grade 2','Grade 3','Grade 4','Grade 5','Grade 6','Grade 7','Form 1','Form 2','Form 3','Form 4','Form 5 (A-Level)','Form 6 (A-Level)','College/University'],
+  Cambridge: ['Year 1','Year 2','Year 3','Year 4','Year 5','Year 6','Year 7','Year 8','Year 9','IGCSE (Year 10)','IGCSE (Year 11)','A-Level (Year 12)','A-Level (Year 13)'],
+  IB: ['Primary Years (PYP)','Middle Years (MYP)','Diploma Programme (DP)'],
+  'National Curriculum': ['KS1','KS2','KS3','GCSE','A-Level'],
+};
+
+const AI_DEFAULT_LEVEL: Record<string, string> = {
+  ZIMSEC: 'Form 3', Cambridge: 'IGCSE (Year 10)', IB: 'Middle Years (MYP)', 'National Curriculum': 'GCSE',
+};
+
+interface AIChatMsg {
+  id: string; role: 'user' | 'assistant'; content: string;
+  card?: { title: string; preview: string }; chips?: string[];
+}
+
+function aiMockResponse(input: string, curriculum: string, level: string): Omit<AIChatMsg, 'id' | 'role'> {
+  const q = input.toLowerCase();
+  if (q.includes('homework')) return {
+    content: `Here's a ${level} homework set for ${curriculum}:`,
+    card: { title: `Homework: ${input.replace(/create|homework/gi,'').trim() || 'Mathematics'}`, preview: '8 questions • Mixed difficulty • Est. 45 min' },
+    chips: ['Add more questions','Change difficulty','Share with class'],
+  };
+  if (q.includes('quiz')) return {
+    content: 'Quiz ready! Review before sharing with your class:',
+    card: { title: `Quiz: ${input.replace(/create|a|quiz/gi,'').trim() || 'Chapter Review'}`, preview: '10 questions • Multiple choice • 20 min' },
+    chips: ['Make it harder','Add time limit','Preview quiz'],
+  };
+  if (q.includes('notes') || q.includes('prepare')) return {
+    content: `Lesson notes prepared for ${level}:`,
+    card: { title: `Notes: ${input.replace(/prepare|notes/gi,'').trim() || 'Topic Summary'}`, preview: '3 sections • Key concepts, examples, practice' },
+    chips: ['Add diagrams','Simplify language','Print version'],
+  };
+  if (q.includes('exam') || (q.includes('generate') && q.includes('question'))) return {
+    content: `Generated ${level} exam questions aligned to ${curriculum}:`,
+    card: { title: 'Exam Questions', preview: '12 questions • Structured + essay sections' },
+    chips: ['More questions','Mark scheme','Adjust difficulty'],
+  };
+  if (q.includes('performing') || q.includes('analytics')) return {
+    content: 'Your class is performing well overall.\n\n• Average score: 74% (↑ from 68% last week)\n• Top performer: Tendai Moyo — 92%\n• 3 students below 50% need support\n• Weakest topic: Quadratic Equations',
+    chips: ['Show weak areas','Individual reports','Compare to last week'],
+  };
+  if (q.includes('teaching') || q.includes('method')) return {
+    content: `Evidence-based strategies for ${level} (${curriculum}):\n\n• Socratic questioning to build critical thinking\n• Peer learning pairs for struggling students\n• 5-minute entry quizzes to activate prior knowledge\n• Visual concept maps for abstract topics`,
+    chips: ['More ideas','Subject-specific tips','Differentiation strategies'],
+  };
+  return {
+    content: `Hello! I'm Neriah AI, your teaching assistant for ${level} (${curriculum}).\n\nI can help you create homework, quizzes, exam questions, lesson notes, and analyse your class performance.\n\nWhat would you like to work on?`,
+    chips: ['Create Homework','Check class performance','Suggest teaching methods'],
+  };
+}
+
+const AI_QUICK_ACTIONS = ['Create Homework','Create a Quiz','Prepare Notes','How is my class performing?','Suggest teaching methods','Generate exam questions'];
+
+function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
+  const [curriculum, setCurriculum] = useState('ZIMSEC');
+  const [level, setLevel]           = useState('Form 3');
+  const [showCurrDrop, setShowCurrDrop] = useState(false);
+  const [showLvlDrop, setShowLvlDrop]   = useState(false);
+  const [messages, setMessages]     = useState<AIChatMsg[]>([]);
+  const [input, setInput]           = useState('');
+  const [typing, setTyping]         = useState(false);
+  const chatRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, [messages, typing]);
+
+  const send = (text: string) => {
+    if (!text.trim() || typing) return;
+    setShowCurrDrop(false); setShowLvlDrop(false);
+    const userMsg: AIChatMsg = { id: String(Date.now()), role: 'user', content: text.trim() };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setTyping(true);
+    setTimeout(() => {
+      const r = aiMockResponse(text, curriculum, level);
+      setMessages(prev => [...prev, { id: String(Date.now()+1), role: 'assistant', ...r }]);
+      setTyping(false);
+    }, 900 + Math.random() * 400);
+  };
+
+  const levels = AI_CURRICULUM_LEVELS[curriculum] ?? AI_CURRICULUM_LEVELS.ZIMSEC;
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', background: C.aiDark, position: 'relative' }}
+      onClick={() => { setShowCurrDrop(false); setShowLvlDrop(false); }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 14px', borderBottom: `1px solid ${C.aiBorder}` }}>
+        <button onClick={(e) => { e.stopPropagation(); onBack(); }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.aiText, padding: 4, display: 'flex' }}>
+          <ChevronLeft size={22} />
+        </button>
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.aiText, letterSpacing: 0.3 }}>Neriah AI</span>
+        <button onClick={(e) => { e.stopPropagation(); setMessages([]); }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.aiText, padding: 4, display: 'flex' }}>
+          <Pencil size={18} />
+        </button>
+      </div>
+
+      {/* Context pills */}
+      <div style={{ display: 'flex', gap: 8, padding: '10px 14px' }} onClick={e => e.stopPropagation()}>
+        {/* Curriculum */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => { setShowLvlDrop(false); setShowCurrDrop(v => !v); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.aiCard,
+              border: `1px solid ${C.aiBorder}`, borderRadius: 20, padding: '6px 12px',
+              color: C.aiText, fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+            {curriculum} <span style={{ color: C.aiSub, fontSize: 11 }}>{showCurrDrop ? '▲' : '▼'}</span>
+          </button>
+          {showCurrDrop && (
+            <div style={{ position: 'absolute', top: 36, left: 0, zIndex: 100, minWidth: 160,
+              background: C.aiCard, border: `1px solid ${C.aiBorder}`, borderRadius: 10,
+              overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+              {AI_CURRICULUMS.map(c => (
+                <button key={c} onClick={() => { setCurriculum(c); setLevel(AI_DEFAULT_LEVEL[c] ?? AI_CURRICULUM_LEVELS[c][0]); setShowCurrDrop(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px',
+                    background: c === curriculum ? C.aiBorder : 'none', border: 'none', cursor: 'pointer',
+                    color: c === curriculum ? C.aiPurpleLt : C.aiText, fontSize: 13,
+                    fontWeight: c === curriculum ? 600 : 400, fontFamily: 'inherit' }}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Level */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => { setShowCurrDrop(false); setShowLvlDrop(v => !v); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.aiCard,
+              border: `1px solid ${C.aiBorder}`, borderRadius: 20, padding: '6px 12px',
+              color: C.aiText, fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+            {level} <span style={{ color: C.aiSub, fontSize: 11 }}>{showLvlDrop ? '▲' : '▼'}</span>
+          </button>
+          {showLvlDrop && (
+            <div style={{ position: 'absolute', top: 36, left: 0, zIndex: 100, minWidth: 180,
+              maxHeight: 200, overflowY: 'auto', background: C.aiCard,
+              border: `1px solid ${C.aiBorder}`, borderRadius: 10,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+              {levels.map(l => (
+                <button key={l} onClick={() => { setLevel(l); setShowLvlDrop(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px',
+                    background: l === level ? C.aiBorder : 'none', border: 'none', cursor: 'pointer',
+                    color: l === level ? C.aiPurpleLt : C.aiText, fontSize: 12,
+                    fontWeight: l === level ? 600 : 400, fontFamily: 'inherit' }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chat area / empty state */}
+      {messages.length === 0 && !typing ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', padding: 20, gap: 8 }}>
+          <div style={{ width: 60, height: 60, borderRadius: 30, background: C.aiCard,
+            border: `1px solid ${C.aiBorder}`, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', marginBottom: 8 }}>
+            <Sparkles size={28} color={C.aiPurple} />
+          </div>
+          <span style={{ fontSize: 18, fontWeight: 700, color: C.aiText }}>Neriah AI</span>
+          <span style={{ fontSize: 13, color: C.aiSub, marginBottom: 16 }}>Your AI teaching assistant</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+            {AI_QUICK_ACTIONS.map(a => (
+              <button key={a} onClick={() => send(a)}
+                style={{ background: C.aiCard, border: `1px solid ${C.aiBorder}`,
+                  borderRadius: 10, padding: '12px 14px', color: C.aiText, fontSize: 13,
+                  textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div ref={chatRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {messages.map(msg => (
+            <div key={msg.id} style={{ display: 'flex', flexDirection: 'column',
+              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: 6 }}>
+              {/* Bubble row */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
+                flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', maxWidth: '85%' }}>
+                {msg.role === 'assistant' && (
+                  <div style={{ width: 26, height: 26, borderRadius: 13, background: C.aiPurple,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
+                    <Sparkles size={12} color={C.aiText} />
+                  </div>
+                )}
+                <div style={{ background: msg.role === 'user' ? C.aiUser : C.aiCard,
+                  borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                  padding: '10px 13px' }}>
+                  <span style={{ fontSize: 13, color: C.aiText, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                    {msg.content}
+                  </span>
+                </div>
+              </div>
+              {/* Rich card */}
+              {msg.card && (
+                <div style={{ marginLeft: msg.role === 'assistant' ? 34 : 0,
+                  marginRight: msg.role === 'user' ? 0 : 0,
+                  background: C.aiBorder, borderRadius: 10, padding: '10px 12px',
+                  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                  maxWidth: '85%' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.aiText, marginBottom: 2 }}>
+                      {msg.card.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.aiSub }}>{msg.card.preview}</div>
+                  </div>
+                  <ChevronLeft size={14} color={C.aiSub} style={{ transform: 'rotate(180deg)' }} />
+                </div>
+              )}
+              {/* Chips */}
+              {!!msg.chips?.length && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6,
+                  marginLeft: msg.role === 'assistant' ? 34 : 0 }}>
+                  {msg.chips.map(chip => (
+                    <button key={chip} onClick={() => send(chip)}
+                      style={{ background: C.aiChip, border: 'none', borderRadius: 14,
+                        padding: '5px 11px', color: C.aiPurpleLt, fontSize: 11,
+                        fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {typing && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ width: 26, height: 26, borderRadius: 13, background: C.aiPurple,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Sparkles size={12} color={C.aiText} />
+              </div>
+              <div style={{ background: C.aiCard, borderRadius: '16px 16px 16px 4px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
+                {[0,1,2].map(i => (
+                  <div key={i} style={{ width: 6, height: 6, borderRadius: 3, background: C.aiSub,
+                    animation: 'aiPulse 1.2s ease-in-out infinite',
+                    animationDelay: `${i * 0.2}s` }} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Input bar */}
+      <div style={{ borderTop: `1px solid ${C.aiBorder}`, padding: '10px 12px 12px' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8,
+          background: C.aiCard, borderRadius: 24, border: `1px solid ${C.aiBorder}`,
+          padding: '4px 6px 4px 14px' }}>
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+            placeholder="Message Neriah AI..."
+            rows={1}
+            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', resize: 'none',
+              color: C.aiText, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
+              paddingTop: 6, paddingBottom: 6, maxHeight: 100,
+              ['--placeholder-color' as string]: C.aiSub }}
+          />
+          <button onClick={() => send(input)} disabled={!input.trim() || typing}
+            style={{ width: 34, height: 34, borderRadius: 17, flexShrink: 0,
+              background: input.trim() && !typing ? C.aiPurple : C.aiBorder,
+              border: 'none', cursor: input.trim() && !typing ? 'pointer' : 'default',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'background 0.15s' }}>
+            <span style={{ color: C.aiText, fontSize: 14, lineHeight: 1 }}>↑</span>
+          </button>
+        </div>
+        <p style={{ margin: '6px 0 0', fontSize: 11, color: C.aiSub, textAlign: 'center' }}>
+          Neriah can make mistakes. Verify important info.
+        </p>
+      </div>
+
+      <style>{`
+        @keyframes aiPulse {
+          0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+          40% { transform: scale(1.2); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: My Classes
 // ──────────────────────────────────────────────────────────────────────────────
-function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onSettings: () => void; onAnalytics: () => void; onNewClass: () => void }) {
+function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics, onAssistant, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void }) {
   const [fabOpen, setFabOpen] = useState(false);
 
   return (
@@ -2961,6 +3268,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics,
         {[
           { icon: <Home size={16} />, label: 'Classes',   active: true,  onClick: undefined as (() => void) | undefined },
           { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
+          { icon: <Sparkles size={16} />, label: 'Assistant', active: false, onClick: onAssistant },
           { icon: <Settings size={16} />, label: 'Settings',  active: false, onClick: onSettings },
         ].map(tab => (
           <div
@@ -5947,7 +6255,7 @@ export default function DemoPage() {
       case 'register':
         return <RegisterScreen onSignIn={() => go('phone')} onContinue={(p, ch) => { setOtpPhone(p); setOtpChannel(ch); go('otp'); }} />;
       case 'classes':
-        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onNewClass={() => go('class-setup')} />;
+        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onAssistant={() => go('t-assistant')} onNewClass={() => go('class-setup')} />;
       case 'class-setup':
         return (
           <ClassSetupScreen
@@ -6041,6 +6349,8 @@ export default function DemoPage() {
             demoToken={demoToken}
           />
         );
+      case 't-assistant':
+        return <TeacherAIAssistantWebScreen onBack={() => go('classes')} />;
       default:
         return null;
     }
@@ -6088,7 +6398,7 @@ export default function DemoPage() {
           case 'register':
             return <RegisterScreen onSignIn={() => sGo('phone')} onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} />;
           case 'classes':
-            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onNewClass={() => sGo('class-setup')} />;
+            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onAssistant={() => sGo('t-assistant')} onNewClass={() => sGo('class-setup')} />;
           case 'class-setup':
             return <ClassSetupScreen onBack={() => sGo('classes')} onCreate={(cls) => { setSTeacherNewClass(cls); sGo('class-join-code'); }} />;
           case 'class-join-code':
@@ -6122,6 +6432,8 @@ export default function DemoPage() {
           case 'student-analytics':
             if (!selectedStudent) { sGo('analytics'); return null; }
             return <StudentAnalyticsScreen student={selectedStudent} onBack={() => sGo('analytics')} demoToken={demoToken} />;
+          case 't-assistant':
+            return <TeacherAIAssistantWebScreen onBack={() => sGo('classes')} />;
           default:
             return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} />;
         }
