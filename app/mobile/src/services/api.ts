@@ -694,3 +694,107 @@ export const verifyPin = async (pin: string): Promise<{ message: string }> => {
 export const deletePin = async (): Promise<void> => {
   await client.delete('/auth/pin');
 };
+
+// ── AI Tutor ──────────────────────────────────────────────────────────────────
+
+export interface TutorChatMessage {
+  role:    'user' | 'assistant';
+  content: string;
+}
+
+export interface TutorResponse {
+  response:        string;
+  conversation_id: string;
+}
+
+/**
+ * POST /api/tutor/chat
+ * Send a text or image message to the Socratic AI tutor.
+ * student_id comes from the JWT — not passed explicitly.
+ */
+export const sendTutorMessage = async (params: {
+  message:          string;
+  conversation_id?: string;
+  /** Base64-encoded image (no data: prefix) */
+  image?:           string;
+  history?:         TutorChatMessage[];
+  is_greeting?:     boolean;
+  weak_topics?:     string[];
+}): Promise<TutorResponse> => {
+  const res: AxiosResponse<TutorResponse> = await client.post('/tutor/chat', params);
+  return res.data;
+};
+
+// ── Teacher AI Assistant ───────────────────────────────────────────────────────
+
+export type AssistantActionType =
+  | 'chat'
+  | 'create_homework'
+  | 'create_quiz'
+  | 'prepare_notes'
+  | 'class_performance'
+  | 'teaching_methods'
+  | 'exam_questions';
+
+export interface AssistantChatMessage {
+  role:    'user' | 'assistant';
+  content: string;
+}
+
+export interface AssistantResponse {
+  action_type:      AssistantActionType;
+  conversation_id:  string;
+  curriculum:       string;
+  level:            string;
+  /** Present for chat / teaching_methods (free-form text) */
+  response?:        string;
+  /** Present for structured outputs (homework, quiz, notes, exam, performance) */
+  structured?:      Record<string, unknown>;
+  /** True when the structured content can be exported to a class */
+  exportable?:      boolean;
+  /** True when the message was off-topic and redirected */
+  off_topic?:       boolean;
+}
+
+export interface AssistantExportResult {
+  answer_key_id: string;
+  title:         string;
+  class_id:      string;
+  status:        string;
+  questions:     number;
+  total_marks:   number;
+}
+
+/**
+ * POST /api/teacher/assistant
+ * Send a message to the teacher AI assistant.
+ */
+export const teacherAssistantChat = async (params: {
+  message:          string;
+  action_type?:     AssistantActionType;
+  curriculum?:      string;
+  level?:           string;
+  class_id?:        string;
+  chat_history?:    AssistantChatMessage[];
+  conversation_id?: string;
+}): Promise<AssistantResponse> => {
+  const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params);
+  return res.data;
+};
+
+/**
+ * POST /api/teacher/assistant/export
+ * Persist AI-generated homework or quiz to Firestore as a draft answer_key.
+ */
+export const teacherAssistantExport = async (params: {
+  content_type: 'homework' | 'quiz';
+  content:      Record<string, unknown>;
+  class_id:     string;
+  title?:       string;
+}): Promise<AssistantExportResult> => {
+  const res: AxiosResponse<AssistantExportResult> = await client.post(
+    '/teacher/assistant/export',
+    params,
+  );
+  return res.data;
+};

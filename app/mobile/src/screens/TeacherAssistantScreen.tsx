@@ -1,13 +1,14 @@
 // src/screens/TeacherAssistantScreen.tsx
-// AI Teaching Assistant chat screen for teachers.
-// Dark-themed, curriculum/level-aware context pickers.
-// AI calls not yet wired — mock responses only.
+// AI Teaching Assistant — wired to POST /api/teacher/assistant.
+// Curriculum/level-aware, AsyncStorage history, structured-output cards, export flow.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -19,37 +20,57 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-// ── Dark palette (AI screen only — intentionally separate from COLORS) ─────────
+import {
+  AssistantActionType,
+  AssistantChatMessage,
+  AssistantResponse,
+  listClasses,
+  teacherAssistantChat,
+  teacherAssistantExport,
+} from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { Class, RootStackParamList } from '../types';
+
+// ── Dark palette (AI screen only) ─────────────────────────────────────────────
 const AI = {
-  bg:         '#1A1A2E',
-  card:       '#16213E',
-  user:       '#1E3A5F',
-  border:     '#2A2A4A',
-  purple:     '#7C3AED',
-  purpleLt:   '#A78BFA',
-  text:       '#E8E8F0',
-  sub:        '#8888AA',
-  inputBg:    '#16213E',
-  chip:       '#2A2A4A',
-  chipText:   '#A78BFA',
+  bg:        '#1A1A2E',
+  card:      '#16213E',
+  user:      '#1E3A5F',
+  border:    '#2A2A4A',
+  purple:    '#7C3AED',
+  purpleLt:  '#A78BFA',
+  text:      '#E8E8F0',
+  sub:       '#8888AA',
+  inputBg:   '#16213E',
+  chip:      '#2A2A4A',
+  chipText:  '#A78BFA',
+  teal:      '#0D9488',
+  tealDark:  '#0F766E',
+  exportCard:'#1A2E2A',
+  exportBdr: '#1E4A3A',
 } as const;
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-interface RichCard {
-  title:   string;
-  preview: string;
-}
+// ── Action type mapping ────────────────────────────────────────────────────────
 
-interface ChatMessage {
-  id:        string;
-  role:      'user' | 'assistant';
-  content:   string;
-  card?:     RichCard;
-  chips?:    string[];
-  timestamp: number;
-}
+const QUICK_ACTIONS: Array<{ label: string; action: AssistantActionType }> = [
+  { label: 'Create Homework',            action: 'create_homework' },
+  { label: 'Create a Quiz',              action: 'create_quiz' },
+  { label: 'Prepare Notes',             action: 'prepare_notes' },
+  { label: 'How is my class performing?', action: 'class_performance' },
+  { label: 'Suggest teaching methods',  action: 'teaching_methods' },
+  { label: 'Generate exam questions',   action: 'exam_questions' },
+];
+
+const EXPORTABLE_ACTIONS: ReadonlySet<AssistantActionType> = new Set([
+  'create_homework',
+  'create_quiz',
+]);
 
 // ── Curriculum / Level data ────────────────────────────────────────────────────
 
@@ -67,87 +88,103 @@ const CURRICULUM_LEVELS: Record<string, string[]> = {
     'IGCSE (Year 10)', 'IGCSE (Year 11)',
     'A-Level (Year 12)', 'A-Level (Year 13)',
   ],
-  IB: [
-    'Primary Years (PYP)', 'Middle Years (MYP)', 'Diploma Programme (DP)',
-  ],
+  IB:  ['Primary Years (PYP)', 'Middle Years (MYP)', 'Diploma Programme (DP)'],
   'National Curriculum': ['KS1', 'KS2', 'KS3', 'GCSE', 'A-Level'],
 };
 
 const DEFAULT_LEVEL: Record<string, string> = {
-  ZIMSEC:              'Form 3',
-  Cambridge:           'IGCSE (Year 10)',
-  IB:                  'Middle Years (MYP)',
+  ZIMSEC:               'Form 3',
+  Cambridge:            'IGCSE (Year 10)',
+  IB:                   'Middle Years (MYP)',
   'National Curriculum': 'GCSE',
 };
 
-// ── Mock responses ─────────────────────────────────────────────────────────────
+// ── History helpers ───────────────────────────────────────────────────────────
 
-function getMockResponse(
-  input: string,
-  curriculum: string,
-  level: string,
-): { text: string; card?: RichCard; chips?: string[] } {
-  const q = input.toLowerCase();
+const historyKey = (userId: string) => `teacher_assistant_history_${userId}`;
+const MAX_HISTORY = 10; // messages kept in AsyncStorage
 
-  if (q.includes('homework')) {
-    return {
-      text: `Here's a ${level} homework set for ${curriculum}:`,
-      card: {
-        title: `Homework: ${input.replace(/create|homework/gi, '').trim() || 'Mathematics'}`,
-        preview: '8 questions • Mixed difficulty • Est. 45 min',
-      },
-      chips: ['Add more questions', 'Change difficulty', 'Share with class'],
-    };
-  }
-  if (q.includes('quiz')) {
-    return {
-      text: 'Quiz ready! Review before sharing with your class:',
-      card: {
-        title: `Quiz: ${input.replace(/create|a|quiz/gi, '').trim() || 'Chapter Review'}`,
-        preview: '10 questions • Multiple choice • 20 min',
-      },
-      chips: ['Make it harder', 'Add time limit', 'Preview quiz'],
-    };
-  }
-  if (q.includes('notes') || q.includes('prepare')) {
-    return {
-      text: `Lesson notes prepared for ${level}:`,
-      card: {
-        title: `Notes: ${input.replace(/prepare|notes/gi, '').trim() || 'Topic Summary'}`,
-        preview: '3 sections • Key concepts, examples, practice',
-      },
-      chips: ['Add diagrams', 'Simplify language', 'Print version'],
-    };
-  }
-  if (q.includes('exam') || (q.includes('generate') && q.includes('question'))) {
-    return {
-      text: `Generated ${level} exam questions aligned to ${curriculum}:`,
-      card: {
-        title: 'Exam Questions',
-        preview: '12 questions • Structured + essay sections',
-      },
-      chips: ['More questions', 'Mark scheme', 'Adjust difficulty'],
-    };
-  }
-  if (q.includes('performing') || q.includes('analytics') || q.includes('class perform')) {
-    return {
-      text: 'Your class is performing well overall.\n\n• Average score: 74% (↑ from 68% last week)\n• Top performer: Tendai Moyo — 92%\n• 3 students below 50% need support\n• Weakest topic: Quadratic Equations',
-      chips: ['Show weak areas', 'Individual reports', 'Compare to last week'],
-    };
-  }
-  if (q.includes('teaching') || q.includes('method')) {
-    return {
-      text: `Evidence-based strategies for ${level} (${curriculum}):\n\n• Socratic questioning to build critical thinking\n• Peer learning pairs for struggling students\n• 5-minute entry quizzes to activate prior knowledge\n• Visual concept maps for abstract topics`,
-      chips: ['More ideas', 'Subject-specific tips', 'Differentiation strategies'],
-    };
-  }
-  return {
-    text: `Hello! I'm Neriah AI, your teaching assistant for ${level} (${curriculum}).\n\nI can help you create homework, quizzes, exam questions, lesson notes, and analyse your class performance.\n\nWhat would you like to work on?`,
-    chips: ['Create Homework', 'Check class performance', 'Suggest teaching methods'],
-  };
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface ChatMessage {
+  id:          string;
+  role:        'user' | 'assistant';
+  content:     string;
+  actionType?: AssistantActionType;
+  structured?: Record<string, unknown>;
+  exportable?: boolean;
+  timestamp:   number;
 }
 
-// ── Typing indicator ───────────────────────────────────────────────────────────
+// ── Structured output card helpers ────────────────────────────────────────────
+
+function cardIcon(action: AssistantActionType): string {
+  switch (action) {
+    case 'create_homework':  return 'document-text-outline';
+    case 'create_quiz':      return 'checkbox-outline';
+    case 'prepare_notes':    return 'book-outline';
+    case 'exam_questions':   return 'ribbon-outline';
+    case 'class_performance':return 'bar-chart-outline';
+    default:                 return 'bulb-outline';
+  }
+}
+
+function cardLabel(action: AssistantActionType): string {
+  switch (action) {
+    case 'create_homework':  return 'Homework';
+    case 'create_quiz':      return 'Quiz';
+    case 'prepare_notes':    return 'Lesson Notes';
+    case 'exam_questions':   return 'Exam Questions';
+    case 'class_performance':return 'Class Performance';
+    default:                 return 'Content';
+  }
+}
+
+function previewLines(structured: Record<string, unknown>, action: AssistantActionType): string {
+  const questions = (structured.questions as unknown[]) ?? [];
+  const sections  = (structured.sections  as unknown[]) ?? [];
+
+  if (questions.length > 0) {
+    const preview = questions.slice(0, 2).map((q: any, i) =>
+      `${q.number ?? i + 1}. ${String(q.question ?? '').slice(0, 50)}${(q.question?.length ?? 0) > 50 ? '…' : ''}`
+    );
+    return preview.join('\n') + (questions.length > 2 ? `\n+${questions.length - 2} more` : '');
+  }
+  if (sections.length > 0) {
+    const s = sections[0] as any;
+    return `${s.heading ?? 'Section 1'}` + (sections.length > 1 ? ` • +${sections.length - 1} more` : '');
+  }
+  if (action === 'class_performance') {
+    const s = structured as any;
+    return `${s.summary?.slice(0, 80) ?? 'Class analysis ready'}`;
+  }
+  return String(structured.title ?? cardLabel(action));
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+
+interface ToastProps { message: string; visible: boolean }
+function Toast({ message, visible }: ToastProps) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (visible) {
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.delay(2400),
+        Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [visible, opacity]);
+  if (!visible) return null;
+  return (
+    <Animated.View style={[s.toast, { opacity }]}>
+      <Ionicons name="checkmark-circle" size={16} color={AI.teal} />
+      <Text style={s.toastTxt}>{message}</Text>
+    </Animated.View>
+  );
+}
+
+// ── Typing indicator ──────────────────────────────────────────────────────────
 
 function TypingIndicator() {
   const dots = [
@@ -155,7 +192,6 @@ function TypingIndicator() {
     useRef(new Animated.Value(0)).current,
     useRef(new Animated.Value(0)).current,
   ];
-
   useEffect(() => {
     const anims = dots.map((dot, i) =>
       Animated.loop(
@@ -170,7 +206,6 @@ function TypingIndicator() {
     anims.forEach(a => a.start());
     return () => anims.forEach(a => a.stop());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <View style={s.rowLeft}>
       <View style={s.avatar}>
@@ -187,66 +222,229 @@ function TypingIndicator() {
   );
 }
 
+// ── Class picker modal ────────────────────────────────────────────────────────
+
+interface ClassPickerProps {
+  visible:   boolean;
+  classes:   Class[];
+  onSelect:  (cls: Class) => void;
+  onDismiss: () => void;
+}
+function ClassPicker({ visible, classes, onSelect, onDismiss }: ClassPickerProps) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
+      <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={onDismiss}>
+        <View style={s.modalSheet}>
+          <Text style={s.modalTitle}>Export to which class?</Text>
+          {classes.map(cls => (
+            <TouchableOpacity
+              key={cls.id}
+              style={s.classRow}
+              onPress={() => onSelect(cls)}
+            >
+              <Ionicons name="people-outline" size={18} color={AI.teal} style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.classRowName}>{cls.name}</Text>
+                <Text style={s.classRowLevel}>{cls.education_level}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={AI.sub} />
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={s.cancelBtn} onPress={onDismiss}>
+            <Text style={s.cancelTxt}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 // ── Main screen ────────────────────────────────────────────────────────────────
 
-const QUICK_ACTIONS = [
-  'Create Homework',
-  'Create a Quiz',
-  'Prepare Notes',
-  'How is my class performing?',
-  'Suggest teaching methods',
-  'Generate exam questions',
-];
-
 export default function TeacherAssistantScreen() {
-  const [curriculum, setCurriculum]     = useState('ZIMSEC');
-  const [level, setLevel]               = useState('Form 3');
-  const [showCurrDrop, setShowCurrDrop] = useState(false);
-  const [showLvlDrop, setShowLvlDrop]   = useState(false);
-  const [messages, setMessages]         = useState<ChatMessage[]>([]);
-  const [input, setInput]               = useState('');
-  const [typing, setTyping]             = useState(false);
-  const flatRef = useRef<FlatList<ChatMessage>>(null);
+  const { user }  = useAuth();
+  const navigation = useNavigation<Nav>();
 
-  const closeDrops = () => { setShowCurrDrop(false); setShowLvlDrop(false); };
+  const [curriculum, setCurriculum]       = useState('ZIMSEC');
+  const [level, setLevel]                 = useState('Form 3');
+  const [showCurrDrop, setShowCurrDrop]   = useState(false);
+  const [showLvlDrop, setShowLvlDrop]     = useState(false);
+  const [messages, setMessages]           = useState<ChatMessage[]>([]);
+  const [input, setInput]                 = useState('');
+  const [typing, setTyping]               = useState(false);
+  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
 
+  // Export state
+  const [classes, setClasses]             = useState<Class[]>([]);
+  const [exportMsg, setExportMsg]         = useState<ChatMessage | null>(null);
+  const [showClassPicker, setShowClassPicker] = useState(false);
+  const [exporting, setExporting]         = useState(false);
+  const [toastMsg, setToastMsg]           = useState('');
+  const [toastVisible, setToastVisible]   = useState(false);
+
+  const flatRef   = useRef<FlatList<ChatMessage>>(null);
+  const userId    = user?.id ?? 'unknown';
+
+  // ── Load history on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem(historyKey(userId)).then(raw => {
+      if (!raw) return;
+      try {
+        const saved: ChatMessage[] = JSON.parse(raw);
+        setMessages(saved);
+      } catch {}
+    });
+  }, [userId]);
+
+  // ── Auto-scroll ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (messages.length > 0) {
-      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 120);
     }
-  }, [messages]);
+  }, [messages, typing]);
 
-  const sendMessage = (text: string) => {
+  // ── Load classes (for export picker) ─────────────────────────────────────
+  useEffect(() => {
+    listClasses().then(setClasses).catch(() => {});
+  }, []);
+
+  // ── Persist history ───────────────────────────────────────────────────────
+  const persistHistory = useCallback((msgs: ChatMessage[]) => {
+    AsyncStorage.setItem(historyKey(userId), JSON.stringify(msgs)).catch(() => {});
+  }, [userId]);
+
+  // ── Clear history ─────────────────────────────────────────────────────────
+  const clearHistory = useCallback(() => {
+    setMessages([]);
+    setConversationId(undefined);
+    AsyncStorage.removeItem(historyKey(userId)).catch(() => {});
+  }, [userId]);
+
+  // ── Close dropdowns ───────────────────────────────────────────────────────
+  const closeDrops = () => { setShowCurrDrop(false); setShowLvlDrop(false); };
+
+  // ── Show toast ────────────────────────────────────────────────────────────
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setToastVisible(true);
+    setTimeout(() => setToastVisible(false), 3000);
+  };
+
+  // ── Send message ──────────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (
+    text: string,
+    forcedActionType?: AssistantActionType,
+    classId?: string,
+  ) => {
     if (!text.trim() || typing) return;
     closeDrops();
+
     const userMsg: ChatMessage = {
       id: String(Date.now()),
       role: 'user',
       content: text.trim(),
       timestamp: Date.now(),
     };
-    setMessages(prev => [...prev, userMsg]);
+    const updatedWithUser = [...messages, userMsg];
+    setMessages(updatedWithUser);
     setInput('');
     setTyping(true);
-    const delay = 900 + Math.random() * 500;
-    setTimeout(() => {
-      const r = getMockResponse(text, curriculum, level);
-      setMessages(prev => [...prev, {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: r.text,
-        card: r.card,
-        chips: r.chips,
+
+    // Build chat_history for API (last MAX_HISTORY messages, assistant turns only)
+    const apiHistory: AssistantChatMessage[] = updatedWithUser
+      .slice(-MAX_HISTORY)
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content }));
+
+    try {
+      const res: AssistantResponse = await teacherAssistantChat({
+        message:          text.trim(),
+        action_type:      forcedActionType,
+        curriculum,
+        level,
+        class_id:         classId,
+        chat_history:     apiHistory,
+        conversation_id:  conversationId,
+      });
+
+      if (res.conversation_id && !conversationId) {
+        setConversationId(res.conversation_id);
+      }
+
+      const aiMsg: ChatMessage = {
+        id:          String(Date.now() + 1),
+        role:        'assistant',
+        content:     res.response ?? '',
+        actionType:  res.action_type,
+        structured:  res.structured,
+        exportable:  res.exportable,
+        timestamp:   Date.now(),
+      };
+      const updated = [...updatedWithUser, aiMsg];
+      setMessages(updated);
+      persistHistory(updated);
+    } catch (err: any) {
+      const aiMsg: ChatMessage = {
+        id:        String(Date.now() + 1),
+        role:      'assistant',
+        content:   err?.message ?? 'Something went wrong. Please try again.',
         timestamp: Date.now(),
-      }]);
+      };
+      const updated = [...updatedWithUser, aiMsg];
+      setMessages(updated);
+      persistHistory(updated);
+    } finally {
       setTyping(false);
-    }, delay);
-  };
+    }
+  }, [typing, messages, curriculum, level, conversationId, persistHistory]);
+
+  // ── Export flow ───────────────────────────────────────────────────────────
+  const handleExport = useCallback((msg: ChatMessage) => {
+    if (classes.length === 0) {
+      showToast('No classes found. Create a class first.');
+      return;
+    }
+    if (classes.length === 1) {
+      doExport(msg, classes[0]);
+      return;
+    }
+    setExportMsg(msg);
+    setShowClassPicker(true);
+  }, [classes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doExport = useCallback(async (msg: ChatMessage, cls: Class) => {
+    if (!msg.structured || !msg.actionType) return;
+    setShowClassPicker(false);
+    setExporting(true);
+    try {
+      const contentType = msg.actionType === 'create_quiz' ? 'quiz' : 'homework';
+      const result = await teacherAssistantExport({
+        content_type: contentType,
+        content:      msg.structured,
+        class_id:     cls.id,
+        title:        (msg.structured.title as string | undefined) ?? undefined,
+      });
+      showToast(`${contentType === 'quiz' ? 'Quiz' : 'Homework'} added to ${cls.name} as draft — review before opening`);
+      setTimeout(() => {
+        navigation.navigate('HomeworkCreated', {
+          answer_key_id: result.answer_key_id,
+          class_id:      cls.id,
+          class_name:    cls.name,
+        });
+      }, 1200);
+    } catch {
+      showToast('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  }, [navigation]);
 
   const levels = CURRICULUM_LEVELS[curriculum] ?? CURRICULUM_LEVELS.ZIMSEC;
 
-  const renderMessage = ({ item }: { item: ChatMessage }) => {
+  // ── Message renderer ──────────────────────────────────────────────────────
+  const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
     const isUser = item.role === 'user';
+
     return (
       <View style={isUser ? s.rowRight : s.rowLeft}>
         {!isUser && (
@@ -254,37 +452,71 @@ export default function TeacherAssistantScreen() {
             <Ionicons name="sparkles" size={12} color={AI.purpleLt} />
           </View>
         )}
-        <View style={{ maxWidth: '78%' }}>
-          <View style={isUser ? s.bubbleRight : s.bubbleLeft}>
-            <Text style={s.msgText}>{item.content}</Text>
-          </View>
-          {item.card && (
-            <TouchableOpacity style={s.richCard} activeOpacity={0.75}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>{item.card.title}</Text>
-                <Text style={s.cardPreview}>{item.card.preview}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={AI.sub} />
-            </TouchableOpacity>
+        <View style={{ maxWidth: '80%' }}>
+          {/* Text bubble */}
+          {!!item.content && (
+            <View style={isUser ? s.bubbleRight : s.bubbleLeft}>
+              <Text style={s.msgText}>{item.content}</Text>
+            </View>
           )}
-          {!!item.chips?.length && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginTop: 6 }}
-              contentContainerStyle={{ gap: 8 }}
-            >
-              {item.chips.map(chip => (
-                <TouchableOpacity key={chip} style={s.chip} onPress={() => sendMessage(chip)}>
-                  <Text style={s.chipTxt}>{chip}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+
+          {/* Structured output card */}
+          {item.structured && item.actionType && (
+            <View style={s.structuredCard}>
+              {/* Card header */}
+              <View style={s.cardHeader}>
+                <Ionicons name={cardIcon(item.actionType) as any} size={16} color={AI.teal} />
+                <Text style={s.cardType}>{cardLabel(item.actionType)}</Text>
+                {item.structured.total_marks != null && (
+                  <View style={s.marksBadge}>
+                    <Text style={s.marksBadgeTxt}>
+                      {String(item.structured.total_marks)} marks
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Title */}
+              {item.structured.title != null && (
+                <Text style={s.cardTitle}>{String(item.structured.title)}</Text>
+              )}
+
+              {/* Preview of first 2 questions / first section */}
+              <Text style={s.cardPreview}>
+                {previewLines(item.structured, item.actionType)}
+              </Text>
+
+              {/* Export buttons */}
+              {item.exportable && EXPORTABLE_ACTIONS.has(item.actionType) && (
+                <View style={s.exportRow}>
+                  <TouchableOpacity
+                    style={s.exportBtn}
+                    onPress={() => handleExport(item)}
+                    disabled={exporting}
+                  >
+                    {exporting ? (
+                      <ActivityIndicator size="small" color={AI.text} />
+                    ) : (
+                      <>
+                        <Ionicons name="cloud-upload-outline" size={14} color={AI.text} />
+                        <Text style={s.exportBtnTxt}>Export to Class</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={s.editBtn}
+                    onPress={() => sendMessage(`Edit the ${cardLabel(item.actionType).toLowerCase()} — `, item.actionType)}
+                  >
+                    <Text style={s.editBtnTxt}>Edit first</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           )}
         </View>
       </View>
     );
-  };
+  }, [exporting, handleExport, sendMessage]);
 
   return (
     <View style={s.screen}>
@@ -305,11 +537,11 @@ export default function TeacherAssistantScreen() {
 
           {/* ── Header ── */}
           <View style={s.header}>
-            <TouchableOpacity style={s.hBtn}>
+            <TouchableOpacity style={s.hBtn} onPress={closeDrops}>
               <Ionicons name="menu-outline" size={24} color={AI.text} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
-            <TouchableOpacity style={s.hBtn} onPress={() => setMessages([])}>
+            <TouchableOpacity style={s.hBtn} onPress={clearHistory}>
               <Ionicons name="create-outline" size={22} color={AI.text} />
             </TouchableOpacity>
           </View>
@@ -323,10 +555,7 @@ export default function TeacherAssistantScreen() {
                 onPress={() => { setShowLvlDrop(false); setShowCurrDrop(v => !v); }}
               >
                 <Text style={s.pillTxt}>{curriculum}</Text>
-                <Ionicons
-                  name={showCurrDrop ? 'chevron-up' : 'chevron-down'}
-                  size={12} color={AI.sub}
-                />
+                <Ionicons name={showCurrDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.sub} />
               </TouchableOpacity>
               {showCurrDrop && (
                 <View style={[s.dropdown, { zIndex: 200 }]}>
@@ -354,10 +583,7 @@ export default function TeacherAssistantScreen() {
                 onPress={() => { setShowCurrDrop(false); setShowLvlDrop(v => !v); }}
               >
                 <Text style={s.pillTxt}>{level}</Text>
-                <Ionicons
-                  name={showLvlDrop ? 'chevron-up' : 'chevron-down'}
-                  size={12} color={AI.sub}
-                />
+                <Ionicons name={showLvlDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.sub} />
               </TouchableOpacity>
               {showLvlDrop && (
                 <View style={[s.dropdown, { maxHeight: 220, zIndex: 200 }]}>
@@ -390,13 +616,14 @@ export default function TeacherAssistantScreen() {
               <Text style={s.emptyTitle}>Neriah AI</Text>
               <Text style={s.emptySub}>Your AI teaching assistant</Text>
               <View style={s.quickGrid}>
-                {QUICK_ACTIONS.map(action => (
+                {QUICK_ACTIONS.map(({ label, action }) => (
                   <TouchableOpacity
-                    key={action}
+                    key={label}
                     style={s.quickPill}
-                    onPress={() => sendMessage(action)}
+                    onPress={() => sendMessage(label, action)}
                   >
-                    <Text style={s.quickTxt}>{action}</Text>
+                    <Ionicons name={cardIcon(action) as any} size={16} color={AI.purpleLt} style={{ marginRight: 8 }} />
+                    <Text style={s.quickTxt}>{label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -410,6 +637,7 @@ export default function TeacherAssistantScreen() {
               contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              removeClippedSubviews
               ListFooterComponent={typing ? <TypingIndicator /> : null}
             />
           )}
@@ -431,7 +659,18 @@ export default function TeacherAssistantScreen() {
               />
               <TouchableOpacity
                 style={[s.sendBtn, (!input.trim() || typing) && s.sendDisabled]}
-                onPress={() => sendMessage(input)}
+                onPress={() => {
+                  // Detect action type from input keywords
+                  const q = input.toLowerCase();
+                  let action: AssistantActionType = 'chat';
+                  if (q.includes('homework'))    action = 'create_homework';
+                  else if (q.includes('quiz'))   action = 'create_quiz';
+                  else if (q.includes('notes') || q.includes('prepare')) action = 'prepare_notes';
+                  else if (q.includes('exam'))   action = 'exam_questions';
+                  else if (q.includes('performing') || q.includes('performance')) action = 'class_performance';
+                  else if (q.includes('teaching') || q.includes('method')) action = 'teaching_methods';
+                  sendMessage(input, action);
+                }}
                 disabled={!input.trim() || typing}
               >
                 <Ionicons name="arrow-up" size={18} color={AI.text} />
@@ -441,6 +680,19 @@ export default function TeacherAssistantScreen() {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Class picker modal */}
+      <ClassPicker
+        visible={showClassPicker}
+        classes={classes}
+        onSelect={cls => {
+          if (exportMsg) doExport(exportMsg, cls);
+        }}
+        onDismiss={() => setShowClassPicker(false)}
+      />
+
+      {/* Toast */}
+      <Toast message={toastMsg} visible={toastVisible} />
     </View>
   );
 }
@@ -493,21 +745,34 @@ const s = StyleSheet.create({
   },
   msgText: { fontSize: 14, color: AI.text, lineHeight: 21 },
 
-  richCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: AI.border, borderRadius: 12,
-    padding: 12, marginTop: 8, gap: 8,
+  // Structured card
+  structuredCard: {
+    backgroundColor: AI.exportCard, borderWidth: 1, borderColor: AI.exportBdr,
+    borderRadius: 14, padding: 14, marginTop: 8,
   },
-  cardTitle:   { fontSize: 13, fontWeight: '700', color: AI.text, marginBottom: 2 },
-  cardPreview: { fontSize: 12, color: AI.sub },
+  cardHeader:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  cardType:    { fontSize: 12, color: AI.teal, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, flex: 1 },
+  marksBadge:  { backgroundColor: AI.card, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
+  marksBadgeTxt: { fontSize: 11, color: AI.sub },
+  cardTitle:   { fontSize: 14, fontWeight: '700', color: AI.text, marginBottom: 6 },
+  cardPreview: { fontSize: 12, color: AI.sub, lineHeight: 18 },
 
-  chip:    { backgroundColor: AI.chip, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
-  chipTxt: { fontSize: 12, color: AI.chipText, fontWeight: '500' },
+  exportRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  exportBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: AI.teal, borderRadius: 10, paddingVertical: 10,
+  },
+  exportBtnTxt: { fontSize: 13, color: AI.text, fontWeight: '600' },
+  editBtn: {
+    borderWidth: 1, borderColor: AI.border, borderRadius: 10,
+    paddingVertical: 10, paddingHorizontal: 14,
+  },
+  editBtnTxt: { fontSize: 13, color: AI.sub },
 
   typingRow: { flexDirection: 'row', gap: 5, paddingHorizontal: 2, paddingVertical: 4 },
   dot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: AI.sub },
 
-  emptyCont:  { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyCont: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   emptyIcon: {
     width: 68, height: 68, borderRadius: 34,
     backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
@@ -517,6 +782,7 @@ const s = StyleSheet.create({
   emptySub:   { fontSize: 14, color: AI.sub, marginBottom: 32 },
   quickGrid:  { gap: 10, width: '100%' },
   quickPill: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
   },
@@ -532,12 +798,39 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: AI.border,
     paddingHorizontal: 4, paddingVertical: 4,
   },
-  attachBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  attachBtn:   { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   input: {
     flex: 1, fontSize: 14, color: AI.text,
     paddingHorizontal: 4, paddingVertical: 8, maxHeight: 120,
   },
   sendBtn:     { width: 38, height: 38, borderRadius: 19, backgroundColor: AI.purple, alignItems: 'center', justifyContent: 'center' },
   sendDisabled: { backgroundColor: AI.border },
-  caption: { fontSize: 11, color: AI.sub, textAlign: 'center', marginTop: 6 },
+  caption:     { fontSize: 11, color: AI.sub, textAlign: 'center', marginTop: 6 },
+
+  // Class picker modal
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor: AI.card, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 32,
+  },
+  modalTitle:  { fontSize: 16, fontWeight: '700', color: AI.text, marginBottom: 16 },
+  classRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: AI.border,
+  },
+  classRowName:  { fontSize: 14, fontWeight: '600', color: AI.text },
+  classRowLevel: { fontSize: 12, color: AI.sub, marginTop: 2 },
+  cancelBtn: { marginTop: 16, alignItems: 'center', paddingVertical: 14 },
+  cancelTxt: { fontSize: 14, color: AI.sub },
+
+  // Toast
+  toast: {
+    position: 'absolute', bottom: 90, left: 20, right: 20,
+    backgroundColor: AI.card, borderWidth: 1, borderColor: AI.exportBdr,
+    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 8, elevation: 10,
+  },
+  toastTxt: { fontSize: 13, color: AI.text, flex: 1 },
 });

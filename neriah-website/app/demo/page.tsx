@@ -2811,48 +2811,54 @@ const AI_DEFAULT_LEVEL: Record<string, string> = {
   ZIMSEC: 'Form 3', Cambridge: 'IGCSE (Year 10)', IB: 'Middle Years (MYP)', 'National Curriculum': 'GCSE',
 };
 
+type AIActionType = 'chat' | 'create_homework' | 'create_quiz' | 'prepare_notes' | 'class_performance' | 'teaching_methods' | 'exam_questions';
+
 interface AIChatMsg {
   id: string; role: 'user' | 'assistant'; content: string;
   card?: { title: string; preview: string }; chips?: string[];
+  structured?: Record<string, unknown>; exportable?: boolean; actionType?: AIActionType;
 }
 
-function aiMockResponse(input: string, curriculum: string, level: string): Omit<AIChatMsg, 'id' | 'role'> {
-  const q = input.toLowerCase();
-  if (q.includes('homework')) return {
-    content: `Here's a ${level} homework set for ${curriculum}:`,
-    card: { title: `Homework: ${input.replace(/create|homework/gi,'').trim() || 'Mathematics'}`, preview: '8 questions • Mixed difficulty • Est. 45 min' },
-    chips: ['Add more questions','Change difficulty','Share with class'],
-  };
-  if (q.includes('quiz')) return {
-    content: 'Quiz ready! Review before sharing with your class:',
-    card: { title: `Quiz: ${input.replace(/create|a|quiz/gi,'').trim() || 'Chapter Review'}`, preview: '10 questions • Multiple choice • 20 min' },
-    chips: ['Make it harder','Add time limit','Preview quiz'],
-  };
-  if (q.includes('notes') || q.includes('prepare')) return {
-    content: `Lesson notes prepared for ${level}:`,
-    card: { title: `Notes: ${input.replace(/prepare|notes/gi,'').trim() || 'Topic Summary'}`, preview: '3 sections • Key concepts, examples, practice' },
-    chips: ['Add diagrams','Simplify language','Print version'],
-  };
-  if (q.includes('exam') || (q.includes('generate') && q.includes('question'))) return {
-    content: `Generated ${level} exam questions aligned to ${curriculum}:`,
-    card: { title: 'Exam Questions', preview: '12 questions • Structured + essay sections' },
-    chips: ['More questions','Mark scheme','Adjust difficulty'],
-  };
-  if (q.includes('performing') || q.includes('analytics')) return {
-    content: 'Your class is performing well overall.\n\n• Average score: 74% (↑ from 68% last week)\n• Top performer: Tendai Moyo — 92%\n• 3 students below 50% need support\n• Weakest topic: Quadratic Equations',
-    chips: ['Show weak areas','Individual reports','Compare to last week'],
-  };
-  if (q.includes('teaching') || q.includes('method')) return {
-    content: `Evidence-based strategies for ${level} (${curriculum}):\n\n• Socratic questioning to build critical thinking\n• Peer learning pairs for struggling students\n• 5-minute entry quizzes to activate prior knowledge\n• Visual concept maps for abstract topics`,
-    chips: ['More ideas','Subject-specific tips','Differentiation strategies'],
-  };
-  return {
-    content: `Hello! I'm Neriah AI, your teaching assistant for ${level} (${curriculum}).\n\nI can help you create homework, quizzes, exam questions, lesson notes, and analyse your class performance.\n\nWhat would you like to work on?`,
-    chips: ['Create Homework','Check class performance','Suggest teaching methods'],
-  };
+const AI_EXPORTABLE: Set<AIActionType> = new Set(['create_homework', 'create_quiz']);
+
+const AI_QUICK_ACTIONS: Array<{ label: string; action: AIActionType }> = [
+  { label: 'Create Homework',              action: 'create_homework'  },
+  { label: 'Create a Quiz',               action: 'create_quiz'      },
+  { label: 'Prepare Notes',               action: 'prepare_notes'    },
+  { label: 'How is my class performing?', action: 'class_performance'},
+  { label: 'Suggest teaching methods',    action: 'teaching_methods' },
+  { label: 'Generate exam questions',     action: 'exam_questions'   },
+];
+
+function _actionLabel(action: AIActionType): string {
+  return ({ create_homework:'Homework', create_quiz:'Quiz', prepare_notes:'Notes',
+    class_performance:'Performance', teaching_methods:'Teaching Methods', exam_questions:'Exam Questions', chat:'Chat' })[action] ?? action;
 }
 
-const AI_QUICK_ACTIONS = ['Create Homework','Create a Quiz','Prepare Notes','How is my class performing?','Suggest teaching methods','Generate exam questions'];
+function _actionIcon(action: AIActionType): string {
+  return ({ create_homework:'📝', create_quiz:'❓', prepare_notes:'📚',
+    class_performance:'📊', teaching_methods:'💡', exam_questions:'🎓', chat:'💬' })[action] ?? '✨';
+}
+
+function _previewLines(structured: Record<string, unknown>, action: AIActionType): string {
+  const qs = structured.questions as Array<{ question?: string; text?: string }> | undefined;
+  if (!qs?.length) return String(structured.summary ?? structured.overview ?? '');
+  const q1 = String(qs[0]?.question ?? qs[0]?.text ?? '');
+  const q2 = qs[1] ? String(qs[1]?.question ?? qs[1]?.text ?? '') : '';
+  const extra = qs.length > 2 ? ` +${qs.length - 2} more` : '';
+  return [q1, q2].filter(Boolean).join('\n') + extra;
+}
+
+function _detectAction(text: string): AIActionType {
+  const q = text.toLowerCase();
+  if (q.includes('homework')) return 'create_homework';
+  if (q.includes('quiz'))     return 'create_quiz';
+  if (q.includes('notes') || q.includes('prepare')) return 'prepare_notes';
+  if (q.includes('performing') || q.includes('analytics') || q.includes('performance')) return 'class_performance';
+  if (q.includes('teaching') || q.includes('method')) return 'teaching_methods';
+  if (q.includes('exam') || (q.includes('generate') && q.includes('question'))) return 'exam_questions';
+  return 'chat';
+}
 
 function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [curriculum, setCurriculum] = useState('ZIMSEC');
@@ -2862,24 +2868,92 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [messages, setMessages]     = useState<AIChatMsg[]>([]);
   const [input, setInput]           = useState('');
   const [typing, setTyping]         = useState(false);
+  const [exporting, setExporting]   = useState<string | null>(null); // msg id being exported
+  const [toast, setToast]           = useState('');
   const chatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, typing]);
 
-  const send = (text: string) => {
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const send = async (text: string, forcedAction?: AIActionType) => {
     if (!text.trim() || typing) return;
     setShowCurrDrop(false); setShowLvlDrop(false);
+    const action: AIActionType = forcedAction ?? _detectAction(text);
     const userMsg: AIChatMsg = { id: String(Date.now()), role: 'user', content: text.trim() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setTyping(true);
-    setTimeout(() => {
-      const r = aiMockResponse(text, curriculum, level);
-      setMessages(prev => [...prev, { id: String(Date.now()+1), role: 'assistant', ...r }]);
+    try {
+      const res = await fetch(`${DEMO_API}/demo/teacher/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text.trim(), action_type: action, curriculum, level }),
+      });
+      const data = res.ok ? await res.json() : null;
+      if (data && !data.error) {
+        const isStructured = data.structured && data.questions;
+        const exportable = AI_EXPORTABLE.has(action) && isStructured;
+        const totalMarks = data.total_marks ?? (data.questions as Array<{marks:number}>|undefined)?.reduce((s,q)=>s+(q.marks||0),0) ?? 0;
+        const card = isStructured
+          ? { title: `${_actionIcon(action)} ${data.title ?? _actionLabel(action)}`,
+              preview: `${(data.questions as unknown[]).length} questions • ${totalMarks} marks` }
+          : undefined;
+        const chips = !isStructured ? ['Create Homework','Create a Quiz','Check class performance'] : undefined;
+        setMessages(prev => [...prev, {
+          id: String(Date.now()+1), role: 'assistant',
+          content: data.message ?? data.summary ?? data.overview ?? '',
+          card, chips, structured: isStructured ? data : undefined,
+          exportable, actionType: action,
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()+1), role: 'assistant',
+          content: "I'm having trouble connecting right now. Please try again in a moment.",
+          chips: ['Create Homework','Create a Quiz','Suggest teaching methods'],
+        }]);
+      }
+    } catch {
+      setMessages(prev => [...prev, {
+        id: String(Date.now()+1), role: 'assistant',
+        content: "I'm having trouble connecting right now. Please try again in a moment.",
+        chips: ['Create Homework','Create a Quiz','Suggest teaching methods'],
+      }]);
+    } finally {
       setTyping(false);
-    }, 900 + Math.random() * 400);
+    }
+  };
+
+  const handleExport = async (msg: AIChatMsg) => {
+    if (!msg.structured || !msg.actionType || exporting) return;
+    setExporting(msg.id);
+    try {
+      const contentType = msg.actionType === 'create_quiz' ? 'quiz' : 'homework';
+      const res = await fetch(`${DEMO_API}/demo/teacher/assistant/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content_type: contentType,
+          content: msg.structured,
+          title: (msg.structured.title as string) ?? _actionLabel(msg.actionType),
+          class_id: 'demo-class',
+        }),
+      });
+      if (res.ok) {
+        showToast(`${contentType === 'quiz' ? 'Quiz' : 'Homework'} saved as draft`);
+      } else {
+        showToast('Export failed — try again');
+      }
+    } catch {
+      showToast('Export failed — try again');
+    } finally {
+      setExporting(null);
+    }
   };
 
   const levels = AI_CURRICULUM_LEVELS[curriculum] ?? AI_CURRICULUM_LEVELS.ZIMSEC;
@@ -2969,11 +3043,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           <span style={{ fontSize: 13, color: C.aiSub, marginBottom: 16 }}>Your AI teaching assistant</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
             {AI_QUICK_ACTIONS.map(a => (
-              <button key={a} onClick={() => send(a)}
+              <button key={a.label} onClick={() => send(a.label, a.action)}
                 style={{ background: C.aiCard, border: `1px solid ${C.aiBorder}`,
                   borderRadius: 10, padding: '12px 14px', color: C.aiText, fontSize: 13,
                   textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
-                {a}
+                {a.label}
               </button>
             ))}
           </div>
@@ -3003,17 +3077,41 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               {/* Rich card */}
               {msg.card && (
                 <div style={{ marginLeft: msg.role === 'assistant' ? 34 : 0,
-                  marginRight: msg.role === 'user' ? 0 : 0,
                   background: C.aiBorder, borderRadius: 10, padding: '10px 12px',
-                  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
                   maxWidth: '85%' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.aiText, marginBottom: 2 }}>
-                      {msg.card.title}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: msg.exportable ? 10 : 0 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.aiText, marginBottom: 2 }}>
+                        {msg.card.title}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.aiSub }}>{msg.card.preview}</div>
                     </div>
-                    <div style={{ fontSize: 11, color: C.aiSub }}>{msg.card.preview}</div>
+                    <ChevronLeft size={14} color={C.aiSub} style={{ transform: 'rotate(180deg)' }} />
                   </div>
-                  <ChevronLeft size={14} color={C.aiSub} style={{ transform: 'rotate(180deg)' }} />
+                  {msg.structured && msg.actionType && (
+                    <div style={{ fontSize: 11, color: C.aiSub, marginBottom: msg.exportable ? 10 : 0,
+                      whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+                      {_previewLines(msg.structured, msg.actionType)}
+                    </div>
+                  )}
+                  {msg.exportable && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => handleExport(msg)} disabled={exporting === msg.id}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 8,
+                          background: exporting === msg.id ? C.aiChip : C.aiPurple,
+                          border: 'none', color: C.aiText, fontSize: 12, fontWeight: 600,
+                          cursor: exporting === msg.id ? 'default' : 'pointer', fontFamily: 'inherit' }}>
+                        {exporting === msg.id ? 'Saving…' : 'Export to Class'}
+                      </button>
+                      <button onClick={() => send(`Edit the ${_actionLabel(msg.actionType!)} — make the questions harder`, msg.actionType)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 8,
+                          background: 'none', border: `1px solid ${C.aiBorder}`,
+                          color: C.aiText, fontSize: 12, fontWeight: 600,
+                          cursor: 'pointer', fontFamily: 'inherit' }}>
+                        Edit first
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Chips */}
@@ -3080,6 +3178,16 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           Neriah can make mistakes. Verify important info.
         </p>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div style={{ position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)',
+          background: C.teal, color: C.white, borderRadius: 20, padding: '8px 18px',
+          fontSize: 13, fontWeight: 600, pointerEvents: 'none', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)', zIndex: 200 }}>
+          ✓ {toast}
+        </div>
+      )}
 
       <style>{`
         @keyframes aiPulse {

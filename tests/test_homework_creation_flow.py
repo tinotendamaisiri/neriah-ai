@@ -3388,6 +3388,127 @@ class TestTeacherAssistant:
         assert written["ai_generated"] is True
         assert written["open_for_submission"] is False
 
+    @feature_test("teacher_assistant_export_creates_draft")
+    def test_export_creates_draft_homework(self, client, ta_auth_headers):
+        """
+        POST /api/teacher/assistant/export creates a Firestore doc with
+        status='draft', open_for_submission=False, and questions from AI content.
+        """
+        saved: dict = {}
+        hw_content = {
+            "title": "Algebra Homework",
+            "instructions": "Show all working.",
+            "questions": [
+                {"number": 1, "question": "Solve 3x+7=22", "marks": 2},
+                {"number": 2, "question": "Factorise x²−16", "marks": 2},
+                {"number": 3, "question": "Expand (x+3)(x−2)", "marks": 3},
+            ],
+            "total_marks": 7,
+            "due_suggestion": "2 days",
+        }
+        with ExitStack() as stack:
+            for p in _ta_patches(saved):
+                stack.enter_context(p)
+            resp = client.post(
+                "/api/teacher/assistant/export",
+                headers=ta_auth_headers,
+                json={"content_type": "homework", "content": hw_content, "class_id": _TA_CLASS_ID},
+            )
+
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["status"] == "draft", "exported homework must be a draft"
+        assert body["questions"] == 3
+        assert body["total_marks"] == 7
+
+        written = next(
+            (v for k, v in saved.items() if k.startswith("answer_keys/")), None
+        )
+        assert written is not None, "answer_key must be written to Firestore"
+        assert written["open_for_submission"] is False, "draft must not be open for submission"
+        assert written["ai_generated"] is True
+        assert written["status"] == "draft"
+        assert len(written["questions"]) == 3
+        for q in written["questions"]:
+            assert q.get("marks", 0) > 0, "each question must have marks"
+
+    @feature_test("teacher_assistant_chat_history_sent")
+    def test_chat_history_included_in_request(self, client, ta_auth_headers):
+        """
+        POST /api/teacher/assistant with chat_history passes the history to _call_model.
+        The updated conversation is persisted to Firestore.
+        """
+        prior_history = [
+            {"role": "user",      "content": "What is the Pythagoras theorem?"},
+            {"role": "assistant", "content": "Pythagoras: a² + b² = c²"},
+            {"role": "user",      "content": "Give me an example."},
+        ]
+        captured: dict = {}
+
+        def _capture_model(system, history, message):
+            captured["history"] = history
+            return "Here is an example: a=3, b=4, c=5."
+
+        saved: dict = {}
+        with ExitStack() as stack:
+            for p in _ta_patches(saved):
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=_capture_model)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message":      "Now solve this: a=6, b=8, find c.",
+                "action_type":  "chat",
+                "chat_history": prior_history,
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        # Verify the model received the prior history
+        assert "history" in captured, "_call_model must be called with history"
+        assert captured["history"] == prior_history, (
+            "chat_history from request must be forwarded verbatim to _call_model"
+        )
+        # Verify the new turn was appended to the persisted conversation
+        persisted = next(
+            (v for k, v in saved.items() if k.startswith("assistant_conversations/")), None
+        )
+        assert persisted is not None, "conversation must be saved to Firestore"
+        msg_roles = [m["role"] for m in persisted.get("messages", [])]
+        assert "user" in msg_roles and "assistant" in msg_roles, (
+            "saved conversation must include the new user + assistant turn"
+        )
+
+    @feature_test("teacher_assistant_curriculum_context")
+    def test_curriculum_injected_into_prompt(self, client, ta_auth_headers):
+        """
+        POST /api/teacher/assistant with curriculum='ZIMSEC' and level='Form 2'
+        must inject those values into the system prompt sent to the model.
+        """
+        captured: dict = {}
+
+        def _capture_model(system, history, message):
+            captured["system"] = system
+            return "Lesson plan ready."
+
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=_capture_model)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message":    "Prepare a lesson plan on quadratic equations.",
+                "action_type": "prepare_notes",
+                "curriculum": "ZIMSEC",
+                "level":      "Form 2",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert "system" in captured, "_call_model must be called with a system prompt"
+        system_prompt = captured["system"]
+        assert "ZIMSEC" in system_prompt, "system prompt must contain curriculum name"
+        assert "Form 2" in system_prompt, "system prompt must contain education level"
+
     @feature_test("teacher_assistant_blocked_non_educational")
     def test_teacher_assistant_rejects_off_topic(self, client, ta_auth_headers):
         """Off-topic messages (e.g. cryptocurrency) are redirected without calling the model."""
