@@ -5869,6 +5869,19 @@ function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void;
 // PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 export default function DemoPage() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authDenied, setAuthDenied]   = useState(false);
+
+  // ── Auth guard — verify demo_admin_token cookie on mount ─────────────────────
+  useEffect(() => {
+    fetch('/api/admin/demo-verify', { credentials: 'same-origin' })
+      .then(res => {
+        if (!res.ok) { setAuthDenied(true); }
+      })
+      .catch(() => { setAuthDenied(true); })
+      .finally(() => { setAuthChecked(true); });
+  }, []);
+
   const [screen, setScreen]         = useState<TScreen>('welcome');
   const [prevScreen, setPrevScreen] = useState<TScreen>('welcome');
   const [otpPhone, setOtpPhone]     = useState('+263771234567');
@@ -6144,6 +6157,42 @@ export default function DemoPage() {
       default:
         return null;
     }
+  }
+
+  // ── Auth gate ─────────────────────────────────────────────────────────────────
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif' }}>
+        <div style={{ textAlign: 'center', color: C.teal, fontSize: 16 }}>Loading…</div>
+      </div>
+    );
+  }
+
+  if (authDenied) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#F9FAFB', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif' }}>
+        <div style={{ background: '#FFFFFF', borderRadius: 16, padding: 40,
+          maxWidth: 380, width: '100%', textAlign: 'center',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🔒</div>
+          <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#111827' }}>
+            Access restricted
+          </h1>
+          <p style={{ margin: '0 0 24px', fontSize: 14, color: '#6B7280', lineHeight: 1.5 }}>
+            This demo is only accessible to Neriah admins.<br />
+            Please sign in to continue.
+          </p>
+          <a href="/admin/curriculum"
+            style={{ display: 'inline-block', background: C.teal, color: '#FFFFFF',
+              padding: '10px 24px', borderRadius: 8, fontWeight: 600, fontSize: 14,
+              textDecoration: 'none' }}>
+            Go to Admin Login
+          </a>
+        </div>
+      </div>
+    );
   }
 
   return (

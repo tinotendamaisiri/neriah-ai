@@ -625,6 +625,10 @@ export default function CurriculumAdminPage() {
             padding: '4px 12px' }}>
             {adminEmail}
           </span>
+          <Btn variant="outline" color={C.teal}
+            onClick={() => { window.location.href = '/api/admin/demo-token'; }}>
+            Launch Demo
+          </Btn>
           <Btn variant="ghost" onClick={handleLogout} color={C.g500}>
             Logout
           </Btn>

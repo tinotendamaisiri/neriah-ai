@@ -1,4 +1,5 @@
 import { getToken } from 'next-auth/jwt'
+import { jwtVerify } from 'jose'
 import { NextRequest, NextResponse } from 'next/server'
 
 const ALLOWED_EMAILS = (process.env.ALLOWED_STUDIO_EMAILS || '').split(',').map(e => e.trim())
@@ -6,7 +7,27 @@ const ALLOWED_EMAILS = (process.env.ALLOWED_STUDIO_EMAILS || '').split(',').map(
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Only protect /studio routes
+  // ── /demo guard ──────────────────────────────────────────────────────────────
+  if (pathname === '/demo' || pathname.startsWith('/demo/')) {
+    const demoToken = req.cookies.get('demo_admin_token')?.value
+    if (!demoToken) {
+      return NextResponse.redirect(new URL('/admin/curriculum?redirect=demo', req.url))
+    }
+    const sessionSecret = process.env.ADMIN_SESSION_SECRET ?? ''
+    const demoSecret = new TextEncoder().encode(
+      process.env.DEMO_TOKEN_SECRET ?? sessionSecret,
+    )
+    try {
+      await jwtVerify(demoToken, demoSecret)
+      return NextResponse.next()
+    } catch {
+      const res = NextResponse.redirect(new URL('/admin/curriculum?redirect=demo', req.url))
+      res.cookies.delete('demo_admin_token')
+      return res
+    }
+  }
+
+  // ── /studio guard ─────────────────────────────────────────────────────────────
   if (!pathname.startsWith('/studio')) {
     return NextResponse.next()
   }
@@ -31,5 +52,5 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/studio/:path*'],
+  matcher: ['/studio/:path*', '/demo', '/demo/:path*'],
 }
