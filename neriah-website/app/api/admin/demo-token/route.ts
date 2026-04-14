@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { jwtVerify, SignJWT } from 'jose';
 
-// ── GET /api/admin/demo-token ─────────────────────────────────────────────────
-// Verifies the admin session cookie (neriah-admin, path=/admin),
-// then issues a short-lived demo_admin_token cookie (path=/) and redirects to /demo.
-export async function GET(req: NextRequest) {
+// ── POST /api/admin/demo-token ────────────────────────────────────────────────
+// Verifies the admin session cookie (neriah-admin, path=/),
+// issues a short-lived demo_admin_token cookie (path=/), and returns { ok: true }.
+// The caller then opens /demo in a new tab — the cookie travels with that request.
+export async function POST(req: NextRequest) {
   const adminToken = req.cookies.get('neriah-admin')?.value;
   if (!adminToken) {
-    return NextResponse.redirect(new URL('/admin/curriculum?redirect=demo', req.url));
+    return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
   }
 
   const sessionSecret = process.env.ADMIN_SESSION_SECRET ?? '';
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
 
     const email = (payload.sub ?? '') as string;
     if (!email.toLowerCase().endsWith('@neriah.ai')) {
-      return NextResponse.redirect(new URL('/admin/curriculum?redirect=demo', req.url));
+      return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
     }
 
     // Issue demo token (2h)
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
       .setExpirationTime('2h')
       .sign(demoSecret);
 
-    const response = NextResponse.redirect(new URL('/demo', req.url));
+    const response = NextResponse.json({ ok: true });
     response.cookies.set('demo_admin_token', demoToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -46,6 +47,6 @@ export async function GET(req: NextRequest) {
     });
     return response;
   } catch {
-    return NextResponse.redirect(new URL('/admin/curriculum?redirect=demo', req.url));
+    return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
   }
 }

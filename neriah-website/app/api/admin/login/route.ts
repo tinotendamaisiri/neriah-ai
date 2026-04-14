@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     maxAge: 60 * 60 * 8,
-    path: '/admin',
+    path: '/',
   });
   return response;
 }
