@@ -35,23 +35,25 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { Class, RootStackParamList } from '../types';
 
-// ── Dark palette (AI screen only) ─────────────────────────────────────────────
+// ── Neriah brand palette ───────────────────────────────────────────────────────
 const AI = {
-  bg:        '#1A1A2E',
-  card:      '#16213E',
-  user:      '#1E3A5F',
-  border:    '#2A2A4A',
-  purple:    '#7C3AED',
-  purpleLt:  '#A78BFA',
-  text:      '#E8E8F0',
-  sub:       '#8888AA',
-  inputBg:   '#16213E',
-  chip:      '#2A2A4A',
-  chipText:  '#A78BFA',
-  teal:      '#0D9488',
-  tealDark:  '#0F766E',
-  exportCard:'#1A2E2A',
-  exportBdr: '#1E4A3A',
+  bg:        '#FAFAFA',   // page background (same as rest of app)
+  card:      '#FFFFFF',   // white cards and AI bubbles
+  user:      '#0D7377',   // teal user message bubbles
+  userText:  '#FFFFFF',   // white text on teal user bubbles
+  border:    '#E8E8E8',   // light gray borders
+  purple:    '#0D7377',   // teal (avatar, send button)
+  purpleLt:  '#0D7377',   // teal accents
+  text:      '#2C2C2A',   // dark gray text
+  sub:       '#6B7280',   // medium gray subtext
+  inputBg:   '#FFFFFF',   // white input background
+  chip:      '#E8F4F4',   // light teal chip background
+  chipText:  '#0D7377',   // teal chip text
+  teal:      '#0D7377',   // Neriah teal
+  tealDark:  '#0F766E',   // darker teal
+  headerBg:  '#0D7377',   // teal header
+  exportCard:'#F0FDFA',   // light teal structured card
+  exportBdr: '#CCEDEC',   // light teal card border
 } as const;
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -76,20 +78,24 @@ const EXPORTABLE_ACTIONS: ReadonlySet<AssistantActionType> = new Set([
 
 const CURRICULUMS = ['ZIMSEC', 'Cambridge', 'IB', 'National Curriculum'] as const;
 
+const ALL_LEVELS = 'All Levels';
+
 const CURRICULUM_LEVELS: Record<string, string[]> = {
   ZIMSEC: [
+    ALL_LEVELS,
     'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7',
     'Form 1', 'Form 2', 'Form 3', 'Form 4',
     'Form 5 (A-Level)', 'Form 6 (A-Level)', 'College/University',
   ],
   Cambridge: [
+    ALL_LEVELS,
     'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6',
     'Year 7', 'Year 8', 'Year 9 (Lower Secondary)',
     'IGCSE (Year 10)', 'IGCSE (Year 11)',
     'A-Level (Year 12)', 'A-Level (Year 13)',
   ],
-  IB:  ['Primary Years (PYP)', 'Middle Years (MYP)', 'Diploma Programme (DP)'],
-  'National Curriculum': ['KS1', 'KS2', 'KS3', 'GCSE', 'A-Level'],
+  IB:  [ALL_LEVELS, 'Primary Years (PYP)', 'Middle Years (MYP)', 'Diploma Programme (DP)'],
+  'National Curriculum': [ALL_LEVELS, 'KS1', 'KS2', 'KS3', 'GCSE', 'A-Level'],
 };
 
 const DEFAULT_LEVEL: Record<string, string> = {
@@ -178,7 +184,7 @@ function Toast({ message, visible }: ToastProps) {
   if (!visible) return null;
   return (
     <Animated.View style={[s.toast, { opacity }]}>
-      <Ionicons name="checkmark-circle" size={16} color={AI.teal} />
+      <Ionicons name="checkmark-circle" size={16} color={AI.tealDark} />
       <Text style={s.toastTxt}>{message}</Text>
     </Animated.View>
   );
@@ -209,7 +215,7 @@ function TypingIndicator() {
   return (
     <View style={s.rowLeft}>
       <View style={s.avatar}>
-        <Ionicons name="sparkles" size={12} color={AI.purpleLt} />
+        <Ionicons name="sparkles" size={12} color={AI.userText} />
       </View>
       <View style={s.bubbleLeft}>
         <View style={s.typingRow}>
@@ -247,7 +253,7 @@ function ClassPicker({ visible, classes, onSelect, onDismiss }: ClassPickerProps
                 <Text style={s.classRowName}>{cls.name}</Text>
                 <Text style={s.classRowLevel}>{cls.education_level}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={16} color={AI.sub} />
+              <Ionicons name="chevron-forward" size={16} color={AI.teal} />
             </TouchableOpacity>
           ))}
           <TouchableOpacity style={s.cancelBtn} onPress={onDismiss}>
@@ -361,7 +367,7 @@ export default function TeacherAssistantScreen() {
         message:          text.trim(),
         action_type:      forcedActionType,
         curriculum,
-        level,
+        level:            level === ALL_LEVELS ? undefined : level,
         class_id:         classId,
         chat_history:     apiHistory,
         conversation_id:  conversationId,
@@ -449,14 +455,14 @@ export default function TeacherAssistantScreen() {
       <View style={isUser ? s.rowRight : s.rowLeft}>
         {!isUser && (
           <View style={s.avatar}>
-            <Ionicons name="sparkles" size={12} color={AI.purpleLt} />
+            <Ionicons name="sparkles" size={12} color={AI.userText} />
           </View>
         )}
         <View style={{ maxWidth: '80%' }}>
           {/* Text bubble */}
           {!!item.content && (
             <View style={isUser ? s.bubbleRight : s.bubbleLeft}>
-              <Text style={s.msgText}>{item.content}</Text>
+              <Text style={isUser ? s.msgTextUser : s.msgText}>{item.content}</Text>
             </View>
           )}
 
@@ -520,7 +526,7 @@ export default function TeacherAssistantScreen() {
 
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" backgroundColor={AI.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={AI.headerBg} />
       <SafeAreaView style={{ flex: 1 }}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -538,11 +544,11 @@ export default function TeacherAssistantScreen() {
           {/* ── Header ── */}
           <View style={s.header}>
             <TouchableOpacity style={s.hBtn} onPress={closeDrops}>
-              <Ionicons name="menu-outline" size={24} color={AI.text} />
+              <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
             <TouchableOpacity style={s.hBtn} onPress={clearHistory}>
-              <Ionicons name="create-outline" size={22} color={AI.text} />
+              <Ionicons name="create-outline" size={22} color={AI.userText} />
             </TouchableOpacity>
           </View>
 
@@ -555,7 +561,7 @@ export default function TeacherAssistantScreen() {
                 onPress={() => { setShowLvlDrop(false); setShowCurrDrop(v => !v); }}
               >
                 <Text style={s.pillTxt}>{curriculum}</Text>
-                <Ionicons name={showCurrDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.sub} />
+                <Ionicons name={showCurrDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.teal} />
               </TouchableOpacity>
               {showCurrDrop && (
                 <View style={[s.dropdown, { zIndex: 200 }]}>
@@ -583,7 +589,7 @@ export default function TeacherAssistantScreen() {
                 onPress={() => { setShowCurrDrop(false); setShowLvlDrop(v => !v); }}
               >
                 <Text style={s.pillTxt}>{level}</Text>
-                <Ionicons name={showLvlDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.sub} />
+                <Ionicons name={showLvlDrop ? 'chevron-up' : 'chevron-down'} size={12} color={AI.teal} />
               </TouchableOpacity>
               {showLvlDrop && (
                 <View style={[s.dropdown, { maxHeight: 220, zIndex: 200 }]}>
@@ -611,7 +617,7 @@ export default function TeacherAssistantScreen() {
               keyboardShouldPersistTaps="handled"
             >
               <View style={s.emptyIcon}>
-                <Ionicons name="sparkles" size={34} color={AI.purple} />
+                <Ionicons name="sparkles" size={34} color={AI.teal} />
               </View>
               <Text style={s.emptyTitle}>Neriah AI</Text>
               <Text style={s.emptySub}>Your AI teaching assistant</Text>
@@ -622,7 +628,7 @@ export default function TeacherAssistantScreen() {
                     style={s.quickPill}
                     onPress={() => sendMessage(label, action)}
                   >
-                    <Ionicons name={cardIcon(action) as any} size={16} color={AI.purpleLt} style={{ marginRight: 8 }} />
+                    <Ionicons name={cardIcon(action) as any} size={16} color={AI.teal} style={{ marginRight: 8 }} />
                     <Text style={s.quickTxt}>{label}</Text>
                   </TouchableOpacity>
                 ))}
@@ -646,7 +652,7 @@ export default function TeacherAssistantScreen() {
           <View style={s.inputArea}>
             <View style={s.inputRow}>
               <TouchableOpacity style={s.attachBtn}>
-                <Ionicons name="attach-outline" size={20} color={AI.sub} />
+                <Ionicons name="attach-outline" size={20} color={AI.teal} />
               </TouchableOpacity>
               <TextInput
                 style={s.input}
@@ -673,7 +679,7 @@ export default function TeacherAssistantScreen() {
                 }}
                 disabled={!input.trim() || typing}
               >
-                <Ionicons name="arrow-up" size={18} color={AI.text} />
+                <Ionicons name="arrow-up" size={18} color={AI.userText} />
               </TouchableOpacity>
             </View>
             <Text style={s.caption}>Neriah can make mistakes. Verify important info.</Text>
@@ -705,45 +711,51 @@ const s = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
+    backgroundColor: AI.headerBg,
   },
   hBtn:   { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  hTitle: { fontSize: 18, fontWeight: '700', color: AI.text, letterSpacing: 0.3 },
+  hTitle: { fontSize: 18, fontWeight: '700', color: AI.userText, letterSpacing: 0.3 },
 
-  pillRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  pillRow: {
+    flexDirection: 'row', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 10,
+    justifyContent: 'center',
+  },
   pill: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
+    backgroundColor: AI.card, borderWidth: 1.5, borderColor: AI.teal,
     borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
   },
-  pillTxt: { fontSize: 13, color: AI.text, fontWeight: '500' },
+  pillTxt: { fontSize: 13, color: AI.teal, fontWeight: '600' },
   dropdown: {
     position: 'absolute', top: 42, left: 0,
     backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
     borderRadius: 12, minWidth: 180, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5, shadowRadius: 10, elevation: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12, shadowRadius: 8, elevation: 8,
   },
   dropItem:      { paddingHorizontal: 16, paddingVertical: 12 },
-  dropActive:    { backgroundColor: AI.border },
+  dropActive:    { backgroundColor: '#E8F4F4' },
   dropTxt:       { fontSize: 14, color: AI.text },
-  dropActiveTxt: { color: AI.purpleLt, fontWeight: '600' },
+  dropActiveTxt: { color: AI.teal, fontWeight: '600' },
 
   rowLeft:  { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 8 },
   rowRight: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 14 },
   avatar: {
     width: 28, height: 28, borderRadius: 14,
-    backgroundColor: AI.purple, alignItems: 'center', justifyContent: 'center', marginTop: 2,
+    backgroundColor: AI.teal, alignItems: 'center', justifyContent: 'center', marginTop: 2,
   },
   bubbleLeft: {
     backgroundColor: AI.card, borderRadius: 18, borderBottomLeftRadius: 4,
     paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 1, borderColor: AI.border,
   },
   bubbleRight: {
     backgroundColor: AI.user, borderRadius: 18, borderBottomRightRadius: 4,
     paddingHorizontal: 14, paddingVertical: 10,
   },
-  msgText: { fontSize: 14, color: AI.text, lineHeight: 21 },
+  msgText:     { fontSize: 14, color: AI.text,     lineHeight: 21 },
+  msgTextUser: { fontSize: 14, color: AI.userText, lineHeight: 21 },
 
   // Structured card
   structuredCard: {
@@ -752,7 +764,7 @@ const s = StyleSheet.create({
   },
   cardHeader:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   cardType:    { fontSize: 12, color: AI.teal, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, flex: 1 },
-  marksBadge:  { backgroundColor: AI.card, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
+  marksBadge:  { backgroundColor: AI.card, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: AI.exportBdr },
   marksBadgeTxt: { fontSize: 11, color: AI.sub },
   cardTitle:   { fontSize: 14, fontWeight: '700', color: AI.text, marginBottom: 6 },
   cardPreview: { fontSize: 12, color: AI.sub, lineHeight: 18 },
@@ -762,7 +774,7 @@ const s = StyleSheet.create({
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: AI.teal, borderRadius: 10, paddingVertical: 10,
   },
-  exportBtnTxt: { fontSize: 13, color: AI.text, fontWeight: '600' },
+  exportBtnTxt: { fontSize: 13, color: AI.userText, fontWeight: '600' },
   editBtn: {
     borderWidth: 1, borderColor: AI.border, borderRadius: 10,
     paddingVertical: 10, paddingHorizontal: 14,
@@ -775,7 +787,7 @@ const s = StyleSheet.create({
   emptyCont: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   emptyIcon: {
     width: 68, height: 68, borderRadius: 34,
-    backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
+    backgroundColor: '#E8F4F4', borderWidth: 1, borderColor: AI.teal,
     alignItems: 'center', justifyContent: 'center', marginBottom: 16,
   },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: AI.text, marginBottom: 6 },
@@ -783,18 +795,19 @@ const s = StyleSheet.create({
   quickGrid:  { gap: 10, width: '100%' },
   quickPill: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
+    backgroundColor: AI.card, borderWidth: 1.5, borderColor: AI.teal,
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
   },
-  quickTxt: { fontSize: 14, color: AI.text },
+  quickTxt: { fontSize: 14, color: AI.teal, fontWeight: '500' },
 
   inputArea: {
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: AI.border,
+    backgroundColor: AI.card,
     paddingHorizontal: 12, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 4 : 12,
   },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end',
-    backgroundColor: AI.inputBg, borderRadius: 26,
+    backgroundColor: AI.card, borderRadius: 26,
     borderWidth: 1, borderColor: AI.border,
     paddingHorizontal: 4, paddingVertical: 4,
   },
@@ -803,12 +816,12 @@ const s = StyleSheet.create({
     flex: 1, fontSize: 14, color: AI.text,
     paddingHorizontal: 4, paddingVertical: 8, maxHeight: 120,
   },
-  sendBtn:     { width: 38, height: 38, borderRadius: 19, backgroundColor: AI.purple, alignItems: 'center', justifyContent: 'center' },
+  sendBtn:      { width: 38, height: 38, borderRadius: 19, backgroundColor: AI.teal, alignItems: 'center', justifyContent: 'center' },
   sendDisabled: { backgroundColor: AI.border },
-  caption:     { fontSize: 11, color: AI.sub, textAlign: 'center', marginTop: 6 },
+  caption:      { fontSize: 11, color: AI.sub, textAlign: 'center', marginTop: 6 },
 
   // Class picker modal
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: AI.card, borderTopLeftRadius: 20, borderTopRightRadius: 20,
     padding: 20, paddingBottom: 32,
@@ -829,8 +842,8 @@ const s = StyleSheet.create({
     backgroundColor: AI.card, borderWidth: 1, borderColor: AI.exportBdr,
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4, shadowRadius: 8, elevation: 10,
+    shadowColor: AI.teal, shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15, shadowRadius: 6, elevation: 6,
   },
   toastTxt: { fontSize: 13, color: AI.text, flex: 1 },
 });

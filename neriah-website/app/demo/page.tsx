@@ -2801,10 +2801,10 @@ function ClassJoinCodeScreen({ cls, onDone }: { cls: DemoClass; onDone: () => vo
 const AI_CURRICULUMS = ['ZIMSEC', 'Cambridge', 'IB', 'National Curriculum'] as const;
 
 const AI_CURRICULUM_LEVELS: Record<string, string[]> = {
-  ZIMSEC: ['Grade 1','Grade 2','Grade 3','Grade 4','Grade 5','Grade 6','Grade 7','Form 1','Form 2','Form 3','Form 4','Form 5 (A-Level)','Form 6 (A-Level)','College/University'],
-  Cambridge: ['Year 1','Year 2','Year 3','Year 4','Year 5','Year 6','Year 7','Year 8','Year 9','IGCSE (Year 10)','IGCSE (Year 11)','A-Level (Year 12)','A-Level (Year 13)'],
-  IB: ['Primary Years (PYP)','Middle Years (MYP)','Diploma Programme (DP)'],
-  'National Curriculum': ['KS1','KS2','KS3','GCSE','A-Level'],
+  ZIMSEC: ['All Levels','Grade 1','Grade 2','Grade 3','Grade 4','Grade 5','Grade 6','Grade 7','Form 1','Form 2','Form 3','Form 4','Form 5 (A-Level)','Form 6 (A-Level)','College/University'],
+  Cambridge: ['All Levels','Year 1','Year 2','Year 3','Year 4','Year 5','Year 6','Year 7','Year 8','Year 9','IGCSE (Year 10)','IGCSE (Year 11)','A-Level (Year 12)','A-Level (Year 13)'],
+  IB: ['All Levels','Primary Years (PYP)','Middle Years (MYP)','Diploma Programme (DP)'],
+  'National Curriculum': ['All Levels','KS1','KS2','KS3','GCSE','A-Level'],
 };
 
 const AI_DEFAULT_LEVEL: Record<string, string> = {
@@ -2893,7 +2893,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       const res = await fetch(`${DEMO_API}/demo/teacher/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim(), action_type: action, curriculum, level }),
+        body: JSON.stringify({ message: text.trim(), action_type: action, curriculum, level: level === 'All Levels' ? '' : level }),
       });
       const data = res.ok ? await res.json() : null;
       if (data && !data.error) {
@@ -2959,42 +2959,42 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const levels = AI_CURRICULUM_LEVELS[curriculum] ?? AI_CURRICULUM_LEVELS.ZIMSEC;
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', background: C.aiDark, position: 'relative' }}
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', background: C.g50, position: 'relative' }}
       onClick={() => { setShowCurrDrop(false); setShowLvlDrop(false); }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 14px', borderBottom: `1px solid ${C.aiBorder}` }}>
+        padding: '12px 14px', background: C.teal }}>
         <button onClick={(e) => { e.stopPropagation(); onBack(); }}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.aiText, padding: 4, display: 'flex' }}>
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.white, padding: 4, display: 'flex' }}>
           <ChevronLeft size={22} />
         </button>
-        <span style={{ fontSize: 16, fontWeight: 700, color: C.aiText, letterSpacing: 0.3 }}>Neriah AI</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.white, letterSpacing: 0.3 }}>Neriah AI</span>
         <button onClick={(e) => { e.stopPropagation(); setMessages([]); }}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.aiText, padding: 4, display: 'flex' }}>
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.white, padding: 4, display: 'flex' }}>
           <Pencil size={18} />
         </button>
       </div>
 
-      {/* Context pills */}
-      <div style={{ display: 'flex', gap: 8, padding: '10px 14px' }} onClick={e => e.stopPropagation()}>
+      {/* Context pills — centered */}
+      <div style={{ display: 'flex', gap: 8, padding: '10px 14px', justifyContent: 'center' }} onClick={e => e.stopPropagation()}>
         {/* Curriculum */}
         <div style={{ position: 'relative' }}>
           <button onClick={() => { setShowLvlDrop(false); setShowCurrDrop(v => !v); }}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.aiCard,
-              border: `1px solid ${C.aiBorder}`, borderRadius: 20, padding: '6px 12px',
-              color: C.aiText, fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
-            {curriculum} <span style={{ color: C.aiSub, fontSize: 11 }}>{showCurrDrop ? '▲' : '▼'}</span>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.white,
+              border: `1.5px solid ${C.teal}`, borderRadius: 20, padding: '6px 12px',
+              color: C.teal, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            {curriculum} <span style={{ color: C.teal, fontSize: 11 }}>{showCurrDrop ? '▲' : '▼'}</span>
           </button>
           {showCurrDrop && (
             <div style={{ position: 'absolute', top: 36, left: 0, zIndex: 100, minWidth: 160,
-              background: C.aiCard, border: `1px solid ${C.aiBorder}`, borderRadius: 10,
-              overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+              background: C.white, border: `1px solid ${C.g200}`, borderRadius: 10,
+              overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
               {AI_CURRICULUMS.map(c => (
                 <button key={c} onClick={() => { setCurriculum(c); setLevel(AI_DEFAULT_LEVEL[c] ?? AI_CURRICULUM_LEVELS[c][0]); setShowCurrDrop(false); }}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px',
-                    background: c === curriculum ? C.aiBorder : 'none', border: 'none', cursor: 'pointer',
-                    color: c === curriculum ? C.aiPurpleLt : C.aiText, fontSize: 13,
+                    background: c === curriculum ? C.primaryLight : 'none', border: 'none', cursor: 'pointer',
+                    color: c === curriculum ? C.teal : C.text, fontSize: 13,
                     fontWeight: c === curriculum ? 600 : 400, fontFamily: 'inherit' }}>
                   {c}
                 </button>
@@ -3006,21 +3006,21 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
         {/* Level */}
         <div style={{ position: 'relative' }}>
           <button onClick={() => { setShowCurrDrop(false); setShowLvlDrop(v => !v); }}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.aiCard,
-              border: `1px solid ${C.aiBorder}`, borderRadius: 20, padding: '6px 12px',
-              color: C.aiText, fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
-            {level} <span style={{ color: C.aiSub, fontSize: 11 }}>{showLvlDrop ? '▲' : '▼'}</span>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.white,
+              border: `1.5px solid ${C.teal}`, borderRadius: 20, padding: '6px 12px',
+              color: C.teal, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            {level} <span style={{ color: C.teal, fontSize: 11 }}>{showLvlDrop ? '▲' : '▼'}</span>
           </button>
           {showLvlDrop && (
             <div style={{ position: 'absolute', top: 36, left: 0, zIndex: 100, minWidth: 180,
-              maxHeight: 200, overflowY: 'auto', background: C.aiCard,
-              border: `1px solid ${C.aiBorder}`, borderRadius: 10,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+              maxHeight: 200, overflowY: 'auto', background: C.white,
+              border: `1px solid ${C.g200}`, borderRadius: 10,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
               {levels.map(l => (
                 <button key={l} onClick={() => { setLevel(l); setShowLvlDrop(false); }}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px',
-                    background: l === level ? C.aiBorder : 'none', border: 'none', cursor: 'pointer',
-                    color: l === level ? C.aiPurpleLt : C.aiText, fontSize: 12,
+                    background: l === level ? C.primaryLight : 'none', border: 'none', cursor: 'pointer',
+                    color: l === level ? C.teal : C.text, fontSize: 12,
                     fontWeight: l === level ? 600 : 400, fontFamily: 'inherit' }}>
                   {l}
                 </button>
@@ -3034,19 +3034,19 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       {messages.length === 0 && !typing ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
           justifyContent: 'center', padding: 20, gap: 8 }}>
-          <div style={{ width: 60, height: 60, borderRadius: 30, background: C.aiCard,
-            border: `1px solid ${C.aiBorder}`, display: 'flex', alignItems: 'center',
+          <div style={{ width: 60, height: 60, borderRadius: 30, background: C.primaryLight,
+            border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center',
             justifyContent: 'center', marginBottom: 8 }}>
-            <Sparkles size={28} color={C.aiPurple} />
+            <Sparkles size={28} color={C.teal} />
           </div>
-          <span style={{ fontSize: 18, fontWeight: 700, color: C.aiText }}>Neriah AI</span>
-          <span style={{ fontSize: 13, color: C.aiSub, marginBottom: 16 }}>Your AI teaching assistant</span>
+          <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Neriah AI</span>
+          <span style={{ fontSize: 13, color: C.g500, marginBottom: 16 }}>Your AI teaching assistant</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
             {AI_QUICK_ACTIONS.map(a => (
               <button key={a.label} onClick={() => send(a.label, a.action)}
-                style={{ background: C.aiCard, border: `1px solid ${C.aiBorder}`,
-                  borderRadius: 10, padding: '12px 14px', color: C.aiText, fontSize: 13,
-                  textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
+                style={{ background: C.white, border: `1.5px solid ${C.teal}`,
+                  borderRadius: 10, padding: '12px 14px', color: C.teal, fontSize: 13,
+                  fontWeight: 600, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
                 {a.label}
               </button>
             ))}
@@ -3061,15 +3061,16 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
                 flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', maxWidth: '85%' }}>
                 {msg.role === 'assistant' && (
-                  <div style={{ width: 26, height: 26, borderRadius: 13, background: C.aiPurple,
+                  <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
-                    <Sparkles size={12} color={C.aiText} />
+                    <Sparkles size={12} color={C.white} />
                   </div>
                 )}
-                <div style={{ background: msg.role === 'user' ? C.aiUser : C.aiCard,
+                <div style={{ background: msg.role === 'user' ? C.teal : C.white,
                   borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                  padding: '10px 13px' }}>
-                  <span style={{ fontSize: 13, color: C.aiText, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                  padding: '10px 13px',
+                  border: msg.role === 'assistant' ? `1px solid ${C.g200}` : 'none' }}>
+                  <span style={{ fontSize: 13, color: msg.role === 'user' ? C.white : C.text, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                     {msg.content}
                   </span>
                 </div>
@@ -3077,19 +3078,19 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               {/* Rich card */}
               {msg.card && (
                 <div style={{ marginLeft: msg.role === 'assistant' ? 34 : 0,
-                  background: C.aiBorder, borderRadius: 10, padding: '10px 12px',
-                  maxWidth: '85%' }}>
+                  background: C.tealLt, borderRadius: 10, padding: '10px 12px',
+                  maxWidth: '85%', border: `1px solid ${C.teal50}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: msg.exportable ? 10 : 0 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.aiText, marginBottom: 2 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.teal, marginBottom: 2 }}>
                         {msg.card.title}
                       </div>
-                      <div style={{ fontSize: 11, color: C.aiSub }}>{msg.card.preview}</div>
+                      <div style={{ fontSize: 11, color: C.g500 }}>{msg.card.preview}</div>
                     </div>
-                    <ChevronLeft size={14} color={C.aiSub} style={{ transform: 'rotate(180deg)' }} />
+                    <ChevronLeft size={14} color={C.g500} style={{ transform: 'rotate(180deg)' }} />
                   </div>
                   {msg.structured && msg.actionType && (
-                    <div style={{ fontSize: 11, color: C.aiSub, marginBottom: msg.exportable ? 10 : 0,
+                    <div style={{ fontSize: 11, color: C.g500, marginBottom: msg.exportable ? 10 : 0,
                       whiteSpace: 'pre-line', lineHeight: 1.5 }}>
                       {_previewLines(msg.structured, msg.actionType)}
                     </div>
@@ -3098,15 +3099,15 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button onClick={() => handleExport(msg)} disabled={exporting === msg.id}
                         style={{ flex: 1, padding: '7px 0', borderRadius: 8,
-                          background: exporting === msg.id ? C.aiChip : C.aiPurple,
-                          border: 'none', color: C.aiText, fontSize: 12, fontWeight: 600,
+                          background: exporting === msg.id ? C.g200 : C.teal,
+                          border: 'none', color: C.white, fontSize: 12, fontWeight: 600,
                           cursor: exporting === msg.id ? 'default' : 'pointer', fontFamily: 'inherit' }}>
                         {exporting === msg.id ? 'Saving…' : 'Export to Class'}
                       </button>
                       <button onClick={() => send(`Edit the ${_actionLabel(msg.actionType!)} — make the questions harder`, msg.actionType)}
                         style={{ flex: 1, padding: '7px 0', borderRadius: 8,
-                          background: 'none', border: `1px solid ${C.aiBorder}`,
-                          color: C.aiText, fontSize: 12, fontWeight: 600,
+                          background: 'none', border: `1px solid ${C.g200}`,
+                          color: C.text, fontSize: 12, fontWeight: 600,
                           cursor: 'pointer', fontFamily: 'inherit' }}>
                         Edit first
                       </button>
@@ -3120,9 +3121,9 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                   marginLeft: msg.role === 'assistant' ? 34 : 0 }}>
                   {msg.chips.map(chip => (
                     <button key={chip} onClick={() => send(chip)}
-                      style={{ background: C.aiChip, border: 'none', borderRadius: 14,
-                        padding: '5px 11px', color: C.aiPurpleLt, fontSize: 11,
-                        fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      style={{ background: C.primaryLight, border: 'none', borderRadius: 14,
+                        padding: '5px 11px', color: C.teal, fontSize: 11,
+                        fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
                       {chip}
                     </button>
                   ))}
@@ -3132,13 +3133,13 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           ))}
           {typing && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-              <div style={{ width: 26, height: 26, borderRadius: 13, background: C.aiPurple,
+              <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Sparkles size={12} color={C.aiText} />
+                <Sparkles size={12} color={C.white} />
               </div>
-              <div style={{ background: C.aiCard, borderRadius: '16px 16px 16px 4px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
+              <div style={{ background: C.white, border: `1px solid ${C.g200}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
                 {[0,1,2].map(i => (
-                  <div key={i} style={{ width: 6, height: 6, borderRadius: 3, background: C.aiSub,
+                  <div key={i} style={{ width: 6, height: 6, borderRadius: 3, background: C.g400,
                     animation: 'aiPulse 1.2s ease-in-out infinite',
                     animationDelay: `${i * 0.2}s` }} />
                 ))}
@@ -3149,10 +3150,10 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       )}
 
       {/* Input bar */}
-      <div style={{ borderTop: `1px solid ${C.aiBorder}`, padding: '10px 12px 12px' }}
+      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '10px 12px 12px', background: C.white }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8,
-          background: C.aiCard, borderRadius: 24, border: `1px solid ${C.aiBorder}`,
+          background: C.g50, borderRadius: 24, border: `1px solid ${C.g200}`,
           padding: '4px 6px 4px 14px' }}>
           <textarea
             value={input}
@@ -3161,20 +3162,19 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             placeholder="Message Neriah AI..."
             rows={1}
             style={{ flex: 1, background: 'none', border: 'none', outline: 'none', resize: 'none',
-              color: C.aiText, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
-              paddingTop: 6, paddingBottom: 6, maxHeight: 100,
-              ['--placeholder-color' as string]: C.aiSub }}
+              color: C.text, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
+              paddingTop: 6, paddingBottom: 6, maxHeight: 100 }}
           />
           <button onClick={() => send(input)} disabled={!input.trim() || typing}
             style={{ width: 34, height: 34, borderRadius: 17, flexShrink: 0,
-              background: input.trim() && !typing ? C.aiPurple : C.aiBorder,
+              background: input.trim() && !typing ? C.teal : C.g200,
               border: 'none', cursor: input.trim() && !typing ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'background 0.15s' }}>
-            <span style={{ color: C.aiText, fontSize: 14, lineHeight: 1 }}>↑</span>
+            <span style={{ color: C.white, fontSize: 14, lineHeight: 1 }}>↑</span>
           </button>
         </div>
-        <p style={{ margin: '6px 0 0', fontSize: 11, color: C.aiSub, textAlign: 'center' }}>
+        <p style={{ margin: '6px 0 0', fontSize: 11, color: C.g500, textAlign: 'center' }}>
           Neriah can make mistakes. Verify important info.
         </p>
       </div>

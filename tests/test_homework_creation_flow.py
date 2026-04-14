@@ -3594,3 +3594,205 @@ class TestGuardrails:
             allowed, retry_after = check_rate_limit("teacher-x", "general", "teacher")
         assert allowed is False
         assert retry_after > 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUITE — Neriah Identity & RAG Context
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNeriahIdentityAndRAG:
+    """
+    Unit tests ensuring:
+    1. validate_output replaces model identity disclosures with Neriah.
+    2. All AI system prompts contain the Neriah identity instruction.
+    3. RAG context is injected into every AI prompt pipeline.
+    """
+
+    # ── Identity enforcement via guardrails ───────────────────────────────────
+
+    @feature_test("neriah_identity_not_gemma")
+    def test_neriah_always_identifies_as_neriah(self, client, ta_auth_headers):
+        """
+        Two-layer identity check:
+        1. Unit — validate_output replaces "I am Gemma..." with Neriah identity.
+        2. Endpoint — POST /api/teacher/assistant with message="What AI are you?"
+           returns "Neriah" and NOT "Gemma" or "Google" in the response.
+        """
+        from shared.guardrails import validate_output
+
+        # Layer 1: guardrails unit test
+        model_disclosure = "I am Gemma, a large language model made by Google."
+        ok, cleaned = validate_output(model_disclosure, role="teacher", context={})
+        assert ok is True, "Output should not be hard-blocked for identity disclosure"
+        assert "Gemma" not in cleaned, f"Gemma must be scrubbed from output; got: {cleaned!r}"
+        assert "Google" not in cleaned, f"Google must be scrubbed from output; got: {cleaned!r}"
+        assert "Neriah" in cleaned, f"Neriah identity must replace disclosure; got: {cleaned!r}"
+
+        # Layer 2: endpoint integration — model returns identity disclosure, endpoint cleans it
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch(
+                    "functions.teacher_assistant._call_model",
+                    return_value="I am Gemma, a large language model made by Google.",
+                )
+            )
+            stack.enter_context(
+                # Bypass validate_input but keep real validate_output
+                patch("functions.teacher_assistant.validate_input", return_value=(True, "What AI are you?")),
+            )
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=ta_auth_headers,
+                json={
+                    "message": "What AI are you?",
+                    "action_type": "chat",
+                    "curriculum": "ZIMSEC",
+                    "level": "Form 2",
+                },
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        response_text = body.get("response", "")
+        assert "Gemma"  not in response_text, f"'Gemma' must not appear in response: {response_text!r}"
+        assert "Google" not in response_text, f"'Google' must not appear in response: {response_text!r}"
+        assert "Neriah" in response_text, f"Response must contain 'Neriah': {response_text!r}"
+
+    @feature_test("neriah_identity_student_tutor")
+    def test_student_tutor_identifies_as_neriah(self):
+        """
+        Unit — student_tutor() system prompt contains the full Neriah identity block,
+        so the model is always instructed to identify as Neriah, not Gemma.
+        """
+        from shared.gemma_client import _NERIAH_IDENTITY, _TUTOR_SYSTEM_TEMPLATE
+
+        # The template must include the {identity} placeholder that is filled at call time
+        assert "{identity}" in _TUTOR_SYSTEM_TEMPLATE, (
+            "_TUTOR_SYSTEM_TEMPLATE must contain {identity} placeholder for Neriah identity injection"
+        )
+
+        # The identity block must contain the key phrases
+        assert "Neriah" in _NERIAH_IDENTITY, "_NERIAH_IDENTITY must name Neriah"
+        assert "Gemma"  in _NERIAH_IDENTITY or "underlying model" in _NERIAH_IDENTITY, (
+            "_NERIAH_IDENTITY must instruct the model not to reveal Gemma or the underlying model"
+        )
+        assert "never" in _NERIAH_IDENTITY.lower() or "do not" in _NERIAH_IDENTITY.lower(), (
+            "_NERIAH_IDENTITY must include an explicit prohibition"
+        )
+
+        # When rendered, the system prompt must not still contain a raw {identity} placeholder
+        rendered = _TUTOR_SYSTEM_TEMPLATE.format(
+            identity=_NERIAH_IDENTITY,
+            education_level="Form 3",
+        )
+        assert "{identity}" not in rendered, "Rendered system prompt must not contain unfilled placeholder"
+        assert "Neriah" in rendered, "Rendered system prompt must contain 'Neriah'"
+
+    # ── RAG context injection ─────────────────────────────────────────────────
+
+    @feature_test("rag_context_teacher_assistant")
+    def test_rag_injected_in_teacher_assistant(self, client, ta_auth_headers):
+        """
+        Unit — when _rag_context() returns a non-empty string, the teacher assistant
+        endpoint appends it to the system prompt that is passed to _call_model.
+        """
+        RAG_SENTINEL = "<<ZIMSEC-FORM2-MATHEMATICS-SYLLABUS-RAG>>"
+        captured_system: list[str] = []
+
+        def capturing_call_model(system, message, action_type, **kwargs):
+            captured_system.append(system)
+            return "Great lesson plan!"
+
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            # Override the RAG patch from _ta_patches to return a real sentinel
+            stack.enter_context(
+                patch("functions.teacher_assistant._rag_context", return_value=RAG_SENTINEL)
+            )
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=capturing_call_model)
+            )
+            client.post(
+                "/api/teacher/assistant",
+                headers=ta_auth_headers,
+                json={
+                    "message": "Help me plan a lesson on algebra",
+                    "action_type": "chat",
+                    "curriculum": "ZIMSEC",
+                    "level": "Form 2",
+                },
+            )
+
+        assert captured_system, "_call_model was not invoked"
+        system_prompt = captured_system[0]
+        assert RAG_SENTINEL in system_prompt, (
+            f"RAG context sentinel not found in system prompt.\n"
+            f"System prompt: {system_prompt[:500]!r}"
+        )
+
+    @feature_test("rag_context_student_tutor")
+    def test_rag_injected_in_student_tutor(self):
+        """
+        Unit — when _build_rag_context() returns a non-empty string, student_tutor()
+        includes it in the system prompt passed to the chat backend.
+        """
+        from shared.gemma_client import student_tutor
+
+        RAG_SENTINEL = "<<ZIMSEC-GRADE5-SCIENCE-RAG>>"
+        captured_system: list[str] = []
+
+        def capturing_ollama_chat(system, history, message, image_bytes=None, **kwargs):
+            captured_system.append(system)
+            return "What do you think happens when water evaporates?"
+
+        with patch("shared.gemma_client._build_rag_context", return_value=RAG_SENTINEL), \
+             patch("shared.gemma_client._ollama_chat", side_effect=capturing_ollama_chat), \
+             patch("shared.gemma_client.settings") as mock_settings:
+            mock_settings.INFERENCE_BACKEND = "ollama"
+            student_tutor(
+                message="Explain the water cycle",
+                conversation_history=[],
+                education_level="Grade 5",
+                user_context={"curriculum": "ZIMSEC", "subject": "Science"},
+            )
+
+        assert captured_system, "_ollama_chat was not invoked"
+        system_prompt = captured_system[0]
+        assert RAG_SENTINEL in system_prompt, (
+            f"RAG sentinel not found in student_tutor system prompt.\n"
+            f"System prompt: {system_prompt[:500]!r}"
+        )
+
+    @feature_test("rag_context_marking_scheme")
+    def test_rag_injected_in_marking_scheme_generation(self):
+        """
+        Unit — when _build_rag_context() returns a non-empty string,
+        generate_scheme_from_text() includes it in the prompt passed to _generate().
+        """
+        from shared.gemma_client import generate_scheme_from_text
+
+        RAG_SENTINEL = "<<ZIMSEC-FORM4-MATHS-MARKING-RAG>>"
+        captured_prompt: list[str] = []
+
+        def capturing_generate(prompt, *args, **kwargs):
+            captured_prompt.append(prompt)
+            return '{"questions": [{"question_number": 1, "question_text": "Q1", "correct_answer": "x=3", "marks": 2}]}'
+
+        with patch("shared.gemma_client._build_rag_context", return_value=RAG_SENTINEL), \
+             patch("shared.gemma_client._generate", side_effect=capturing_generate):
+            generate_scheme_from_text(
+                question_paper_text="1. Solve 2x + 5 = 11",
+                education_level="Form 4",
+                subject="Mathematics",
+                user_context={"curriculum": "ZIMSEC"},
+            )
+
+        assert captured_prompt, "_generate was not invoked"
+        prompt_text = captured_prompt[0]
+        assert RAG_SENTINEL in prompt_text, (
+            f"RAG sentinel not found in generate_scheme_from_text prompt.\n"
+            f"Prompt: {prompt_text[:500]!r}"
+        )

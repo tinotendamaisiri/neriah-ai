@@ -37,6 +37,18 @@ from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ─── Neriah identity instruction (injected into every prompt) ─────────────────
+# Prevents any underlying model from disclosing itself by name.
+# validate_output in guardrails.py provides a second layer of protection.
+
+_NERIAH_IDENTITY = (
+    "IMPORTANT — IDENTITY: Your name is Neriah. You are Neriah, an AI teaching assistant "
+    "for African schools. If anyone asks who you are, what AI you are, what model you are, "
+    "or who made you, always respond: 'I am Neriah, your AI teaching assistant.' "
+    "Never mention Gemma, Google, or any underlying model or company. "
+    "Never reveal what technology or model powers you.\n"
+)
+
 
 # ─── Lazy client factories ────────────────────────────────────────────────────
 
@@ -292,7 +304,8 @@ def grade_submission(
         user_context=ctx,
     )
 
-    prompt = f"""You are an expert teacher marking a student's handwritten work at {education_level} level.
+    prompt = f"""{_NERIAH_IDENTITY}
+You are an expert teacher marking a student's handwritten work at {education_level} level.
 Grading intensity: {_intensity(education_level)}.
 {f"Subject: {subject}" if subject else ""}
 {f"Curriculum: {curriculum}" if curriculum else ""}
@@ -375,7 +388,10 @@ def _build_rag_context(
                 lines.append(f"• {snippet}")
 
         lines.append("--- END OF CONTEXT ---\n")
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        logger.info("RAG context injected: %d chars (%d syllabus + %d grading hits)",
+                    len(result), len(syllabus_hits), len(grading_hits))
+        return result
 
     except Exception:
         logger.warning("_build_rag_context failed — continuing without context")
@@ -421,7 +437,8 @@ def generate_marking_scheme(
         if max_total_marks else ""
     )
 
-    prompt = f"""You are an expert {education_level} teacher.
+    prompt = f"""{_NERIAH_IDENTITY}
+You are an expert {education_level} teacher.
 Grading standard: {_intensity(education_level)}.
 {f"Curriculum: {curriculum}" if curriculum else ""}
 {f"Subject: {subject}" if subject else ""}
@@ -504,6 +521,7 @@ def generate_scheme_from_text(
         if max_total_marks else ""
     )
     prompt = (
+        f"{_NERIAH_IDENTITY}"
         f"You are an expert {education_level} examiner. {subject_line}\n"
         f"{curriculum_line}\n"
         f"Grading standard: {_intensity(education_level)}.\n"
@@ -584,7 +602,8 @@ def generate_marking_scheme_from_image(
         if max_total_marks else ""
     )
 
-    prompt = f"""You are a curriculum-aligned marking scheme generator for African schools.
+    prompt = f"""{_NERIAH_IDENTITY}
+You are a curriculum-aligned marking scheme generator for African schools.
 You are looking at a photograph of a question paper. Read the questions visible in the image.
 Generate a marking scheme for UP TO 10 questions maximum. If the paper has more than 10 questions, pick the most important ones.
 Education level: {education_level}
@@ -798,6 +817,7 @@ Return raw JSON only — no markdown fences."""
 # ─── 6. Student AI tutor (Socratic method) ────────────────────────────────────
 
 _TUTOR_SYSTEM_TEMPLATE = """\
+{identity}
 You are Neriah, a friendly and encouraging AI study companion for African students.
 You help students understand their homework by using the Socratic method.
 
@@ -889,7 +909,7 @@ def student_tutor(
         )
 
     system_prompt = (
-        _TUTOR_SYSTEM_TEMPLATE.format(education_level=education_level)
+        _TUTOR_SYSTEM_TEMPLATE.format(identity=_NERIAH_IDENTITY, education_level=education_level)
         + curriculum_note
         + weakness_note
     )

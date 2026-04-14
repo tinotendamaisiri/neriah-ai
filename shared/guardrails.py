@@ -117,6 +117,18 @@ _UNSAFE_OUTPUT: tuple[str, ...] = (
     "how to commit suicide",
 )
 
+# ── Identity enforcement — Neriah must never reveal underlying model ────────────
+
+# Regex matches self-identification as any non-Neriah AI system.
+# Replacements happen in validate_output so leaked model names are scrubbed
+# even if the system prompt injection fails for some reason.
+_MODEL_IDENTITY_RE = re.compile(
+    r"I(?:'m| am)(?: an?| the)? ?(?:Gemma|Google(?:\s+AI)?|GPT-?\d*|ChatGPT|Claude|"
+    r"OpenAI|Bard|LLaMA|Mistral|large language model|LLM)[^.!?\n]*[.!?]?",
+    re.IGNORECASE,
+)
+_NERIAH_IDENTITY_REPLY = "I am Neriah, your AI teaching assistant."
+
 # ── Rate limit table ───────────────────────────────────────────────────────────
 
 _LIMITS: dict[str, dict[str, int]] = {
@@ -241,6 +253,11 @@ def validate_output(
 
     # 1. PII redaction (always applied)
     cleaned = _redact_pii(text)
+
+    # 1b. Identity enforcement — replace model disclosure sentences with Neriah identity
+    if _MODEL_IDENTITY_RE.search(cleaned):
+        logger.info("guardrails: model identity disclosure suppressed in output")
+        cleaned = _MODEL_IDENTITY_RE.sub(_NERIAH_IDENTITY_REPLY, cleaned)
 
     # 2. Grading hallucination check
     if role == "grading":

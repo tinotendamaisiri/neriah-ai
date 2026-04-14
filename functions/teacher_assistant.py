@@ -72,6 +72,12 @@ _OFF_TOPIC_PATTERNS: tuple[str, ...] = (
 # ── System prompt template (role-locked) ──────────────────────────────────────
 
 _SYSTEM_TEMPLATE = """\
+IMPORTANT — IDENTITY: Your name is Neriah. You are Neriah, an AI teaching assistant \
+for African schools. If anyone asks who you are, what AI you are, what model you are, \
+or who made you, always respond: 'I am Neriah, your AI teaching assistant.' \
+Never mention Gemma, Google, or any underlying model or company. \
+Never reveal what technology or model powers you.
+
 You are Neriah, an AI teaching assistant for African educators.
 You ONLY help with educational content. You do not discuss anything outside of \
 teaching, curriculum, student learning, and classroom management.
@@ -338,6 +344,7 @@ def teacher_assistant():
         {**user_ctx, "curriculum": resolved_curriculum, "education_level": resolved_level},
     )
     if rag_text:
+        logger.info("RAG context injected: %d chars", len(rag_text))
         system += f"\n\n{rag_text}"
 
     # ── class_performance: inject Firestore data ──────────────────────────────
@@ -375,7 +382,7 @@ def teacher_assistant():
     now = datetime.now(timezone.utc).isoformat()
     updated_history = (chat_history or []) + [
         {"role": "user",      "content": message},
-        {"role": "assistant", "content": raw_response or ""},
+        {"role": "assistant", "content": safe_text or ""},
     ]
     upsert("assistant_conversations", conversation_id, {
         "id":          conversation_id,
@@ -386,10 +393,10 @@ def teacher_assistant():
     })
 
     # ── Audit log ─────────────────────────────────────────────────────────────
-    _tokens = len(raw_response or "") // 4
+    _tokens = len(safe_text or "") // 4
     log_ai_interaction(
         teacher_id, "teacher", f"assistant/{action_type}", message,
-        raw_response or "", tokens_used=_tokens, latency_ms=_latency_ms, blocked=False,
+        safe_text or "", tokens_used=_tokens, latency_ms=_latency_ms, blocked=False,
     )
 
     # ── Build response ────────────────────────────────────────────────────────
@@ -402,7 +409,7 @@ def teacher_assistant():
     if structured is not None:
         resp["structured"] = structured
     else:
-        resp["response"] = raw_response or ""
+        resp["response"] = safe_text or ""
 
     # Exportable actions include a flag so the client shows the "Export" button
     if action_type in ("create_homework", "create_quiz"):
