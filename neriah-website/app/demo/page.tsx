@@ -2862,7 +2862,7 @@ function _detectAction(text: string): AIActionType {
 
 function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [curriculum, setCurriculum] = useState('ZIMSEC');
-  const [level, setLevel]           = useState('Form 3');
+  const [level, setLevel]           = useState('All Levels');
   const [showCurrDrop, setShowCurrDrop] = useState(false);
   const [showLvlDrop, setShowLvlDrop]   = useState(false);
   const [messages, setMessages]     = useState<AIChatMsg[]>([]);
@@ -3032,16 +3032,20 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 
       {/* Chat area / empty state */}
       {messages.length === 0 && !typing ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-          justifyContent: 'center', padding: 20, gap: 8 }}>
-          <div style={{ width: 60, height: 60, borderRadius: 30, background: C.primaryLight,
-            border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center',
-            justifyContent: 'center', marginBottom: 8 }}>
-            <Sparkles size={28} color={C.teal} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+          {/* Hero: centers icon + title + subtitle in remaining space */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+            justifyContent: 'center', padding: '20px 20px 12px', gap: 8 }}>
+            <div style={{ width: 60, height: 60, borderRadius: 30, background: C.primaryLight,
+              border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', marginBottom: 8 }}>
+              <Sparkles size={28} color={C.teal} />
+            </div>
+            <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Neriah AI</span>
+            <span style={{ fontSize: 13, color: C.g500 }}>Your AI teaching assistant</span>
           </div>
-          <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Neriah AI</span>
-          <span style={{ fontSize: 13, color: C.g500, marginBottom: 16 }}>Your AI teaching assistant</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+          {/* Quick actions: pinned at bottom of scroll area, adjacent to input bar */}
+          <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
             {AI_QUICK_ACTIONS.map(a => (
               <button key={a.label} onClick={() => send(a.label, a.action)}
                 style={{ background: C.white, border: `1.5px solid ${C.teal}`,
@@ -3150,8 +3154,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       )}
 
       {/* Input bar */}
-      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '10px 12px 12px', background: C.white }}
+      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 10px', background: C.white }}
         onClick={e => e.stopPropagation()}>
+        <p style={{ margin: '0 0 6px', fontSize: 11, color: C.g500, textAlign: 'center' }}>
+          Neriah can make mistakes. Verify important info.
+        </p>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8,
           background: C.g50, borderRadius: 24, border: `1px solid ${C.g200}`,
           padding: '4px 6px 4px 14px' }}>
@@ -3174,9 +3181,6 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             <span style={{ color: C.white, fontSize: 14, lineHeight: 1 }}>↑</span>
           </button>
         </div>
-        <p style={{ margin: '6px 0 0', fontSize: 11, color: C.g500, textAlign: 'center' }}>
-          Neriah can make mistakes. Verify important info.
-        </p>
       </div>
 
       {/* Toast */}

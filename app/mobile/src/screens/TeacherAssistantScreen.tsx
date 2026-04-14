@@ -272,7 +272,7 @@ export default function TeacherAssistantScreen() {
   const navigation = useNavigation<Nav>();
 
   const [curriculum, setCurriculum]       = useState('ZIMSEC');
-  const [level, setLevel]                 = useState('Form 3');
+  const [level, setLevel]                 = useState(ALL_LEVELS);
   const [showCurrDrop, setShowCurrDrop]   = useState(false);
   const [showLvlDrop, setShowLvlDrop]     = useState(false);
   const [messages, setMessages]           = useState<ChatMessage[]>([]);
@@ -616,11 +616,15 @@ export default function TeacherAssistantScreen() {
               contentContainerStyle={s.emptyCont}
               keyboardShouldPersistTaps="handled"
             >
-              <View style={s.emptyIcon}>
-                <Ionicons name="sparkles" size={34} color={AI.teal} />
+              {/* Hero: centered in the available scroll space */}
+              <View style={s.emptyHero}>
+                <View style={s.emptyIcon}>
+                  <Ionicons name="sparkles" size={34} color={AI.teal} />
+                </View>
+                <Text style={s.emptyTitle}>Neriah AI</Text>
+                <Text style={s.emptySub}>Your AI teaching assistant</Text>
               </View>
-              <Text style={s.emptyTitle}>Neriah AI</Text>
-              <Text style={s.emptySub}>Your AI teaching assistant</Text>
+              {/* Quick actions: sits at the bottom of the scroll area, adjacent to input */}
               <View style={s.quickGrid}>
                 {QUICK_ACTIONS.map(({ label, action }) => (
                   <TouchableOpacity
@@ -650,6 +654,7 @@ export default function TeacherAssistantScreen() {
 
           {/* ── Input bar ── */}
           <View style={s.inputArea}>
+            <Text style={s.caption}>Neriah can make mistakes. Verify important info.</Text>
             <View style={s.inputRow}>
               <TouchableOpacity style={s.attachBtn}>
                 <Ionicons name="attach-outline" size={20} color={AI.teal} />
@@ -682,7 +687,6 @@ export default function TeacherAssistantScreen() {
                 <Ionicons name="arrow-up" size={18} color={AI.userText} />
               </TouchableOpacity>
             </View>
-            <Text style={s.caption}>Neriah can make mistakes. Verify important info.</Text>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -784,14 +788,15 @@ const s = StyleSheet.create({
   typingRow: { flexDirection: 'row', gap: 5, paddingHorizontal: 2, paddingVertical: 4 },
   dot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: AI.sub },
 
-  emptyCont: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyCont: { flexGrow: 1, padding: 24 },
+  emptyHero: { flex: 1, alignItems: 'center', justifyContent: 'center', width: '100%' },
   emptyIcon: {
     width: 68, height: 68, borderRadius: 34,
     backgroundColor: '#E8F4F4', borderWidth: 1, borderColor: AI.teal,
     alignItems: 'center', justifyContent: 'center', marginBottom: 16,
   },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: AI.text, marginBottom: 6 },
-  emptySub:   { fontSize: 14, color: AI.sub, marginBottom: 32 },
+  emptySub:   { fontSize: 14, color: AI.sub, marginBottom: 24 },
   quickGrid:  { gap: 10, width: '100%' },
   quickPill: {
     flexDirection: 'row', alignItems: 'center',
@@ -803,7 +808,7 @@ const s = StyleSheet.create({
   inputArea: {
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: AI.border,
     backgroundColor: AI.card,
-    paddingHorizontal: 12, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 4 : 12,
+    paddingHorizontal: 12, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 4 : 12,
   },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end',
@@ -818,7 +823,7 @@ const s = StyleSheet.create({
   },
   sendBtn:      { width: 38, height: 38, borderRadius: 19, backgroundColor: AI.teal, alignItems: 'center', justifyContent: 'center' },
   sendDisabled: { backgroundColor: AI.border },
-  caption:      { fontSize: 11, color: AI.sub, textAlign: 'center', marginTop: 6 },
+  caption:      { fontSize: 11, color: AI.sub, textAlign: 'center', marginBottom: 6 },
 
   // Class picker modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
