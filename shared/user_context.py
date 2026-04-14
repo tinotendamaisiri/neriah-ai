@@ -114,10 +114,23 @@ def get_user_context(
         from shared.firestore_client import get_doc  # noqa: PLC0415
 
         if role == "teacher":
-            return _teacher_context(user_id, class_id, get_doc)
-        if role == "student":
-            return _student_context(user_id, get_doc)
-        return {}
+            ctx = _teacher_context(user_id, class_id, get_doc)
+        elif role == "student":
+            ctx = _student_context(user_id, get_doc)
+        else:
+            return {}
+
+        logger.info(
+            "[user_context] built for %s/%s class=%s → country=%s curriculum=%s "
+            "subject=%s level=%s weaknesses=%d",
+            role, user_id, class_id or "-",
+            ctx.get("country", "-"),
+            ctx.get("curriculum", "-"),
+            ctx.get("subject", "-"),
+            ctx.get("education_level", "-"),
+            len(ctx.get("weakness_topics") or []),
+        )
+        return ctx
     except Exception:
         logger.exception("[user_context] get_user_context failed for %s/%s", role, user_id)
         return {}
@@ -189,5 +202,15 @@ def _student_context(student_id: str, get_doc) -> dict:
     curriculum = (school or {}).get("curriculum") or _default_curriculum(country)
     if curriculum:
         ctx["curriculum"] = curriculum
+
+    # Weakness topics — up to 5 most recent incorrect/partial verdicts, newest first.
+    # Persisted by weakness_tracker.py after each approved submission.
+    raw_weaknesses: list[dict] = student.get("weaknesses") or []
+    weak_topics = [
+        w["topic"] for w in raw_weaknesses[:5]
+        if w.get("topic")
+    ]
+    if weak_topics:
+        ctx["weakness_topics"] = weak_topics
 
     return ctx

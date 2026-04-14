@@ -18,12 +18,13 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { enhanceImage } from '../services/imageEnhance';
 import { checkImageQuality } from '../services/imageQuality';
+import InAppCamera from '../components/InAppCamera';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentPreview'>;
 
@@ -34,6 +35,9 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
   const [images, setImages] = useState<string[]>(route.params.images);
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+
+  // Retake camera state
+  const [retakeIndex, setRetakeIndex] = useState<number | null>(null);
 
   // Enhancement + quality state
   const [optimizing, setOptimizing] = useState(true);
@@ -75,31 +79,23 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
     setCurrentIndex(page);
   };
 
-  const retakePage = async (index: number) => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission required', 'Camera access is needed to retake the photo.');
-      return;
-    }
+  const retakePage = (index: number) => {
+    setRetakeIndex(index);
+  };
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: 'images',
-      quality: 0.85,
-      allowsEditing: false,
+  const handleRetakeCapture = async (_base64: string, uri: string) => {
+    const index = retakeIndex;
+    setRetakeIndex(null);
+    if (index === null) return;
+    const enhanced = await enhanceImage(uri);
+    setImages(prev => {
+      const updated = [...prev];
+      updated[index] = enhanced;
+      return updated;
     });
-
-    if (!result.canceled && result.assets[0]) {
-      const enhanced = await enhanceImage(result.assets[0].uri);
-      setImages(prev => {
-        const updated = [...prev];
-        updated[index] = enhanced;
-        return updated;
-      });
-      // Re-check quality for replaced page
-      const quality = await checkImageQuality(enhanced);
-      if (quality.warnings.length > 0) {
-        setQualityWarnings(prev => [...new Set([...prev, ...quality.warnings])]);
-      }
+    const quality = await checkImageQuality(enhanced);
+    if (quality.warnings.length > 0) {
+      setQualityWarnings(prev => [...new Set([...prev, ...quality.warnings])]);
     }
   };
 
@@ -122,11 +118,21 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <>
+      <InAppCamera
+        visible={retakeIndex !== null}
+        onCapture={handleRetakeCapture}
+        onClose={() => setRetakeIndex(null)}
+        quality={0.85}
+      />
+      <View style={styles.container}>
       {/* Quality warnings */}
       {qualityWarnings.length > 0 && (
         <View style={styles.warningBanner}>
-          <Text style={styles.warningTitle}>⚠ Quality notice</Text>
+          <View style={styles.warningTitleRow}>
+            <Ionicons name="warning-outline" size={14} color="#fef3c7" />
+            <Text style={styles.warningTitle}> Quality notice</Text>
+          </View>
           {qualityWarnings.map((w, i) => (
             <Text key={i} style={styles.warningItem}>· {w}</Text>
           ))}
@@ -172,7 +178,10 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
           style={styles.retakeBtn}
           onPress={() => retakePage(currentIndex)}
         >
-          <Text style={styles.retakeBtnText}>🔄  Retake Page {currentIndex + 1}</Text>
+          <View style={styles.retakeBtnInner}>
+              <Ionicons name="camera-reverse-outline" size={16} color={COLORS.teal500} />
+              <Text style={styles.retakeBtnText}>  Retake Page {currentIndex + 1}</Text>
+            </View>
         </TouchableOpacity>
       </View>
 
@@ -192,6 +201,7 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       </View>
     </View>
+    </>
   );
 }
 
@@ -214,6 +224,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 4,
   },
+  warningTitleRow: { flexDirection: 'row', alignItems: 'center' },
   warningTitle: {
     color: '#fef3c7',
     fontSize: 13,
@@ -277,6 +288,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#1f2937',
   },
+  retakeBtnInner: { flexDirection: 'row', alignItems: 'center' },
   retakeBtnText: { color: '#d1d5db', fontSize: 14, fontWeight: '600' },
   tip: {
     margin: 16,

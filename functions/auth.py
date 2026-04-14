@@ -39,6 +39,12 @@ def _rl_headers(limit: int, remaining: int, reset_ts: float) -> dict:
     }
 
 
+def _retry_after(rl_headers: dict) -> int:
+    """Seconds until the rate-limit window resets."""
+    reset_ts = float(rl_headers.get("X-RateLimit-Reset", 0))
+    return max(0, int(reset_ts - datetime.now(timezone.utc).timestamp()))
+
+
 def _check_ip_rate_limit(ip: str) -> tuple[bool, dict]:
     """Returns (blocked, headers). Limit: 10 OTP requests per IP per 10 minutes."""
     now = datetime.now(timezone.utc).timestamp()
@@ -142,7 +148,7 @@ def auth_register():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later."}), 429)
+        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
         for k, v in ip_headers.items():
             resp.headers[k] = v
         return resp
@@ -160,7 +166,7 @@ def auth_register():
         "phone": phone,
     })
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests. Try again in 10 minutes."}), 429)
+        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -185,7 +191,7 @@ def auth_login():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later."}), 429)
+        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
         for k, v in ip_headers.items():
             resp.headers[k] = v
         return resp
@@ -195,12 +201,20 @@ def auth_login():
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests. Try again in 10 minutes."}), 429)
+        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
 
-    channel = _send_otp(phone, otp)
+    try:
+        channel = _send_otp(phone, otp)
+    except Exception as exc:
+        logger.error("OTP delivery failed for ...%s: %s", phone[-4:], exc)
+        resp = make_response(jsonify({"error": "Failed to send verification code. Please try again."}), 503)
+        for k, v in rl_headers.items():
+            resp.headers[k] = v
+        return resp
+
     resp = make_response(jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}), 200)
     for k, v in rl_headers.items():
         resp.headers[k] = v
@@ -249,7 +263,7 @@ def auth_verify():
 
     otp_doc = get_doc("otp_verifications", phone)
     if not otp_doc:
-        return jsonify({"error": "OTP not found or expired"}), 400
+        return jsonify({"error": "OTP not found or expired"}), 410
 
     attempts = otp_doc.get("attempts", 0)
     reset_ts = datetime.now(timezone.utc).timestamp() + _WINDOW
@@ -257,7 +271,7 @@ def auth_verify():
 
     if attempts >= _OTP_VERIFY_LIMIT:
         delete_doc("otp_verifications", phone)
-        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP."}), 429)
+        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP.", "retry_after": 0}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -348,14 +362,14 @@ def auth_resend_otp():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later."}), 429)
+        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
         for k, v in ip_headers.items():
             resp.headers[k] = v
         return resp
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests. Try again in 10 minutes."}), 429)
+        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -427,14 +441,14 @@ def auth_recover():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later."}), 429)
+        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
         for k, v in ip_headers.items():
             resp.headers[k] = v
         return resp
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests. Try again in 10 minutes."}), 429)
+        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -516,14 +530,14 @@ def auth_profile_request_otp():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later."}), 429)
+        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
         for k, v in ip_headers.items():
             resp.headers[k] = v
         return resp
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests. Try again in 10 minutes."}), 429)
+        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -579,7 +593,7 @@ def auth_update_me():
 
     if attempts >= _OTP_VERIFY_LIMIT:
         delete_doc("otp_verifications", verification_id)
-        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP."}), 429)
+        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP.", "retry_after": 0}), 429)
         for k, v in rl_headers.items():
             resp.headers[k] = v
         return resp
@@ -694,6 +708,7 @@ _SCHOOL_ID_MAP = {
 def _safe(teacher: dict) -> dict:
     """Strip sensitive fields and normalise name fields for the app."""
     out = {k: v for k, v in teacher.items() if k not in ("pin_hash",)}
+    out.setdefault("role", "teacher")  # backfill for accounts created before role field was added
     # Resolve school ID if school_name looks like a code (safety net)
     sn = out.get("school_name") or ""
     if sn in _SCHOOL_ID_MAP:

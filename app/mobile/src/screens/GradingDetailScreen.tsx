@@ -4,6 +4,7 @@
 // plus an overall feedback field. Teacher saves edits and optionally approves.
 
 import React, { useCallback, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -179,7 +180,10 @@ export default function GradingDetailScreen() {
             )}
           </View>
           {manuallyEdited && (
-            <Text style={styles.editedHint}>✏️ Teacher-edited</Text>
+            <View style={styles.editedHintRow}>
+              <Ionicons name="pencil-outline" size={12} color={COLORS.amber500} />
+              <Text style={styles.editedHint}> Teacher-edited</Text>
+            </View>
           )}
         </View>
 
@@ -311,7 +315,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginLeft: 10,
   },
   approvedBadgeText: { fontSize: 12, color: COLORS.teal500, fontWeight: '700' },
-  editedHint: { fontSize: 12, color: COLORS.amber500, marginTop: 8 },
+  editedHintRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  editedHint: { fontSize: 12, color: COLORS.amber500 },
 
   section: {
     backgroundColor: COLORS.white, marginHorizontal: 16, marginTop: 16,

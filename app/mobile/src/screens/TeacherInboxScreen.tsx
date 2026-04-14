@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
@@ -140,7 +141,7 @@ export default function TeacherInboxScreen() {
         contentContainerStyle={displayed.length === 0 ? styles.emptyFlex : styles.listContent}
         ListEmptyComponent={() => (
           <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📥</Text>
+            <Ionicons name="cloud-download-outline" size={56} color={COLORS.gray500} style={styles.emptyIcon} />
             <Text style={styles.emptyTitle}>
               {filter === 'pending' ? 'No pending submissions' : 'No submissions yet'}
             </Text>
@@ -255,7 +256,7 @@ const styles = StyleSheet.create({
   listContent: { padding: 16, paddingBottom: 40 },
   emptyFlex: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyIcon: { fontSize: 56, marginBottom: 16 },
+  emptyIcon: { marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
   emptyText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20 },
   card: {

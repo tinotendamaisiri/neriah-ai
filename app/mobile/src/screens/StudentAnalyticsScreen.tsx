@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
@@ -66,7 +67,7 @@ export default function StudentAnalyticsScreen({ route, navigation }: Props) {
   if (!analytics || !analytics.enabled) {
     return (
       <View style={styles.notEnabled}>
-        <Text style={styles.notEnabledIcon}>📊</Text>
+        <Ionicons name="bar-chart-outline" size={56} color={COLORS.gray500} style={styles.notEnabledIcon} />
         <Text style={styles.notEnabledTitle}>Analytics not available</Text>
         <Text style={styles.notEnabledSub}>
           Your teacher hasn't shared class analytics yet. Check back later.
@@ -287,7 +288,7 @@ const styles = StyleSheet.create({
     flex: 1, justifyContent: 'center', alignItems: 'center',
     padding: 40, backgroundColor: COLORS.background,
   },
-  notEnabledIcon: { fontSize: 56, marginBottom: 16 },
+  notEnabledIcon: { marginBottom: 16 },
   notEnabledTitle: { fontSize: 20, fontWeight: '700', color: COLORS.gray900, marginBottom: 8 },
   notEnabledSub: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 22 },
   section: { marginBottom: 24 },

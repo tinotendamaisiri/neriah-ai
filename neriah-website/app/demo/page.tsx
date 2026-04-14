@@ -1,7 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
+import {
+  Camera, ImageIcon, File, FileText, Pencil,
+  Home, BarChart2, Settings, Upload, Download,
+  GraduationCap, Briefcase, ClipboardList,
+  HelpCircle, Star, Inbox,
+  Bot, Hand, X, AlertTriangle, XCircle, MailX,
+  Users, BookOpen, Sparkles, Cloud, Zap,
+} from 'lucide-react';
 
 // ── Brand ─────────────────────────────────────────────────────────────────────
 const C = {
@@ -52,7 +60,7 @@ export async function demoFetch(path: string, opts: RequestInit = {}, token?: st
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all';
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all' | 't-settings';
 
 // ── ReviewQuestion type (mirrors mobile ReviewQuestion) ───────────────────────
 interface ReviewQuestion {
@@ -203,7 +211,7 @@ function scoreBg(pct: number): string {
 }
 
 // Student phone screen type
-type SStudentScreen = 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor';
+type SStudentScreen = 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
 
 interface TutorMessage {
   id:             string;
@@ -248,6 +256,416 @@ function Screen({ children, style }: { children: React.ReactNode; style?: React.
       ...style,
     }}>
       {children}
+    </div>
+  );
+}
+
+// ── In-app camera modal (browser MediaDevices API) ────────────────────────────
+// Used instead of <input capture="environment"> so the camera stays inside the app.
+// Returns base64 JPEG via onCapture. Falls back to an error message if permission denied.
+
+interface WebCameraModalProps {
+  open: boolean;
+  onCapture: (base64: string, mimeType: string) => void;
+  onClose: () => void;
+}
+
+// ── Canvas quality analysis (mirrors mobile imageQuality.ts heuristics) ──────
+// Samples a 64×64 greyscale thumbnail from the canvas to compute mean brightness
+// and contrast (std-dev). Also checks aspect ratio against document expectations.
+function analyseCanvasQuality(
+  canvas: HTMLCanvasElement,
+): { warnings: string[] } {
+  const warnings: string[] = [];
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { warnings };
+
+    // Sample a 64×64 region from the centre of the captured frame
+    const SAMPLE = 64;
+    const sx = Math.max(0, (canvas.width  - SAMPLE) / 2);
+    const sy = Math.max(0, (canvas.height - SAMPLE) / 2);
+    const sw = Math.min(SAMPLE, canvas.width);
+    const sh = Math.min(SAMPLE, canvas.height);
+    const imageData = ctx.getImageData(sx, sy, sw, sh);
+    const data = imageData.data; // RGBA flat array
+
+    // Convert to greyscale values
+    const greys: number[] = [];
+    for (let i = 0; i < data.length; i += 4) {
+      // Luma: 0.299R + 0.587G + 0.114B
+      greys.push(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    }
+
+    const mean = greys.reduce((a, b) => a + b, 0) / greys.length;
+    const variance = greys.reduce((a, b) => a + (b - mean) ** 2, 0) / greys.length;
+    const stdDev = Math.sqrt(variance);
+
+    // Brightness check — below ~45/255 is likely underexposed
+    if (mean < 45) {
+      warnings.push('Image may be too dark. Move to better lighting and retake.');
+    }
+
+    // Contrast check — std-dev below ~18 suggests flat / low-contrast image
+    if (stdDev < 18) {
+      warnings.push('Image contrast is low — text may not be readable. Ensure good lighting.');
+    }
+
+    // Aspect ratio check — very square images suggest the page is not fully visible
+    const ratio = canvas.width / canvas.height;
+    if (ratio > 0.92 && ratio < 1.08) {
+      warnings.push('Image looks square — make sure the full page is visible.');
+    }
+    if (ratio > 2.0 || ratio < 0.35) {
+      warnings.push('The page looks tilted or cut off. Straighten and retake.');
+    }
+  } catch {
+    // Non-fatal
+  }
+  return { warnings };
+}
+
+// ── Canvas auto-enhancement (mirrors mobile imageEnhance.ts) ─────────────────
+// Applies a mild auto-levels stretch (clips darkest and brightest 1%) and caps
+// the longest side at 2048px. Returns a new data-URL at 0.85 JPEG quality.
+function enhanceCanvas(src: HTMLCanvasElement): string {
+  try {
+    const ctx = src.getContext('2d');
+    if (!ctx) return src.toDataURL('image/jpeg', 0.85);
+
+    // Resize if needed (max 2048px on longest side)
+    const MAX = 2048;
+    let w = src.width;
+    let h = src.height;
+    if (Math.max(w, h) > MAX) {
+      if (w >= h) { h = Math.round((h / w) * MAX); w = MAX; }
+      else        { w = Math.round((w / h) * MAX); h = MAX; }
+    }
+
+    const out = document.createElement('canvas');
+    out.width  = w;
+    out.height = h;
+    const octx = out.getContext('2d')!;
+    octx.drawImage(src, 0, 0, w, h);
+
+    // Auto-levels: collect grey histogram on a 64×64 sample, then stretch
+    const sample = octx.getImageData(0, 0, Math.min(64, w), Math.min(64, h));
+    const greys: number[] = [];
+    for (let i = 0; i < sample.data.length; i += 4) {
+      greys.push(0.299 * sample.data[i] + 0.587 * sample.data[i + 1] + 0.114 * sample.data[i + 2]);
+    }
+    greys.sort((a, b) => a - b);
+    const lo = greys[Math.floor(greys.length * 0.01)] ?? 0;
+    const hi = greys[Math.floor(greys.length * 0.99)] ?? 255;
+    const range = hi - lo || 1;
+
+    // Apply stretch to full image via pixel manipulation on a small sample area is
+    // expensive; instead use a CSS-filter-equivalent via canvas globalCompositeOperation.
+    // Stretch = scale brightness by 255/range then subtract lo.
+    // We apply it via a multiply + lighten pass using compositing.
+    const scale = 255 / range;
+    const shift  = -lo * scale;
+
+    // Draw with brightness/contrast using filter (supported in all modern browsers)
+    // contrast(scale) brightens the range; the shift is approximated.
+    const contrastPct  = Math.min(Math.round(scale * 100), 250);
+    const brightnessPct = Math.round(100 + (shift / 255) * 100);
+    octx.filter = `contrast(${contrastPct}%) brightness(${brightnessPct}%)`;
+    octx.drawImage(out, 0, 0);
+    octx.filter = 'none';
+
+    return out.toDataURL('image/jpeg', 0.85);
+  } catch {
+    return src.toDataURL('image/jpeg', 0.85);
+  }
+}
+
+// ── Shared: load any image data-URL into a canvas, run quality + enhance ──────
+// Used by gallery file pickers in both teacher and student web components.
+// Mirrors the mobile processPickedImage() pipeline.
+function analyseAndEnhanceWebImage(
+  dataUrl: string,
+): Promise<{ base64: string; warnings: string[]; enhanced: boolean }> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve({ base64: dataUrl.split(',')[1], warnings: [], enhanced: false });
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+
+      // Quality analysis
+      const { warnings } = analyseCanvasQuality(canvas);
+
+      // Additional dimension check (mirrors mobile MIN_SHORT_SIDE_PX = 600)
+      if (img.naturalWidth < 400 || img.naturalHeight < 400) {
+        warnings.push('Resolution is low — text may not be readable. Try a clearer image.');
+      }
+
+      // Enhancement: auto-levels + resize
+      const enhancedDataUrl = enhanceCanvas(canvas);
+      resolve({ base64: enhancedDataUrl.split(',')[1], warnings, enhanced: true });
+    };
+    img.onerror = () => {
+      resolve({ base64: dataUrl.split(',')[1], warnings: [], enhanced: false });
+    };
+    img.src = dataUrl;
+  });
+}
+
+function WebCameraModal({ open, onCapture, onClose }: WebCameraModalProps) {
+  const videoRef   = useRef<HTMLVideoElement>(null);
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const streamRef  = useRef<MediaStream | null>(null);
+
+  interface WebPreview { dataUrl: string; warnings: string[] }
+  const [preview, setPreview]   = useState<WebPreview | null>(null);
+  const [error, setError]       = useState<string>('');
+  const [started, setStarted]   = useState(false);
+  const [processing, setProcessing] = useState(false);
+
+  // ── Stream lifecycle ────────────────────────────────────────────────────────
+
+  const startStream = useCallback((onDone?: () => void) => {
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then((stream) => {
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+        setStarted(true);
+        onDone?.();
+      })
+      .catch(() => {
+        setError('Camera access denied. Please allow camera access in your browser settings or use Gallery/PDF instead.');
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setPreview(null);
+    setError('');
+    setStarted(false);
+    setProcessing(false);
+    let cancelled = false;
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then((stream) => {
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+        setStarted(true);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Camera access denied. Please allow camera access in your browser settings or use Gallery/PDF instead.');
+      });
+    return () => { cancelled = true; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open && streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      setStarted(false);
+    }
+  }, [open]);
+
+  // ── Capture → enhance → quality check ────────────────────────────────────────
+
+  const handleCapture = () => {
+    const video  = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    setProcessing(true);
+
+    // Snapshot from live feed
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { setProcessing(false); return; }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Stop live feed while processing/previewing
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setStarted(false);
+
+    // Quality analysis on raw capture
+    const { warnings } = analyseCanvasQuality(canvas);
+
+    // Enhancement: auto-levels + resize — runs synchronously on canvas
+    const enhancedDataUrl = enhanceCanvas(canvas);
+
+    setPreview({ dataUrl: enhancedDataUrl, warnings });
+    setProcessing(false);
+  };
+
+  const handleUsePhoto = () => {
+    if (!preview) return;
+    const base64 = preview.dataUrl.split(',')[1];
+    onCapture(base64, 'image/jpeg');
+    setPreview(null);
+  };
+
+  const handleRetake = () => {
+    setPreview(null);
+    setError('');
+    startStream();
+  };
+
+  const handleClose = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setPreview(null);
+    setError('');
+    setStarted(false);
+    setProcessing(false);
+    onClose();
+  };
+
+  if (!open) return null;
+
+  const hasWarnings = (preview?.warnings.length ?? 0) > 0;
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: 'rgba(0,0,0,0.88)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+  const boxStyle: React.CSSProperties = {
+    background: '#111827',
+    borderRadius: 16,
+    width: '100%', maxWidth: 480,
+    margin: '0 16px',
+    overflow: 'hidden',
+    display: 'flex', flexDirection: 'column',
+    boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+  };
+
+  return (
+    <div style={overlayStyle} onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
+      <div style={boxStyle}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #374151' }}>
+          <span style={{ color: '#F9FAFB', fontWeight: 700, fontSize: 15 }}>Take Photo</span>
+          <button onClick={handleClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 4, display: 'flex', alignItems: 'center' }}><X size={18} /></button>
+        </div>
+
+        {/* Quality warning banner — shown on preview when issues detected */}
+        {preview && hasWarnings && (
+          <div style={{ background: '#78350f', padding: '10px 16px' }}>
+            <div style={{ color: '#fef3c7', fontWeight: 700, fontSize: 12, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 5 }}>
+              <AlertTriangle size={13} />
+              <span>Image may be unclear — Gemma may struggle to read it. Retake for better results.</span>
+            </div>
+            {preview.warnings.map((w, i) => (
+              <div key={i} style={{ color: '#fde68a', fontSize: 11, lineHeight: 1.5 }}>· {w}</div>
+            ))}
+          </div>
+        )}
+
+        {/* Body */}
+        <div style={{ position: 'relative', background: '#000', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {error ? (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'center', color: '#EF4444' }}><XCircle size={36} /></div>
+              <div style={{ color: '#F9FAFB', fontSize: 14, lineHeight: 1.6, maxWidth: 320 }}>{error}</div>
+            </div>
+          ) : processing ? (
+            <div style={{ padding: 32, textAlign: 'center' }}>
+              <div style={{ color: '#9CA3AF', fontSize: 13 }}>Enhancing photo…</div>
+            </div>
+          ) : preview ? (
+            // Enhanced preview
+            <img src={preview.dataUrl} alt="Captured" style={{ width: '100%', maxHeight: 360, objectFit: 'contain', display: 'block' }} />
+          ) : (
+            // Live viewfinder + document frame overlay
+            <>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                style={{ width: '100%', maxHeight: 360, display: 'block', objectFit: 'cover' }}
+              />
+              {started && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                  <div style={{ width: '78%', height: '82%', position: 'relative' }}>
+                    {/* Teal corner brackets — same pattern as mobile frame overlay */}
+                    {(['tl','tr','bl','br'] as const).map(pos => (
+                      <div key={pos} style={{
+                        position: 'absolute',
+                        width: 22, height: 22,
+                        top:    pos.startsWith('t') ? 0 : 'auto',
+                        bottom: pos.startsWith('b') ? 0 : 'auto',
+                        left:   pos.endsWith('l')   ? 0 : 'auto',
+                        right:  pos.endsWith('r')   ? 0 : 'auto',
+                        borderTop:    pos.startsWith('t') ? `3px solid ${C.teal300}` : 'none',
+                        borderBottom: pos.startsWith('b') ? `3px solid ${C.teal300}` : 'none',
+                        borderLeft:   pos.endsWith('l')   ? `3px solid ${C.teal300}` : 'none',
+                        borderRight:  pos.endsWith('r')   ? `3px solid ${C.teal300}` : 'none',
+                        borderRadius: pos === 'tl' ? '4px 0 0 0' : pos === 'tr' ? '0 4px 0 0' : pos === 'bl' ? '0 0 0 4px' : '0 0 4px 0',
+                      }} />
+                    ))}
+                    <div style={{ position: 'absolute', bottom: -24, left: 0, right: 0, textAlign: 'center', color: 'rgba(255,255,255,0.75)', fontSize: 11 }}>
+                      Align the page within the frame
+                    </div>
+                  </div>
+                </div>
+              )}
+              {!started && !error && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ color: '#9CA3AF', fontSize: 13 }}>Starting camera…</div>
+                </div>
+              )}
+            </>
+          )}
+          {/* Hidden canvas used for snapshot + quality analysis */}
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
+        </div>
+
+        {/* Actions */}
+        <div style={{ padding: '16px 18px', display: 'flex', gap: 10 }}>
+          {preview ? (
+            <>
+              <button onClick={handleRetake} style={{ flex: 1, padding: '12px 0', border: `2px solid ${C.teal300}`, borderRadius: 10, background: 'transparent', color: C.teal300, fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Retake
+              </button>
+              <button
+                onClick={handleUsePhoto}
+                style={{ flex: 1, padding: '12px 0', border: 'none', borderRadius: 10, background: hasWarnings ? C.amber : C.teal, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.15s' }}
+              >
+                {hasWarnings ? 'Use Anyway' : 'Use Photo'}
+              </button>
+            </>
+          ) : error ? (
+            <button onClick={handleClose} style={{ flex: 1, padding: '12px 0', border: 'none', borderRadius: 10, background: C.teal, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Close
+            </button>
+          ) : (
+            <>
+              <button onClick={handleClose} style={{ flex: 1, padding: '12px 0', border: `1px solid #374151`, borderRadius: 10, background: 'transparent', color: '#9CA3AF', fontWeight: 600, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancel
+              </button>
+              <button onClick={handleCapture} disabled={!started || processing} style={{ flex: 2, padding: '12px 0', border: 'none', borderRadius: 10, background: (started && !processing) ? C.teal : '#374151', color: '#fff', fontWeight: 700, fontSize: 14, cursor: (started && !processing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', transition: 'background 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Camera size={16} /><span>Capture</span>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -319,7 +737,7 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <span style={{ fontSize: 36 }}>💼</span>
+          <Briefcase size={36} color={C.white} />
           <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Mark exercise books with AI
@@ -337,7 +755,7 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <span style={{ fontSize: 36 }}>🎓</span>
+          <GraduationCap size={36} color={C.white} />
           <span style={{ fontSize: 18, fontWeight: 800, color: C.white }}>I'm a Student</span>
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Submit work and get feedback
@@ -533,7 +951,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
         width: 64, height: 64, borderRadius: 18, background: C.teal50,
         display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
       }}>
-        <span style={{ fontSize: 30 }}>📋</span>
+        <ClipboardList size={30} color={C.teal} />
       </div>
 
       <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 4 }}>Create teacher account</div>
@@ -649,8 +1067,21 @@ function AddHomeworkScreen({
   const [error, setError]           = useState('');
   const [generateError, setGenerateError] = useState(false);
 
-  // Hidden file inputs
-  const cameraRef  = useRef<HTMLInputElement>(null);
+  // Due date — default tomorrow at the same time
+  const [dueDate, setDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    // datetime-local expects "YYYY-MM-DDTHH:MM"
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [teacherTotalMarks, setTeacherTotalMarks] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [qpQualityWarnings, setQpQualityWarnings] = useState<string[]>([]);
+  const [qpEnhanced, setQpEnhanced] = useState(false);
+  const [qpWarningDismissed, setQpWarningDismissed] = useState(false);
+
+  // Hidden file inputs (gallery, pdf, word — NOT camera)
   const galleryRef = useRef<HTMLInputElement>(null);
   const pdfRef     = useRef<HTMLInputElement>(null);
   const wordRef    = useRef<HTMLInputElement>(null);
@@ -665,12 +1096,32 @@ function AddHomeworkScreen({
 
   // ── FileReader helper ───────────────────────────────────────────────────────
   function readFile(file: File, label: string) {
+    const mimeType = file.type || 'application/octet-stream';
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const dataUrl = e.target?.result as string;
-      const base64 = dataUrl.split(',')[1];
-      const mimeType = file.type || 'application/octet-stream';
-      setQpFile({ name: file.name, mimeType, label, base64 });
+      // Reset quality state
+      setQpQualityWarnings([]);
+      setQpEnhanced(false);
+      setQpWarningDismissed(false);
+
+      if (mimeType.startsWith('image/')) {
+        // Run quality analysis + enhancement for images
+        try {
+          const result = await analyseAndEnhanceWebImage(dataUrl);
+          setQpFile({ name: file.name, mimeType, label, base64: result.base64 });
+          setQpEnhanced(result.enhanced);
+          if (result.warnings.length > 0) {
+            setQpQualityWarnings(result.warnings);
+          }
+        } catch {
+          // Fallback: use raw base64
+          setQpFile({ name: file.name, mimeType, label, base64: dataUrl.split(',')[1] });
+        }
+      } else {
+        // PDF / Word — no quality check
+        setQpFile({ name: file.name, mimeType, label, base64: dataUrl.split(',')[1] });
+      }
       setQpText('');
       setTextMode(false);
       setError('');
@@ -693,7 +1144,7 @@ function AddHomeworkScreen({
     setTextMode(false);
   }
 
-  function clearQP() { setQpFile(null); setQpText(''); setTextMode(false); setTextDraft(''); }
+  function clearQP() { setQpFile(null); setQpText(''); setTextMode(false); setTextDraft(''); setQpQualityWarnings([]); setQpEnhanced(false); setQpWarningDismissed(false); }
 
   // ── Create & Generate ───────────────────────────────────────────────────────
   async function handleCreate() {
@@ -703,16 +1154,24 @@ function AddHomeworkScreen({
     if (!subject.trim()) { setError('Please select a subject.'); return; }
     if (!qpFile && !qpText) { setError('Please upload the homework paper.'); return; }
 
+    // Router: web is always cloud — mirrors routeRequest() in mobile router.ts
+    // If this were mobile: resolveRoute('scheme') → 'cloud' | 'on-device' | 'unavailable'
+    const _route: 'cloud' = 'cloud';
+    console.log('[router] scheme request →', _route);
+
     setLoading(true);
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, string | number> = {
         class_id:        'demo',
         title:           title.trim(),
         subject:         subject.trim(),
         education_level: 'Form 2',
         status:          'draft',
         input_type:      'question_paper',
+        due_date:        dueDate ? new Date(dueDate).toISOString() : '',
       };
+      const totalMarksNum = teacherTotalMarks.trim() ? parseInt(teacherTotalMarks.trim(), 10) : 0;
+      if (totalMarksNum > 0) body.teacher_total_marks = totalMarksNum;
       if (qpFile) {
         body.file_data  = qpFile.base64;
         body.media_type = qpFile.mimeType;
@@ -860,6 +1319,35 @@ function AddHomeworkScreen({
           </div>
         )}
 
+        {/* ── Due Date + Total Marks row ──────────────────────────────────── */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+          <div style={{ flex: 3 }}>
+            <label style={labelStyle}>Due Date</label>
+            <input
+              type="datetime-local"
+              value={dueDate}
+              onChange={e => setDueDate(e.target.value)}
+              min={(() => {
+                const d = new Date();
+                const pad = (n: number) => String(n).padStart(2, '0');
+                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+              })()}
+              style={{ ...inputStyle, cursor: 'pointer' }}
+            />
+          </div>
+          <div style={{ flex: 2 }}>
+            <label style={labelStyle}>Total Marks</label>
+            <input
+              type="number"
+              placeholder="e.g. 20"
+              value={teacherTotalMarks}
+              onChange={e => setTeacherTotalMarks(e.target.value)}
+              min="1"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
         {/* ── HOMEWORK PAPER section ────────────────────────────────────────── */}
         <div style={{
           marginTop: 20, marginBottom: 6,
@@ -876,11 +1364,11 @@ function AddHomeworkScreen({
         {!textMode && (
           <div style={{ display: 'flex', gap: 6 }}>
             {[
-              { icon: '📷', label: 'Camera',  onClick: () => cameraRef.current?.click() },
-              { icon: '🖼',  label: 'Gallery', onClick: () => galleryRef.current?.click() },
-              { icon: '📄', label: 'PDF',     onClick: () => pdfRef.current?.click() },
-              { icon: '📝', label: 'Word',    onClick: () => wordRef.current?.click() },
-              { icon: '✏️',  label: 'Text',    onClick: () => { setTextDraft(qpText); setTextMode(true); } },
+              { icon: <Camera size={18} color={C.teal} />, label: 'Camera',  onClick: () => setCameraOpen(true) },
+              { icon: <ImageIcon size={18} color={C.teal} />, label: 'Gallery', onClick: () => galleryRef.current?.click() },
+              { icon: <File size={18} color={C.teal} />, label: 'PDF',     onClick: () => pdfRef.current?.click() },
+              { icon: <FileText size={18} color={C.teal} />, label: 'Word',    onClick: () => wordRef.current?.click() },
+              { icon: <Pencil size={18} color={C.teal} />, label: 'Text',    onClick: () => { setTextDraft(qpText); setTextMode(true); } },
             ].map(btn => (
               <button
                 key={btn.label}
@@ -894,7 +1382,7 @@ function AddHomeworkScreen({
                 onMouseEnter={e => { e.currentTarget.style.borderColor = C.teal; e.currentTarget.style.background = C.teal50; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.g200; e.currentTarget.style.background = C.white; }}
               >
-                <span style={{ fontSize: 18 }}>{btn.icon}</span>
+                <span>{btn.icon}</span>
                 <span style={{ fontSize: 10, color: C.g700, fontWeight: 600 }}>{btn.label}</span>
               </button>
             ))}
@@ -940,22 +1428,70 @@ function AddHomeworkScreen({
 
         {/* File preview row */}
         {hasQP && !textMode && (
-          <div style={{
-            marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
-            background: C.teal50, border: `1px solid ${C.teal100}`, borderRadius: 10,
-            padding: '9px 12px',
-          }}>
-            <span style={{ color: C.teal, fontWeight: 700, fontSize: 13 }}>✓</span>
-            <span style={{ flex: 1, fontSize: 12, color: C.teal, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {qpFile ? qpFile.label : `✏️ ${qpText.length} chars of text`}
-            </span>
-            <button
-              onClick={clearQP}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 14, padding: '0 2px', fontFamily: 'inherit' }}
-            >
-              ✕
-            </button>
-          </div>
+          <>
+            <div style={{
+              marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
+              background: C.teal50, border: `1px solid ${C.teal100}`, borderRadius: 10,
+              padding: '9px 12px',
+            }}>
+              <span style={{ color: C.teal, fontWeight: 700, fontSize: 13 }}>✓</span>
+              <span style={{ flex: 1, fontSize: 12, color: C.teal, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {qpFile ? qpFile.label : `${qpText.length} chars of text`}
+              </span>
+              {qpEnhanced && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, color: C.teal, background: C.teal100,
+                  borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap', flexShrink: 0,
+                }}>
+                  ✓ Enhanced
+                </span>
+              )}
+              <button
+                onClick={clearQP}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 14, padding: '0 2px', fontFamily: 'inherit' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quality warning block */}
+            {qpQualityWarnings.length > 0 && !qpWarningDismissed && (
+              <div style={{
+                marginTop: 8, background: '#FFFBEB', border: '1px solid #FDE68A',
+                borderRadius: 10, padding: '10px 12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                  <span style={{ flexShrink: 0 }}><AlertTriangle size={15} color="#92400E" /></span>
+                  <div style={{ fontSize: 12, color: '#92400E', lineHeight: 1.5 }}>
+                    <strong style={{ display: 'block', marginBottom: 2 }}>Image may be unclear</strong>
+                    Gemma may struggle to read it. Retake for better results, or use as-is.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => { clearQP(); galleryRef.current?.click(); }}
+                    style={{
+                      flex: 1, background: 'none', border: '1.5px solid #F59E0B', borderRadius: 8,
+                      padding: '8px 0', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                      color: '#92400E', fontFamily: 'inherit',
+                    }}
+                  >
+                    Replace Image
+                  </button>
+                  <button
+                    onClick={() => setQpWarningDismissed(true)}
+                    style={{
+                      flex: 1, background: '#F59E0B', border: 'none', borderRadius: 8,
+                      padding: '8px 0', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                      color: C.white, fontFamily: 'inherit',
+                    }}
+                  >
+                    Use Anyway
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Error */}
@@ -970,7 +1506,7 @@ function AddHomeworkScreen({
             borderRadius: 12, padding: '14px 16px',
           }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-              <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+              <span style={{ flexShrink: 0 }}><AlertTriangle size={18} color="#B91C1C" /></span>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#B91C1C', marginBottom: 4 }}>
                   Gemma could not read this file
@@ -999,7 +1535,7 @@ function AddHomeworkScreen({
                   fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
                 }}
               >
-                ✏️ Type manually
+                Type manually
               </button>
             </div>
           </div>
@@ -1021,7 +1557,7 @@ function AddHomeworkScreen({
           >
             {loading ? (
               <>
-                <span style={{ fontSize: 16 }}>✨</span>
+                <Sparkles size={16} />
                 <span>Generating marking scheme{dots}</span>
               </>
             ) : (
@@ -1031,11 +1567,27 @@ function AddHomeworkScreen({
         )}
       </div>
 
-      {/* Hidden file inputs */}
-      <input ref={cameraRef}  type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => handleFileInput(e, '📷')} />
-      <input ref={galleryRef} type="file" accept="image/*"                       style={{ display: 'none' }} onChange={e => handleFileInput(e, '🖼')} />
-      <input ref={pdfRef}     type="file" accept=".pdf,application/pdf"          style={{ display: 'none' }} onChange={e => handleFileInput(e, '📄')} />
-      <input ref={wordRef}    type="file" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: 'none' }} onChange={e => handleFileInput(e, '📝')} />
+      {/* Hidden file inputs (gallery, pdf, word) */}
+      <input ref={galleryRef} type="file" accept="image/*"                       style={{ display: 'none' }} onChange={e => handleFileInput(e, 'Gallery')} />
+      <input ref={pdfRef}     type="file" accept=".pdf,application/pdf"          style={{ display: 'none' }} onChange={e => handleFileInput(e, 'PDF')} />
+      <input ref={wordRef}    type="file" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'Word')} />
+
+      {/* In-app camera modal */}
+      <WebCameraModal
+        open={cameraOpen}
+        onCapture={(base64, mimeType) => {
+          // WebCameraModal already runs quality+enhancement — mark as enhanced, no extra warnings
+          setQpFile({ name: `photo_${Date.now()}.jpg`, mimeType, label: 'Camera photo', base64 });
+          setQpQualityWarnings([]);
+          setQpEnhanced(true);
+          setQpWarningDismissed(false);
+          setQpText('');
+          setTextMode(false);
+          setError('');
+          setCameraOpen(false);
+        }}
+        onClose={() => setCameraOpen(false)}
+      />
     </Screen>
   );
 }
@@ -1060,6 +1612,8 @@ function ReviewSchemeScreen({
   const [saving, setSaving]       = useState(false);
   const [regen, setRegen]         = useState(false);
   const [error, setError]         = useState('');
+
+  console.log('[HomeworkDetail] questions:', JSON.stringify(questions));
 
   const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
 
@@ -1144,7 +1698,7 @@ function ReviewSchemeScreen({
             borderRadius: 10, padding: '12px 14px', marginBottom: 14,
             display: 'flex', gap: 10, alignItems: 'flex-start',
           }}>
-            <span style={{ fontSize: 16, flexShrink: 0 }}>✏️</span>
+            <span style={{ flexShrink: 0 }}><Pencil size={16} color={C.amber700} /></span>
             <div style={{ fontSize: 12, color: C.amber700, lineHeight: 1.5 }}>
               <span style={{ fontWeight: 700 }}>No questions detected. </span>
               Use the form below to add questions manually, then confirm when ready.
@@ -1292,7 +1846,7 @@ function ReviewSchemeScreen({
             transition: 'opacity 0.15s', opacity: regen ? 0.6 : 1,
           }}
         >
-          {regen ? '✨ Regenerating…' : '↻ Regenerate'}
+          {regen ? <><Sparkles size={13} /> Regenerating…</> : '↻ Regenerate'}
         </button>
       </div>
     </Screen>
@@ -1379,7 +1933,7 @@ function HomeworkCreatedScreen({
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: My Classes
 // ──────────────────────────────────────────────────────────────────────────────
-function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () => void; onOpenHomework: () => void }) {
+function ClassesScreen({ onAddHomework, onOpenHomework, onSettings }: { onAddHomework: () => void; onOpenHomework: () => void; onSettings: () => void }) {
   const [fabOpen, setFabOpen] = useState(false);
 
   return (
@@ -1497,7 +2051,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () =>
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: '0 3px 8px rgba(13,115,119,0.4)',
             }}>
-              <span style={{ fontSize: 16, color: C.white }}>👥</span>
+              <Users size={16} color={C.white} />
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setFabOpen(false); onAddHomework(); }}>
@@ -1507,7 +2061,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () =>
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: '0 3px 8px rgba(13,115,119,0.4)',
             }}>
-              <span style={{ fontSize: 16, color: C.white }}>📖</span>
+              <BookOpen size={16} color={C.white} />
             </div>
           </div>
         </div>
@@ -1522,10 +2076,10 @@ function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () =>
           background: fabOpen ? '#085041' : C.teal, border: 'none', cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           boxShadow: '0 4px 12px rgba(13,115,119,0.45)', transition: 'background 0.15s',
-          fontSize: 26, color: C.white, fontFamily: 'inherit',
+          color: C.white, fontFamily: 'inherit',
         }}
       >
-        {fabOpen ? '✕' : '+'}
+        {fabOpen ? <X size={22} /> : <span style={{ fontSize: 26, lineHeight: 1 }}>+</span>}
       </button>
 
       {/* Bottom tab bar */}
@@ -1534,19 +2088,20 @@ function ClassesScreen({ onAddHomework, onOpenHomework }: { onAddHomework: () =>
         display: 'flex', flexShrink: 0,
       }}>
         {[
-          { icon: '🏠', label: 'Classes', active: true },
-          { icon: '📊', label: 'Analytics', active: false },
-          { icon: '⚙️', label: 'Settings', active: false },
+          { icon: <Home size={16} />, label: 'Classes', active: true, onClick: undefined as (() => void) | undefined },
+          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: undefined as (() => void) | undefined },
+          { icon: <Settings size={16} />, label: 'Settings', active: false, onClick: onSettings },
         ].map(tab => (
           <div
             key={tab.label}
+            onClick={tab.onClick}
             style={{
               flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
               justifyContent: 'center', gap: 2, cursor: 'pointer',
               borderTop: tab.active ? `2px solid ${C.teal}` : '2px solid transparent',
             }}
           >
-            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span>{tab.icon}</span>
             <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.teal : C.g500 }}>
               {tab.label}
             </span>
@@ -1659,16 +2214,16 @@ function HomeworkDetailScreen({
         {/* Stats row */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           {[
-            { icon: '❓', value: hw.question_count,   label: 'Questions' },
-            { icon: '⭐', value: hw.total_marks,       label: 'Total marks' },
-            { icon: '📬', value: hw.submission_count,  label: 'Submissions' },
+            { icon: <HelpCircle size={16} color={C.teal} />, value: hw.question_count,   label: 'Questions' },
+            { icon: <Star size={16} color={C.teal} />, value: hw.total_marks,       label: 'Total marks' },
+            { icon: <Inbox size={16} color={C.teal} />, value: hw.submission_count,  label: 'Submissions' },
           ].map(s => (
             <div key={s.label} style={{
               flex: 1, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
               padding: '10px 8px', textAlign: 'center',
               boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
             }}>
-              <div style={{ fontSize: 16 }}>{s.icon}</div>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>{s.icon}</div>
               <div style={{ fontSize: 18, fontWeight: 800, color: C.teal, marginTop: 3 }}>{s.value}</div>
               <div style={{ fontSize: 10, color: C.g500, marginTop: 1 }}>{s.label}</div>
             </div>
@@ -1785,7 +2340,7 @@ function HomeworkDetailScreen({
               >
                 <span style={{ fontSize: 12, fontWeight: 700, color: C.teal, minWidth: 24 }}>Q{q.question_number}</span>
                 <span style={{ flex: 1, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.answer}</span>
-                <span style={{ fontSize: 12, color: C.g500, whiteSpace: 'nowrap', marginRight: 4 }}>{q.marks}mk</span>
+                <span style={{ fontSize: 12, color: C.g500, whiteSpace: 'nowrap', marginRight: 4 }}>{(q.marks != null && q.marks > 0) ? `${q.marks} mk` : '—'}</span>
                 <span style={{ fontSize: 15, color: C.g500 }}>›</span>
               </button>
             ),
@@ -1863,7 +2418,7 @@ function HomeworkDetailScreen({
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <span>✨ Grade All with AI</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Sparkles size={14} /> Grade All with AI</span>
           <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>Powered by Gemma 4</span>
         </button>
       </div>
@@ -1966,8 +2521,8 @@ function GradeAllScreen({
           }}>
             <div style={{
               width: 52, height: 52, borderRadius: 26, background: C.teal50,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
-            }}>✨</div>
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}><Sparkles size={24} color={C.teal} /></div>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Grading with Gemma 4{dots}</div>
             <div style={{ fontSize: 12, color: C.g500, textAlign: 'center', lineHeight: 1.5 }}>
               Reading student answers and comparing to the marking scheme
@@ -1989,7 +2544,7 @@ function GradeAllScreen({
             {/* Progress label while revealing */}
             {phase === 'revealing' && (
               <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 4 }}>
-                ✨ Grading student {revealed} of {allGrades.length}…
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Sparkles size={12} color={C.teal} /> Grading student {revealed} of {allGrades.length}…</span>
               </div>
             )}
 
@@ -2016,7 +2571,10 @@ function GradeAllScreen({
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{g.student_name}</div>
                       <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>
-                        {g.percentage >= 70 ? '🟢 Pass' : g.percentage >= 50 ? '🟡 Borderline' : '🔴 Needs support'}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.percentage >= 70 ? '#22c55e' : g.percentage >= 50 ? '#eab308' : '#ef4444', display: 'inline-block' }} />
+                          {g.percentage >= 70 ? 'Pass' : g.percentage >= 50 ? 'Borderline' : 'Needs support'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2150,7 +2708,7 @@ function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void 
   return (
     <Screen style={{ padding: '24px 20px' }}>
       <div style={{ width: 60, height: 60, borderRadius: 18, background: C.amber50, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-        <span style={{ fontSize: 28 }}>🎓</span>
+        <GraduationCap size={28} color={C.amber} />
       </div>
       <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>Join a Class</div>
       <div style={{ fontSize: 13, color: C.g500, marginBottom: 22, lineHeight: 1.5 }}>
@@ -2208,15 +2766,15 @@ function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void 
 
 // ── S2: Home ──────────────────────────────────────────────────────────────────
 function StudentHomeScreen({
-  studentName, submissionsOpen, onSubmit, onResults, onTutor,
-}: { studentName: string; submissionsOpen: boolean; onSubmit: () => void; onResults: () => void; onTutor: () => void }) {
+  studentName, submissionsOpen, onSubmit, onResults, onTutor, onSettings,
+}: { studentName: string; submissionsOpen: boolean; onSubmit: () => void; onResults: () => void; onTutor: () => void; onSettings: () => void }) {
   const firstName = studentName.split(' ')[0];
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
       {/* Header */}
       <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>{firstName} 👋</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>{firstName} <Hand size={18} color={C.text} /></div>
         <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Form 2A · Harare High School</div>
       </div>
 
@@ -2253,7 +2811,7 @@ function StudentHomeScreen({
                   boxShadow: '0 2px 8px rgba(245,166,35,0.30)',
                 }}
               >
-                <span>📤</span><span>Submit Work</span>
+                <Upload size={14} /><span>Submit Work</span>
               </button>
             ) : (
               <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic', paddingTop: 2 }}>
@@ -2272,7 +2830,7 @@ function StudentHomeScreen({
             marginBottom: 12,
           }}
         >
-          <span>📊</span><span>View My Results</span>
+          <BarChart2 size={14} /><span>View My Results</span>
         </button>
 
         {/* AI Tutor card */}
@@ -2286,8 +2844,8 @@ function StudentHomeScreen({
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
-              🤖
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Bot size={20} color={C.white} />
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: C.white, marginBottom: 2 }}>AI Tutor</div>
@@ -2304,13 +2862,17 @@ function StudentHomeScreen({
 
       {/* Bottom tabs */}
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
-        {[{ icon: '🏠', label: 'Home', active: true }, { icon: '📊', label: 'Results', active: false }, { icon: '⚙️', label: 'Settings', active: false }].map(tab => (
+        {([
+          { icon: <Home size={16} />, label: 'Home', active: true, onClick: undefined as (() => void) | undefined },
+          { icon: <BarChart2 size={16} />, label: 'Results', active: false, onClick: onResults },
+          { icon: <Settings size={16} />, label: 'Settings', active: false, onClick: onSettings },
+        ]).map(tab => (
           <div
             key={tab.label}
-            onClick={tab.label === 'Results' ? onResults : undefined}
+            onClick={tab.onClick}
             style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer', borderTop: tab.active ? `2px solid ${C.amber}` : '2px solid transparent' }}
           >
-            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span>{tab.icon}</span>
             <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.amber700 : C.g500 }}>{tab.label}</span>
           </div>
         ))}
@@ -2327,8 +2889,11 @@ function StudentSubmitScreen({
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
   const [dots, setDots]       = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [fileQualityWarnings, setFileQualityWarnings] = useState<string[]>([]);
+  const [fileEnhanced, setFileEnhanced] = useState(false);
+  const [fileWarningDismissed, setFileWarningDismissed] = useState(false);
 
-  const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const pdfRef     = useRef<HTMLInputElement>(null);
 
@@ -2339,10 +2904,26 @@ function StudentSubmitScreen({
   }, [loading]);
 
   function readFile(f: File) {
+    const mimeType = f.type || 'application/octet-stream';
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const dataUrl = e.target?.result as string;
-      setFile({ name: f.name, mimeType: f.type || 'application/octet-stream', base64: dataUrl.split(',')[1] });
+      setFileQualityWarnings([]);
+      setFileEnhanced(false);
+      setFileWarningDismissed(false);
+
+      if (mimeType.startsWith('image/')) {
+        try {
+          const result = await analyseAndEnhanceWebImage(dataUrl);
+          setFile({ name: f.name, mimeType, base64: result.base64 });
+          setFileEnhanced(result.enhanced);
+          if (result.warnings.length > 0) setFileQualityWarnings(result.warnings);
+        } catch {
+          setFile({ name: f.name, mimeType, base64: dataUrl.split(',')[1] });
+        }
+      } else {
+        setFile({ name: f.name, mimeType, base64: dataUrl.split(',')[1] });
+      }
       setError('');
     };
     reader.onerror = () => setError('Could not read file. Please try again.');
@@ -2394,18 +2975,18 @@ function StudentSubmitScreen({
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               {([
-                { icon: '📷', label: 'Camera',  ref: cameraRef },
-                { icon: '🖼',  label: 'Gallery', ref: galleryRef },
-                { icon: '📄', label: 'PDF',     ref: pdfRef },
-              ] as const).map(btn => (
+                { icon: <Camera size={26} color={C.amber} />, label: 'Camera',  onClick: () => setCameraOpen(true) },
+                { icon: <ImageIcon size={26} color={C.amber} />, label: 'Gallery', onClick: () => galleryRef.current?.click() },
+                { icon: <File size={26} color={C.amber} />, label: 'PDF',     onClick: () => pdfRef.current?.click() },
+              ]).map(btn => (
                 <button
                   key={btn.label}
-                  onClick={() => btn.ref.current?.click()}
+                  onClick={btn.onClick}
                   style={btnBase}
                   onMouseEnter={e => (e.currentTarget.style.borderColor = C.amber)}
                   onMouseLeave={e => (e.currentTarget.style.borderColor = C.g200)}
                 >
-                  <span style={{ fontSize: 26 }}>{btn.icon}</span>
+                  <span>{btn.icon}</span>
                   <span style={{ fontSize: 11, color: C.g700, fontWeight: 600 }}>{btn.label}</span>
                 </button>
               ))}
@@ -2414,14 +2995,64 @@ function StudentSubmitScreen({
         )}
 
         {file && (
-          <div style={{ background: C.amber50, border: `1px solid ${C.amber100}`, borderRadius: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 22 }}>{file.mimeType.startsWith('image') ? '🖼' : '📄'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.amber700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{(file.base64.length * 0.75 / 1024).toFixed(1)} KB · Ready to submit</div>
+          <>
+            <div style={{ background: C.amber50, border: `1px solid ${C.amber100}`, borderRadius: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span>{file.mimeType.startsWith('image') ? <ImageIcon size={22} color={C.amber700} /> : <File size={22} color={C.amber700} />}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.amber700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>
+                  {(file.base64.length * 0.75 / 1024).toFixed(1)} KB · Ready to submit
+                  {fileEnhanced && (
+                    <span style={{
+                      marginLeft: 6, fontSize: 10, fontWeight: 700, color: C.teal,
+                      background: C.teal50, borderRadius: 4, padding: '1px 5px',
+                    }}>
+                      ✓ Image enhanced
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => { setFile(null); setFileQualityWarnings([]); setFileEnhanced(false); setFileWarningDismissed(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g400, fontSize: 16, padding: 2, flexShrink: 0 }}>✕</button>
             </div>
-            <button onClick={() => setFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g400, fontSize: 16, padding: 2, flexShrink: 0 }}>✕</button>
-          </div>
+
+            {/* Quality warning block */}
+            {fileQualityWarnings.length > 0 && !fileWarningDismissed && (
+              <div style={{
+                marginTop: 8, background: '#FFFBEB', border: '1px solid #FDE68A',
+                borderRadius: 10, padding: '10px 12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                  <span style={{ flexShrink: 0 }}><AlertTriangle size={15} color="#92400E" /></span>
+                  <div style={{ fontSize: 12, color: '#92400E', lineHeight: 1.5 }}>
+                    <strong style={{ display: 'block', marginBottom: 2 }}>Image may be unclear</strong>
+                    Your teacher may have difficulty reading it. Retake or replace for better results.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => { setFile(null); setFileQualityWarnings([]); setFileEnhanced(false); setFileWarningDismissed(false); galleryRef.current?.click(); }}
+                    style={{
+                      flex: 1, background: 'none', border: '1.5px solid #F59E0B', borderRadius: 8,
+                      padding: '8px 0', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                      color: '#92400E', fontFamily: 'inherit',
+                    }}
+                  >
+                    Replace Image
+                  </button>
+                  <button
+                    onClick={() => setFileWarningDismissed(true)}
+                    style={{
+                      flex: 1, background: '#F59E0B', border: 'none', borderRadius: 8,
+                      padding: '8px 0', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                      color: C.white, fontFamily: 'inherit',
+                    }}
+                  >
+                    Use Anyway
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {error && <div style={{ marginTop: 8, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
@@ -2438,14 +3069,27 @@ function StudentSubmitScreen({
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
           }}
         >
-          <span>📤</span>
+          <Upload size={16} />
           <span>{loading ? `Submitting${dots}` : 'Submit Work'}</span>
         </button>
 
-        <input ref={cameraRef}  type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleInput} />
         <input ref={galleryRef} type="file" accept="image/*"                       style={{ display: 'none' }} onChange={handleInput} />
         <input ref={pdfRef}     type="file" accept=".pdf,application/pdf"          style={{ display: 'none' }} onChange={handleInput} />
       </div>
+
+      <WebCameraModal
+        open={cameraOpen}
+        onCapture={(base64, mimeType) => {
+          // WebCameraModal already runs quality+enhancement
+          setFile({ name: `photo_${Date.now()}.jpg`, mimeType, base64 });
+          setFileQualityWarnings([]);
+          setFileEnhanced(true);
+          setFileWarningDismissed(false);
+          setError('');
+          setCameraOpen(false);
+        }}
+        onClose={() => setCameraOpen(false)}
+      />
     </Screen>
   );
 }
@@ -2466,7 +3110,7 @@ function StudentSubmissionSuccessScreen({
         Your work has been submitted. You'll be notified as soon as it's marked.
       </div>
       <div style={{ background: C.g50, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24, width: '100%', boxSizing: 'border-box' }}>
-        <span style={{ fontSize: 18 }}>📄</span>
+        <File size={18} color={C.g500} />
         <span style={{ fontSize: 12, color: C.g700, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
       </div>
       <button
@@ -2540,7 +3184,7 @@ function StudentResultsScreen({
         {/* Graded: empty until teacher grades */}
         {tab === 'graded' && !gradingComplete && (
           <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
-            <div style={{ fontSize: 28, marginBottom: 10 }}>📭</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><MailX size={28} color={C.g500} /></div>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>No results yet</div>
             <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Your teacher hasn't graded the homework yet. Check back soon!</div>
           </div>
@@ -2603,7 +3247,10 @@ function StudentFeedbackScreen({ onBack }: { onBack: () => void }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
           <span style={{ fontSize: 12, color: C.g500 }}>Score</span>
           <span style={{ fontSize: 12, fontWeight: 700, color: scoreColor(g.percentage) }}>
-            {g.percentage >= 70 ? '🟢 Pass' : g.percentage >= 50 ? '🟡 Borderline' : '🔴 Needs support'}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.percentage >= 70 ? '#22c55e' : g.percentage >= 50 ? '#eab308' : '#ef4444', display: 'inline-block' }} />
+              {g.percentage >= 70 ? 'Pass' : g.percentage >= 50 ? 'Borderline' : 'Needs support'}
+            </span>
           </span>
         </div>
         <div style={{ height: 8, borderRadius: 4, background: C.g100, overflow: 'hidden', marginBottom: 20 }}>
@@ -2652,7 +3299,7 @@ function StudentTutorScreen({
   const welcomeMsg: TutorMessage = {
     id:      'welcome',
     role:    'ai',
-    content: `Hi ${firstName}! I'm your AI tutor powered by Gemma 4. Ask me anything about Chapter 5 Maths, or send a photo of a problem you're stuck on. 🌟`,
+    content: `Hi ${firstName}! I'm your AI tutor powered by Gemma 4. Ask me anything about Chapter 5 Maths, or send a photo of a problem you're stuck on.`,
     ts:      Date.now(),
   };
 
@@ -2661,8 +3308,8 @@ function StudentTutorScreen({
   const [typing,    setTyping]    = useState(false);
   const [dotPhase,  setDotPhase]  = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileRef        = useRef<HTMLInputElement>(null);
   const demoIdxRef     = useRef(0);
+  const [tutorCameraOpen, setTutorCameraOpen] = useState(false);
 
   // Cycle typing dots
   useEffect(() => {
@@ -2772,8 +3419,8 @@ function StudentTutorScreen({
               {typing ? `Thinking${dots}` : 'Gemma 4 · Socratic mode · Chapter 5 Maths'}
             </div>
           </div>
-          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
-            🤖
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Bot size={18} color={C.white} />
           </div>
         </div>
       </div>
@@ -2785,8 +3432,8 @@ function StudentTutorScreen({
           return (
             <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
               {!isUser && (
-                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0, marginBottom: 2 }}>
-                  🤖
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
+                  <Bot size={13} color={C.white} />
                 </div>
               )}
               <div style={{
@@ -2822,8 +3469,8 @@ function StudentTutorScreen({
         {/* Typing indicator */}
         {typing && (
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0, marginBottom: 2 }}>
-              🤖
+            <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
+              <Bot size={13} color={C.white} />
             </div>
             <div style={{
               background: C.white, borderRadius: '14px 14px 14px 4px', padding: '10px 14px',
@@ -2850,20 +3497,12 @@ function StudentTutorScreen({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Camera button */}
           <button
-            onClick={() => fileRef.current?.click()}
-            style={{ width: 36, height: 36, borderRadius: 10, background: C.g100, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, flexShrink: 0 }}
+            onClick={() => setTutorCameraOpen(true)}
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.g100, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             title="Send a photo"
           >
-            📷
+            <Camera size={17} color={C.g500} />
           </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
 
           {/* Text input */}
           <input
@@ -2901,6 +3540,16 @@ function StudentTutorScreen({
           Socratic AI — guides you to the answer, doesn't give it away
         </div>
       </div>
+
+      <WebCameraModal
+        open={tutorCameraOpen}
+        onCapture={(base64, mimeType) => {
+          setTutorCameraOpen(false);
+          sendMessage(input || 'Can you help me with this problem?', base64, mimeType);
+          setInput('');
+        }}
+        onClose={() => setTutorCameraOpen(false)}
+      />
     </div>
   );
 }
@@ -2908,9 +3557,15 @@ function StudentTutorScreen({
 // ──────────────────────────────────────────────────────────────────────────────
 // PHONE FRAME
 // ──────────────────────────────────────────────────────────────────────────────
-interface PhoneFrameProps { label: string; labelColor?: string; children: React.ReactNode }
+interface PhoneFrameProps {
+  label: string;
+  labelColor?: string;
+  children: React.ReactNode;
+  /** When true, shows a blue "Cloud AI" dot in the status bar (web is always cloud). */
+  showAIStatus?: boolean;
+}
 
-function PhoneFrame({ label, labelColor = C.teal, children }: PhoneFrameProps) {
+function PhoneFrame({ label, labelColor = C.teal, children, showAIStatus }: PhoneFrameProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
       <div style={{
@@ -2926,8 +3581,32 @@ function PhoneFrame({ label, labelColor = C.teal, children }: PhoneFrameProps) {
         display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
       }}>
         {/* Status bar */}
-        <div style={{ height: 36, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <div style={{ width: 80, height: 10, borderRadius: 6, background: 'rgba(255,255,255,0.25)' }} />
+        <div style={{
+          height: 36, background: C.teal, flexShrink: 0,
+          display: 'flex', alignItems: 'center',
+          justifyContent: showAIStatus ? 'space-between' : 'center',
+          paddingInline: showAIStatus ? '12px' : 0,
+        }}>
+          {/* Notch pill */}
+          <div style={{ width: 72, height: 9, borderRadius: 5, background: 'rgba(255,255,255,0.22)' }} />
+          {/* AI status indicator — web is always cloud */}
+          {showAIStatus && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'rgba(255,255,255,0.15)', borderRadius: 8,
+              paddingInline: 7, paddingBlock: 3,
+            }}>
+              <div style={{
+                width: 6, height: 6, borderRadius: 3,
+                background: '#60A5FA', /* blue-400 — visible on teal */
+                boxShadow: '0 0 4px rgba(96,165,250,0.7)',
+              }} />
+              <span style={{
+                fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.92)',
+                letterSpacing: '0.05em', whiteSpace: 'nowrap',
+              }}>Cloud AI</span>
+            </div>
+          )}
         </div>
         {/* Screen area */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -2937,6 +3616,176 @@ function PhoneFrame({ label, labelColor = C.teal, children }: PhoneFrameProps) {
         <div style={{ height: 28, background: C.white, borderTop: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <div style={{ width: 56, height: 4, borderRadius: 2, background: C.g200 }} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Teacher Settings (web)
+// ──────────────────────────────────────────────────────────────────────────────
+function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg }}>
+      {/* Header */}
+      <div style={{ background: C.white, paddingInline: 18, paddingTop: 56, paddingBottom: 16, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Settings</div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        {/* Offline AI Model */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
+          {/* Cloud-only badge */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#f3f4f6', borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
+            <Cloud size={13} color={C.g500} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web always uses Cloud AI</span>
+          </div>
+
+          <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>
+            On-device AI models run locally on the <strong>Neriah mobile app</strong>, keeping your data private and letting you grade even without internet.
+          </p>
+
+          {/* App download CTA */}
+          <a
+            href="https://neriah.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              background: C.teal, color: C.white, borderRadius: 10, padding: '12px 16px',
+              textDecoration: 'none', fontSize: 14, fontWeight: 700,
+            }}
+          >
+            <span>Download the Neriah app</span>
+            <span style={{ fontSize: 16 }}>→</span>
+          </a>
+        </div>
+
+        {/* Version */}
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 14, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 14, color: C.g900 }}>Version</span>
+            <span style={{ fontSize: 14, color: C.g500 }}>Demo</span>
+          </div>
+        </div>
+
+        {/* Back */}
+        <button
+          onClick={onBack}
+          style={{
+            width: '100%', padding: 14, borderRadius: 10, border: `1px solid ${C.border}`,
+            background: C.white, color: C.g500, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          ← Back to classes
+        </button>
+      </div>
+
+      {/* Bottom tab bar */}
+      <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
+        {[
+          { icon: <Home size={16} />, label: 'Classes', active: false },
+          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false },
+          { icon: <Settings size={16} />, label: 'Settings', active: true },
+        ].map(tab => (
+          <div
+            key={tab.label}
+            onClick={tab.label === 'Classes' ? onBack : undefined}
+            style={{
+              flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', gap: 2, cursor: 'pointer',
+              borderTop: tab.active ? `2px solid ${C.teal}` : '2px solid transparent',
+            }}
+          >
+            <span>{tab.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.teal : C.g500 }}>
+              {tab.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Student Settings (web)
+// ──────────────────────────────────────────────────────────────────────────────
+function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void; studentName: string }) {
+  const firstName = studentName.split(' ')[0];
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg }}>
+      {/* Teal header */}
+      <div style={{ background: C.teal, paddingTop: 48, paddingBottom: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: 32,
+          background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 24, fontWeight: 800, color: C.white, marginBottom: 10,
+        }}>
+          {firstName[0].toUpperCase()}
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.white }}>{studentName}</div>
+        <div style={{ marginTop: 6, background: C.amber, borderRadius: 8, paddingInline: 12, paddingBlock: 3 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.white }}>Student</span>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        {/* Offline AI Model */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
+          {/* Cloud-only badge */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#f3f4f6', borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
+            <Cloud size={13} color={C.g500} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web always uses Cloud AI</span>
+          </div>
+
+          <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>
+            On-device AI models run locally on the <strong>Neriah mobile app</strong>, keeping your data private and enabling offline tutoring without internet.
+          </p>
+
+          {/* App download CTA */}
+          <a
+            href="https://neriah.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              background: C.amber, color: C.white, borderRadius: 10, padding: '12px 16px',
+              textDecoration: 'none', fontSize: 14, fontWeight: 700,
+            }}
+          >
+            <span>Download the Neriah app</span>
+            <span style={{ fontSize: 16 }}>→</span>
+          </a>
+        </div>
+
+        {/* Version */}
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 14, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 14, color: C.g900 }}>Version</span>
+            <span style={{ fontSize: 14, color: C.g500 }}>Demo</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom tabs */}
+      <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
+        {[
+          { icon: <Home size={16} />, label: 'Home', active: false },
+          { icon: <BarChart2 size={16} />, label: 'Results', active: false },
+          { icon: <Settings size={16} />, label: 'Settings', active: true },
+        ].map(tab => (
+          <div
+            key={tab.label}
+            onClick={tab.label === 'Home' ? onBack : undefined}
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer', borderTop: tab.active ? `2px solid ${C.amber}` : '2px solid transparent' }}
+          >
+            <span>{tab.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: tab.active ? 700 : 400, color: tab.active ? C.amber700 : C.g500 }}>{tab.label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2963,6 +3812,23 @@ export default function DemoPage() {
   const [studentName, setStudentName]           = useState('Chipo Dube');
   const [submissionFileName, setSubmissionFileName] = useState('');
 
+  // Web is always cloud-only — set once on first visit, skip if already stored.
+  useEffect(() => {
+    if (!localStorage.getItem('device_capability')) {
+      localStorage.setItem('device_capability', 'cloud');
+      console.log('[deviceCapabilities] web demo → cloud');
+    }
+  }, []);
+
+  // ── AI inference router (web is always cloud) ─────────────────────────────
+  // Mirrors the mobile router contract: routeRequest(isOnline, modelLoaded).
+  // Web has no on-device model and is always assumed to be online.
+  // All AI requests in the demo call this before dispatching to the demo API.
+  const routeAIRequest = useCallback(
+    (_requestType: 'grading' | 'tutoring' | 'scheme'): 'cloud' => 'cloud',
+    [],
+  );
+
   function triggerSync() {
     setSyncPulse(true);
     setTimeout(() => setSyncPulse(false), 1200);
@@ -2982,7 +3848,9 @@ export default function DemoPage() {
       case 'register':
         return <RegisterScreen onSignIn={() => go('phone')} onContinue={(p) => { setOtpPhone(p); go('otp'); }} />;
       case 'classes':
-        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} />;
+        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onSettings={() => go('t-settings')} />;
+      case 't-settings':
+        return <TeacherSettingsWebScreen onBack={() => go('classes')} />;
       case 'add-homework':
         return (
           <AddHomeworkScreen
@@ -3040,7 +3908,9 @@ export default function DemoPage() {
       case 's-register':
         return <StudentRegisterScreen onJoined={(name) => { setStudentName(name); setSScreen('s-home'); }} />;
       case 's-home':
-        return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} />;
+        return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} />;
+      case 's-settings':
+        return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} studentName={studentName} />;
       case 's-submit':
         return (
           <StudentSubmitScreen
@@ -3115,7 +3985,7 @@ export default function DemoPage() {
         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
         padding: '28px 16px 48px', gap: 0, flexWrap: 'wrap',
       }}>
-        <PhoneFrame label="Teacher" labelColor={C.teal}>
+        <PhoneFrame label="Teacher" labelColor={C.teal} showAIStatus>
           {renderTeacherScreen()}
         </PhoneFrame>
 
@@ -3124,7 +3994,7 @@ export default function DemoPage() {
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           width: 52, alignSelf: 'center', gap: 6, flexShrink: 0,
         }}>
-          <span style={{ fontSize: 9, fontWeight: 800, color: C.teal, letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>⚡ LIVE</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 9, fontWeight: 800, color: C.teal, letterSpacing: '0.05em', whiteSpace: 'nowrap' }}><Zap size={9} color={C.teal} /> LIVE</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
             {[0, 1, 2, 3, 4].map(i => (
               <div key={i} style={{

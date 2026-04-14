@@ -3,7 +3,7 @@
 // Uses file metadata and dimensions — no server round-trip.
 // Warnings are advisory; canSubmit is always true so the student is never blocked.
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'react-native';
 
 export interface QualityResult {

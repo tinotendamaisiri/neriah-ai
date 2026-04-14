@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     # Firestore
     FIRESTORE_DATABASE: str = "(default)"
 
-    # Cloud Storage
-    GCS_BUCKET_SCANS: str
-    GCS_BUCKET_MARKED: str
-    GCS_BUCKET_SUBMISSIONS: str
+    # Cloud Storage (empty string = not configured; ops that need these will fail at call site)
+    GCS_BUCKET_SCANS: str = ""
+    GCS_BUCKET_MARKED: str = ""
+    GCS_BUCKET_SUBMISSIONS: str = ""
 
     # Inference backend: "ollama" (local) | "vertex" (GCP dedicated endpoint)
     INFERENCE_BACKEND: str = "ollama"
@@ -25,11 +25,12 @@ class Settings(BaseSettings):
     OLLAMA_MODEL_TEACHER: str = "gemma4:latest"               # teacher grading / complex tasks
     OLLAMA_MODEL_CLOUD: str = "gemma4:26b-a4b-it-q4_K_M"     # cloud-equivalent quantised model
 
-    # Vertex AI / Gemma 4 — dedicated endpoint (required when INFERENCE_BACKEND=vertex)
-    # Cloud inference model: gemma-4-26b-a4b-it
+    # Vertex AI / Gemma 4 — serverless Model Garden (MaaS) or dedicated endpoint
+    # Serverless (default): publishers/google/models/gemma-4-26b-a4b-it-maas
+    # Dedicated endpoint:   projects/.../locations/.../endpoints/{id}  (set VERTEX_ENDPOINT_ID)
     # On-device teacher: gemma-4-e4b-it  |  on-device student: gemma-4-e2b-it
-    VERTEX_MODEL_ID: str = "gemma-4-26b-a4b-it"
-    VERTEX_ENDPOINT_ID: str = ""          # projects/.../locations/.../endpoints/{id}
+    VERTEX_MODEL_ID: str = "google/gemma-4-26b-a4b-it-maas"   # OpenAI-compat model name for MaaS endpoint
+    VERTEX_ENDPOINT_ID: str = ""          # reserved — unused by OpenAI-compat path
     VERTEX_TEMPERATURE: float = 0.1
     VERTEX_MAX_OUTPUT_TOKENS: int = 4096
 
@@ -37,16 +38,16 @@ class Settings(BaseSettings):
     DOCAI_PROCESSOR_ID: str = ""
     DOCAI_PROCESSOR_LOCATION: str = "us"
 
-    # WhatsApp Cloud API (Meta)
-    WHATSAPP_VERIFY_TOKEN: str
-    WHATSAPP_ACCESS_TOKEN: str
-    WHATSAPP_PHONE_NUMBER_ID: str
+    # WhatsApp Cloud API (Meta) — empty = not yet configured (pending Meta business verification)
+    WHATSAPP_VERIFY_TOKEN: str = ""
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
     # App Secret from Meta developer console — used to verify X-Hub-Signature-256.
     # Leave empty to skip verification in local/demo environments.
     WHATSAPP_APP_SECRET: str = ""
 
-    # App auth
-    APP_JWT_SECRET: str
+    # App auth (empty string = unconfigured; auth endpoints will fail at call time, not startup)
+    APP_JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_DAYS: int = 365
 

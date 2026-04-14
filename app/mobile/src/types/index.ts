@@ -69,7 +69,7 @@ export interface Question {
   number: number;
   question_text?: string;
   correct_answer: string;
-  max_marks: number;
+  marks: number;
   marking_notes?: string;
 }
 

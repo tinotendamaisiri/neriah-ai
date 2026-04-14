@@ -25,6 +25,12 @@ type Route = RouteProp<AuthStackParamList, 'OTP'>;
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export default function OTPScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<Route>();
@@ -36,6 +42,7 @@ export default function OTPScreen() {
   const [verificationId, setVerificationId] = useState(initialVerificationId);
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+  const [rateLimitSeconds, setRateLimitSeconds] = useState(0);
   const inputRef = useRef<TextInput>(null);
 
   // Countdown timer for resend button
@@ -44,6 +51,13 @@ export default function OTPScreen() {
     const timer = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
     return () => clearTimeout(timer);
   }, [resendCooldown]);
+
+  // Rate-limit countdown — auto-enables buttons when it hits zero
+  useEffect(() => {
+    if (rateLimitSeconds <= 0) return;
+    const timer = setTimeout(() => setRateLimitSeconds((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [rateLimitSeconds]);
 
   // Auto-focus OTP input
   useEffect(() => {
@@ -69,16 +83,29 @@ export default function OTPScreen() {
       await login(response);
       // AuthContext login → App re-renders → navigates to main tabs automatically
     } catch (err: any) {
-      const status = err?.response?.status ?? err?.status;
-      const serverMsg = err?.response?.data?.error;
-      if (status === 400) {
-        Alert.alert(t('otp_incorrect'), serverMsg ?? t('otp_incorrect'));
-      } else if (status === 410) {
-        Alert.alert(t('otp_expired'), t('otp_expired_msg'));
+      // Axios interceptor normalises errors to { title, message, status, _raw }
+      // so err.response is stripped — read err.message for the server error text.
+      const status = err?.status ?? err?.response?.status;
+      const serverMsg: string | undefined = err?.message ?? err?.response?.data?.error;
+      if (status === 400 || status === 410) {
+        // 400 = wrong code, 410 = expired — backend currently returns 400 for both;
+        // handle both here so either status triggers the "request a new code" path
+        // when the message indicates expiry, and "incorrect" otherwise.
+        const isExpired = serverMsg?.toLowerCase().includes('expir') || status === 410;
+        if (isExpired) {
+          Alert.alert(t('otp_expired'), t('otp_expired_msg'));
+        } else {
+          Alert.alert(t('otp_incorrect'), serverMsg ?? t('otp_incorrect'));
+        }
       } else if (status === 429) {
-        Alert.alert(t('otp_too_many'), serverMsg ?? t('otp_too_many'));
+        const retryAfter: number = err?.retry_after ?? 0;
+        if (retryAfter > 0) {
+          setRateLimitSeconds(retryAfter);
+        } else {
+          Alert.alert(t('otp_too_many'), serverMsg ?? t('otp_too_many'));
+        }
       } else {
-        Alert.alert(t('error'), t('server_error_retry'));
+        Alert.alert(t('error'), serverMsg ?? t('server_error_retry'));
       }
       setOtp('');
     } finally {
@@ -95,11 +122,13 @@ export default function OTPScreen() {
       setOtp('');
       Alert.alert(t('code_sent_ok'), channel === 'sms' ? t('code_sent_sms') : t('code_sent_phone'));
     } catch (err: any) {
-      const status = err?.response?.status ?? err?.status;
-      if (status === 429) {
-        Alert.alert(t('error'), t('too_many_attempts'));
+      const status = err?.status ?? err?.response?.status;
+      const retryAfter: number = err?.retry_after ?? 0;
+      if (status === 429 && retryAfter > 0) {
+        setRateLimitSeconds(retryAfter);
+        setResendCooldown(retryAfter);
       } else {
-        Alert.alert(t('error'), t('server_error_retry'));
+        Alert.alert(t('error'), status === 429 ? t('too_many_attempts') : t('server_error_retry'));
       }
     } finally {
       setLoading(false);
@@ -144,21 +173,33 @@ export default function OTPScreen() {
           editable={!loading}
         />
 
+        {rateLimitSeconds > 0 && (
+          <View style={styles.rateLimitBanner}>
+            <Text style={styles.rateLimitText}>
+              Try again in {formatCountdown(rateLimitSeconds)}
+            </Text>
+          </View>
+        )}
+
         <TouchableOpacity
-          style={[styles.button, (loading || otp.length < 6) && styles.buttonDisabled]}
+          style={[styles.button, (loading || otp.length < 6 || rateLimitSeconds > 0) && styles.buttonDisabled]}
           onPress={handleVerify}
-          disabled={loading || otp.length < 6}
+          disabled={loading || otp.length < 6 || rateLimitSeconds > 0}
         >
           <Text style={styles.buttonText}>{loading ? t('verifying') : t('verify')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.resendButton, (resendCooldown > 0 || loading) && styles.resendDisabled]}
+          style={[styles.resendButton, (resendCooldown > 0 || loading || rateLimitSeconds > 0) && styles.resendDisabled]}
           onPress={() => handleResend()}
-          disabled={resendCooldown > 0 || loading}
+          disabled={resendCooldown > 0 || loading || rateLimitSeconds > 0}
         >
-          <Text style={[styles.resendText, resendCooldown > 0 && styles.resendTextDisabled]}>
-            {resendCooldown > 0 ? `${t('resend_in')} ${resendCooldown}s` : t('resend_code')}
+          <Text style={[styles.resendText, (resendCooldown > 0 || rateLimitSeconds > 0) && styles.resendTextDisabled]}>
+            {rateLimitSeconds > 0
+              ? `Try again in ${formatCountdown(rateLimitSeconds)}`
+              : resendCooldown > 0
+              ? `${t('resend_in')} ${resendCooldown}s`
+              : t('resend_code')}
           </Text>
         </TouchableOpacity>
 
@@ -197,6 +238,17 @@ const styles = StyleSheet.create({
   resendTextDisabled: { color: COLORS.textLight },
   smsLink: { alignItems: 'center', paddingVertical: 6 },
   smsLinkText: { fontSize: 13, color: COLORS.gray500 },
+  rateLimitBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  rateLimitText: { fontSize: 15, fontWeight: '700', color: '#dc2626' },
   devBanner: {
     backgroundColor: '#fef08a',
     borderWidth: 1,

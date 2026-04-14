@@ -9,29 +9,35 @@
 //   await loadModel('e2b');
 //   const reply = await generateResponse(prompt);
 
-import { NativeModules, Platform } from 'react-native';
+// LiteRT disabled for Expo Go — NativeModules.MediapipeLlm requires a custom
+// dev client build. All on-device inference paths fall back to cloud (Vertex AI).
+// Re-enable by restoring these imports and rebuilding with `npx expo run:ios`.
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 
 // ── Native module interface ───────────────────────────────────────────────────
+// (commented out — NativeModules not available in Expo Go)
+//
+// interface MediapipeLlmModule {
+//   initialize(opts: {
+//     modelPath: string;
+//     maxTokens?: number;
+//     temperature?: number;
+//     topK?: number;
+//     topP?: number;
+//   }): Promise<boolean>;
+//   generateResponse(prompt: string): Promise<string>;
+//   generateResponseWithCallback(
+//     prompt: string,
+//     onToken: (partial: string, done: boolean) => void,
+//     onError: (error: string) => void,
+//   ): void;
+// }
+//
+// const MediapipeLlm: MediapipeLlmModule | null =
+//   (NativeModules.MediapipeLlm as MediapipeLlmModule) ?? null;
 
-interface MediapipeLlmModule {
-  initialize(opts: {
-    modelPath: string;
-    maxTokens?: number;
-    temperature?: number;
-    topK?: number;
-    topP?: number;
-  }): Promise<boolean>;
-  generateResponse(prompt: string): Promise<string>;
-  generateResponseWithCallback(
-    prompt: string,
-    onToken: (partial: string, done: boolean) => void,
-    onError: (error: string) => void,
-  ): void;
-}
-
-const MediapipeLlm: MediapipeLlmModule | null =
-  (NativeModules.MediapipeLlm as MediapipeLlmModule) ?? null;
+const MediapipeLlm = null; // LiteRT stub — always null in Expo Go
 
 // ── Model file paths ──────────────────────────────────────────────────────────
 //

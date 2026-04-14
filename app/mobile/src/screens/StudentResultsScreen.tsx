@@ -19,6 +19,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { getStudentSubmissions, withdrawSubmission } from '../services/api';
 import { StudentSubmission, StudentRootStackParamList } from '../types';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
@@ -119,7 +120,7 @@ export default function StudentResultsScreen() {
         contentContainerStyle={submissions.length === 0 ? styles.emptyFlex : styles.listContent}
         ListEmptyComponent={() => (
           <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📊</Text>
+            <Ionicons name="bar-chart-outline" size={56} color={COLORS.gray500} style={styles.emptyIcon} />
             <Text style={styles.emptyTitle}>No submissions yet</Text>
             <Text style={styles.emptyText}>
               Submit your first assignment to see results here.
@@ -219,7 +220,7 @@ const styles = StyleSheet.create({
   listContent: { padding: 16, paddingBottom: 40 },
   emptyFlex: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyIcon: { fontSize: 56, marginBottom: 16 },
+  emptyIcon: { marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
   emptyText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20, marginBottom: 20 },
   emptyBtn: {

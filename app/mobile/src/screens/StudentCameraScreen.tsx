@@ -11,41 +11,27 @@ import {
   ScrollView,
   Image,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import InAppCamera from '../components/InAppCamera';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentCamera'>;
 
 export default function StudentCameraScreen({ route, navigation }: Props) {
   const { answer_key_id, answer_key_title, class_id } = route.params;
   const [images, setImages] = useState<string[]>([]);
-  const [capturing, setCapturing] = useState(false);
+  const [cameraVisible, setCameraVisible] = useState(false);
 
-  const captureImage = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission required', 'Camera access is needed to capture your work.');
-      return;
-    }
+  const captureImage = () => {
+    setCameraVisible(true);
+  };
 
-    setCapturing(true);
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'images',
-        quality: 0.85,
-        allowsEditing: false,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setImages(prev => [...prev, result.assets[0].uri]);
-      }
-    } finally {
-      setCapturing(false);
-    }
+  const handleCameraCapture = (_base64: string, uri: string) => {
+    setCameraVisible(false);
+    setImages(prev => [...prev, uri]);
   };
 
   const removePage = (index: number) => {
@@ -73,7 +59,15 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <>
+      <InAppCamera
+        visible={cameraVisible}
+        onCapture={handleCameraCapture}
+        onClose={() => setCameraVisible(false)}
+        quality={0.85}
+        warningMessage="Your submission photo is unclear. Please retake or choose a clearer image — your teacher needs to read your answers."
+      />
+      <View style={styles.container}>
       {/* Assignment context */}
       <View style={styles.header}>
         <Text style={styles.assignmentLabel}>Assignment</Text>
@@ -136,17 +130,15 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
       {/* Action buttons */}
       <View style={styles.actions}>
         <TouchableOpacity
-          style={[styles.captureBtn, capturing && styles.btnDisabled]}
+          style={styles.captureBtn}
           onPress={captureImage}
-          disabled={capturing}
         >
-          {capturing ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
+          <View style={styles.captureBtnInner}>
+            <Ionicons name="camera-outline" size={18} color={COLORS.white} />
             <Text style={styles.captureBtnText}>
-              {images.length === 0 ? '📷  Capture Page 1' : '📷  Add Another Page'}
+              {'  '}{images.length === 0 ? 'Capture Page 1' : 'Add Another Page'}
             </Text>
-          )}
+          </View>
         </TouchableOpacity>
 
         {images.length > 0 && (
@@ -156,6 +148,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
         )}
       </View>
     </View>
+    </>
   );
 }
 
@@ -283,6 +276,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
+  captureBtnInner: { flexDirection: 'row', alignItems: 'center' },
   btnDisabled: { opacity: 0.6 },
   captureBtnText: { color: COLORS.white, fontSize: 16, fontWeight: '700' },
   doneBtn: {

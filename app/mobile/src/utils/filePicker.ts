@@ -1,6 +1,9 @@
 // src/utils/filePicker.ts
 // Shared file-picking utilities: camera, gallery, and document picker.
 // Shows an action sheet with all three options.
+//
+// Pass `cameraOpener` to handle the camera action via InAppCamera instead of
+// the system camera picker. HomeworkDetailScreen does this.
 
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -33,6 +36,11 @@ export function pickFile(
     uploadFile?: string;
     cancel?: string;
   } = {},
+  /**
+   * Optional: if provided, the "Take Photo" action calls this function instead
+   * of opening the system camera picker. Use this to wire up InAppCamera.
+   */
+  cameraOpener?: () => Promise<PickedFile | null>,
 ): Promise<PickedFile | null> {
   return new Promise((resolve) => {
     Alert.alert(
@@ -41,7 +49,7 @@ export function pickFile(
       [
         {
           text: labels.takePhoto ?? 'Take Photo',
-          onPress: () => fromCamera().then(resolve),
+          onPress: () => (cameraOpener ? cameraOpener() : fromGallery()).then(resolve),
         },
         {
           text: labels.gallery ?? 'Choose from Gallery',
@@ -59,27 +67,6 @@ export function pickFile(
       ],
     );
   });
-}
-
-async function fromCamera(): Promise<PickedFile | null> {
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission needed', 'Please allow camera access in Settings.');
-    return null;
-  }
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: 'images',
-    quality: 0.85,
-  });
-  if (result.canceled || !result.assets[0]) return null;
-  const asset = result.assets[0];
-  return {
-    uri: asset.uri,
-    name: 'photo.jpg',
-    mimeType: 'image/jpeg',
-    isImage: true,
-    size: asset.fileSize,
-  };
 }
 
 async function fromGallery(): Promise<PickedFile | null> {

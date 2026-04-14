@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
-  Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
+  Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -17,6 +17,8 @@ import { deletePin, requestProfileOtp, updateProfile } from '../services/api';
 import { RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
+import { useModel } from '../context/ModelContext';
+import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from '../services/modelManager';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -31,6 +33,21 @@ export default function SettingsScreen() {
   const { user, logout, hasPin: ctxHasPin, markPinSet } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const isFocused = useIsFocused();
+  const {
+    status: modelStatus,
+    progress: modelProgress,
+    variant: modelVariant,
+    capability: modelCapability,
+    wifiOnly,
+    errorMessage: modelError,
+    pauseDownload: modelPause,
+    resumeDownload: modelResume,
+    cancelDownload: modelCancel,
+    deleteModel,
+    setWifiOnly,
+    acceptDownload,
+    neverShowNudge,
+  } = useModel();
 
   // Re-read SecureStore every time this screen gains focus so the PIN row
   // updates immediately after returning from SetPinScreen, regardless of
@@ -253,6 +270,183 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Offline AI Model */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Offline AI Model</Text>
+
+        {/* Device capability badge */}
+        <View style={[
+          styles.capabilityBadge,
+          modelCapability === 'cloud-only' ? styles.capabilityBadgeCloud : styles.capabilityBadgeCapable,
+        ]}>
+          <Ionicons
+            name={modelCapability === 'cloud-only' ? 'cloud-outline' : 'hardware-chip-outline'}
+            size={14}
+            color={modelCapability === 'cloud-only' ? COLORS.gray500 : COLORS.success}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[
+            styles.capabilityBadgeText,
+            modelCapability === 'cloud-only' ? styles.capabilityBadgeTextCloud : styles.capabilityBadgeTextCapable,
+          ]}>
+            {modelCapability === 'cloud-only'
+              ? 'Cloud only — upgrade device for offline AI'
+              : 'This device supports on-device AI'}
+          </Text>
+        </View>
+
+        {/* Model card */}
+        <View style={styles.modelCard}>
+          <View style={styles.modelCardHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modelCardName}>
+                {modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'Gemma 4 E4B'}
+              </Text>
+              <Text style={styles.modelCardSize}>
+                {modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '3.5 GB'}
+              </Text>
+            </View>
+            <View style={[
+              styles.modelStatusBadge,
+              modelStatus === 'done'         ? styles.modelStatusDone
+              : (modelStatus === 'downloading' || modelStatus === 'paused') ? styles.modelStatusActive
+              : modelStatus === 'error'      ? styles.modelStatusError
+              : styles.modelStatusIdle,
+            ]}>
+              <Text style={[
+                styles.modelStatusText,
+                modelStatus === 'done'         ? { color: COLORS.success }
+                : (modelStatus === 'downloading' || modelStatus === 'paused') ? { color: COLORS.teal500 }
+                : modelStatus === 'error'      ? { color: COLORS.error }
+                : { color: COLORS.gray500 },
+              ]}>
+                {modelStatus === 'done'          ? 'Ready'
+                 : modelStatus === 'downloading' ? `${modelProgress}%`
+                 : modelStatus === 'paused'      ? `Paused ${modelProgress}%`
+                 : modelStatus === 'error'       ? 'Error'
+                 : 'Not downloaded'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Progress bar */}
+          {(modelStatus === 'downloading' || modelStatus === 'paused') && (
+            <View style={styles.progressTrack}>
+              <View style={[
+                styles.progressFill,
+                { width: `${modelProgress}%` as any },
+                modelStatus === 'paused' && styles.progressFillPaused,
+              ]} />
+            </View>
+          )}
+
+          {/* Error message */}
+          {modelStatus === 'error' && modelError && (
+            <Text style={styles.modelErrorText}>{modelError}</Text>
+          )}
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* Download button */}
+        <TouchableOpacity
+          style={[
+            styles.settingsRow,
+            (modelStatus === 'done' || modelCapability === 'cloud-only') && styles.settingsRowDisabled,
+          ]}
+          onPress={acceptDownload}
+          disabled={modelStatus === 'done' || modelCapability === 'cloud-only'}
+        >
+          <Text style={[
+            styles.settingsRowLabel,
+            (modelStatus === 'done' || modelCapability === 'cloud-only') && styles.settingsRowLabelDisabled,
+          ]}>
+            Download model
+          </Text>
+          <Text style={styles.rowChevron}>›</Text>
+        </TouchableOpacity>
+
+        {/* Pause / Resume */}
+        {modelStatus === 'downloading' && (
+          <TouchableOpacity style={styles.settingsRow} onPress={modelPause}>
+            <Text style={styles.settingsRowLabel}>Pause download</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        )}
+        {modelStatus === 'paused' && (
+          <TouchableOpacity style={styles.settingsRow} onPress={modelResume}>
+            <Text style={styles.settingsRowLabel}>Resume download</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Cancel */}
+        {(modelStatus === 'downloading' || modelStatus === 'paused') && (
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() =>
+              Alert.alert('Cancel download', 'Cancel the download and delete the partial file?', [
+                { text: 'Keep downloading', style: 'cancel' },
+                { text: 'Cancel download', style: 'destructive', onPress: modelCancel },
+              ])
+            }
+          >
+            <Text style={[styles.settingsRowLabel, { color: COLORS.error }]}>Cancel download</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Delete */}
+        {modelStatus === 'done' && (
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() =>
+              Alert.alert(
+                'Delete model',
+                `This will remove ${modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'the model'} from your device. You can re-download it later.`,
+                [
+                  { text: 'Keep model', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: deleteModel },
+                ],
+              )
+            }
+          >
+            <Text style={[styles.settingsRowLabel, { color: COLORS.error }]}>Delete model</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Wi-Fi only toggle */}
+        <View style={styles.settingsRow}>
+          <Text style={styles.settingsRowLabel}>Wi-Fi only downloads</Text>
+          <Switch
+            value={wifiOnly}
+            onValueChange={setWifiOnly}
+            trackColor={{ true: COLORS.teal500, false: COLORS.border }}
+            thumbColor={COLORS.white}
+          />
+        </View>
+
+        {/* Never ask again */}
+        <TouchableOpacity
+          style={[styles.settingsRow, styles.lastRow]}
+          onPress={() =>
+            Alert.alert(
+              'Stop Wi-Fi reminders',
+              "You won't be reminded to download the AI model when on Wi-Fi.",
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Never ask again', style: 'destructive', onPress: neverShowNudge },
+              ],
+            )
+          }
+        >
+          <Text style={[styles.settingsRowLabel, { color: COLORS.error }]}>
+            Never ask again
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* App info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('about')}</Text>
@@ -426,4 +620,41 @@ const styles = StyleSheet.create({
   linkTextMuted: { color: COLORS.textLight },
   cancelBtn: { padding: 10 },
   cancelBtnText: { fontSize: 14, color: COLORS.gray500 },
+  progressTrack: {
+    height: 6, backgroundColor: COLORS.border, borderRadius: 3,
+    marginTop: 10, marginBottom: 4, overflow: 'hidden',
+  },
+  progressFill: {
+    height: 6, backgroundColor: COLORS.teal500, borderRadius: 3,
+  },
+  progressFillPaused: { backgroundColor: COLORS.amber300 },
+  modelErrorText: { fontSize: 13, color: COLORS.error, marginTop: 6 },
+  // capability badge
+  capabilityBadge: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+    marginBottom: 12, alignSelf: 'flex-start',
+  },
+  capabilityBadgeCapable: { backgroundColor: '#EBF9F1' },
+  capabilityBadgeCloud: { backgroundColor: COLORS.background },
+  capabilityBadgeText: { fontSize: 13, fontWeight: '500' },
+  capabilityBadgeTextCapable: { color: COLORS.success },
+  capabilityBadgeTextCloud: { color: COLORS.gray500 },
+  // model card
+  modelCard: {
+    borderWidth: 1, borderColor: COLORS.border,
+    borderRadius: 10, padding: 14, marginBottom: 4,
+  },
+  modelCardHeader: { flexDirection: 'row', alignItems: 'center' },
+  modelCardName: { fontSize: 15, fontWeight: '600', color: COLORS.gray900 },
+  modelCardSize: { fontSize: 13, color: COLORS.textLight, marginTop: 2 },
+  modelStatusBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  modelStatusDone: { backgroundColor: '#EBF9F1' },
+  modelStatusActive: { backgroundColor: COLORS.teal50 },
+  modelStatusError: { backgroundColor: '#fee2e2' },
+  modelStatusIdle: { backgroundColor: COLORS.background },
+  modelStatusText: { fontSize: 13, fontWeight: '600' },
+  // disabled rows
+  settingsRowDisabled: { opacity: 0.4 },
+  settingsRowLabelDisabled: { color: COLORS.textLight },
 });

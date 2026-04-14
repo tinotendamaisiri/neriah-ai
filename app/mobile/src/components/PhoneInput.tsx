@@ -16,13 +16,13 @@ import {
   FlatList,
   Modal,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Localization from 'expo-localization';
 import { COLORS } from '../constants/colors';
 import { COUNTRIES, Country, DEFAULT_COUNTRY_CODE } from '../constants/countries';

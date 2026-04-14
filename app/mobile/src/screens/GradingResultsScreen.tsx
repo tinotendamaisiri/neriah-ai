@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getTeacherSubmissions, approveAllMarks } from '../services/api';
@@ -216,7 +217,7 @@ export default function GradingResultsScreen() {
                     <View style={styles.nameRow}>
                       <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
                       {hasAnyFeedback(s) && (
-                        <Text style={styles.commentIcon}>💬</Text>
+                        <Ionicons name="chatbubble-outline" size={13} color={COLORS.gray500} />
                       )}
                     </View>
                     {isClassView && s.answer_key_title && (
@@ -324,7 +325,6 @@ const styles = StyleSheet.create({
   rowRight: { alignItems: 'flex-end' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   studentName: { fontSize: 15, fontWeight: '600', color: COLORS.text },
-  commentIcon: { fontSize: 13 },
   homeworkLabel: { fontSize: 12, color: COLORS.teal500, fontWeight: '600', marginTop: 1 },
   submittedDate: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
   score: { fontSize: 16, fontWeight: 'bold' },

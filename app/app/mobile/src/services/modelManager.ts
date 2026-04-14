@@ -10,7 +10,13 @@
 // bundle so they survive app updates without re-download.
 
 import * as FileSystem from 'expo-file-system';
-import { MODEL_PATHS, ModelVariant } from './litert';
+// LiteRT disabled for Expo Go — inline stubs replace the litert import.
+// import { MODEL_PATHS, ModelVariant } from './litert';
+export type ModelVariant = 'e2b' | 'e4b';
+const MODEL_PATHS: Record<ModelVariant, string> = {
+  e2b: `${FileSystem.documentDirectory ?? ''}models/gemma-4-e2b-it.task`,
+  e4b: `${FileSystem.documentDirectory ?? ''}models/gemma-4-e4b-it.task`,
+};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

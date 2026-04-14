@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import google.auth
 import google.auth.transport.requests
@@ -20,7 +21,9 @@ from shared.gemma_client import (
     extract_answer_key_from_image,
     generate_marking_scheme,
     generate_marking_scheme_from_image,
+    generate_scheme_from_text,
 )
+from shared.router import AIRequestType, route_ai_request
 from shared.models import AnswerKey
 from shared.user_context import get_user_context
 from shared.weakness_tracker import update_student_weaknesses
@@ -28,6 +31,20 @@ from shared.weakness_tracker import update_student_weaknesses
 logger = logging.getLogger(__name__)
 answer_keys_bp = Blueprint("answer_keys", __name__)
 homework_bp = Blueprint("homework", __name__)
+
+# Maps MIME type → file extension for base64-encoded file inputs
+_MEDIA_TYPE_EXT: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/msword": "doc",
+    "text/plain": "txt",
+}
 
 
 def _now_iso() -> str:
@@ -71,20 +88,58 @@ def _extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     return ""
 
 
-def _questions_from_file(file_bytes: bytes, filename: str) -> list[dict] | None:
+def _pdf_first_page_as_jpeg(pdf_bytes: bytes) -> bytes | None:
+    """Render the first page of a PDF to JPEG bytes using pymupdf. Returns None on failure."""
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if doc.page_count == 0:
+            return None
+        page = doc[0]
+        mat = fitz.Matrix(2.0, 2.0)  # 2× scale for better readability
+        pix = page.get_pixmap(matrix=mat)
+        return pix.tobytes("jpeg")
+    except Exception:
+        logger.warning("_pdf_first_page_as_jpeg failed", exc_info=True)
+        return None
+
+
+def _questions_from_file(
+    file_bytes: bytes,
+    filename: str,
+    input_type: str = "question_paper",
+    education_level: str = "",
+    subject: str | None = None,
+    user_ctx: dict | None = None,
+) -> tuple[list[dict] | None, str | None, str | None]:
     """
-    Process an uploaded file and return normalised question list.
-    Returns None if the file type is unsupported.
-    Images → Gemma multimodal.
-    PDF/DOCX/TXT → extract text → generate_marking_scheme (caller must supply education_level).
-    Returns (questions, extracted_text, error) tuple.
+    Process an uploaded file and return (questions, title_or_extracted_text, error).
+
+    input_type:
+      "question_paper" — teacher's question paper; Gemma generates answers (default)
+      "answer_key"     — teacher's existing answer key; Gemma extracts Q&A
+
+    Images → single Gemma multimodal call.
+    PDF/DOCX/TXT → extract plain text → caller calls generate_marking_scheme.
+    Returns (questions, title_or_text, error_str). questions is None for text-path files.
     """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     image_exts = {"jpg", "jpeg", "png", "webp", "heic", "heif"}
     if ext in image_exts:
-        result = extract_answer_key_from_image(file_bytes)
-        qs = result.get("questions", [])
-        return [_normalise_question(q, i) for i, q in enumerate(qs)], result.get("title"), None
+        if input_type == "question_paper":
+            # Generate a full marking scheme from the question paper image
+            scheme = generate_marking_scheme_from_image(
+                file_bytes, education_level, subject, user_context=user_ctx,
+            )
+            if "error" in scheme:
+                return None, None, scheme["error"]
+            qs = scheme.get("questions", [])
+            return [_normalise_question(q, i) for i, q in enumerate(qs)], scheme.get("title"), None
+        else:
+            # Extract Q&A from an existing answer key image
+            result = extract_answer_key_from_image(file_bytes)
+            qs = result.get("questions", [])
+            return [_normalise_question(q, i) for i, q in enumerate(qs)], result.get("title"), None
     elif ext in ("pdf", "docx", "doc", "txt"):
         text = _extract_text_from_file(file_bytes, filename)
         return None, text, None  # caller must call generate_marking_scheme with education_level
@@ -107,6 +162,18 @@ def list_answer_keys():
         return jsonify({"error": "forbidden"}), 403
 
     results = query("answer_keys", [("class_id", "==", class_id)], order_by="created_at")
+
+    # Auto-close any homework whose due_date has passed
+    now_iso = _now_iso()
+    for key in results:
+        if (
+            key.get("open_for_submission")
+            and key.get("due_date")
+            and key["due_date"] < now_iso
+        ):
+            upsert("answer_keys", key["id"], {"open_for_submission": False})
+            key["open_for_submission"] = False
+
     return jsonify(results), 200
 
 
@@ -125,6 +192,8 @@ def create_answer_key():
         subject = (request.form.get("subject") or "").strip() or None
         question_paper_text = (request.form.get("question_paper_text") or "").strip()
         open_for_submission = request.form.get("open_for_submission", "false").lower() == "true"
+        status = (request.form.get("status") or "").strip() or None
+        input_type = (request.form.get("input_type") or "question_paper").strip()
         file = request.files.get("file")
         questions_raw = None
     else:
@@ -135,9 +204,14 @@ def create_answer_key():
         subject = (body.get("subject") or "").strip() or None
         question_paper_text = (body.get("question_paper_text") or "").strip()
         open_for_submission = bool(body.get("open_for_submission", False))
+        status = body.get("status") or None
+        input_type = (body.get("input_type") or "question_paper").strip()
         qs = body.get("questions")
         questions_raw = [_normalise_question(q, i) for i, q in enumerate(qs)] if qs else None
         file = None
+        # Base64-encoded file (avoids multipart boundary issues on mobile)
+        file_data_b64 = body.get("file_data")
+        media_type = (body.get("media_type") or "").strip()
 
     if not class_id or not title:
         return jsonify({"error": "class_id and title are required"}), 400
@@ -151,12 +225,18 @@ def create_answer_key():
         education_level = (cls or {}).get("education_level", "")
 
     generated = False
+    stored_qp_text: str | None = question_paper_text or None  # persisted for server-side regeneration
+
+    # Build user context once — used by all three processing paths (file, base64, text).
+    user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
 
     # ── File upload processing ────────────────────────────────────────────────
     if file and file.filename:
         file_bytes = file.read()
         filename = (file.filename or "upload").lower()
-        qs_from_file, extracted_title_or_text, file_err = _questions_from_file(file_bytes, filename)
+        qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
+            file_bytes, filename, input_type, education_level, subject, user_ctx,
+        )
 
         if file_err:
             return jsonify({"error": file_err}), 400
@@ -170,10 +250,37 @@ def create_answer_key():
         elif extracted_title_or_text:
             # Text path — need to call generate_marking_scheme
             question_paper_text = extracted_title_or_text
+            stored_qp_text = question_paper_text
+
+    elif not is_multipart and file_data_b64:
+        # Base64 JSON path — mobile sends file as base64 string + media_type
+        try:
+            file_bytes = base64.b64decode(file_data_b64)
+        except Exception:
+            return jsonify({"error": "Invalid base64 in file_data"}), 400
+        ext = _MEDIA_TYPE_EXT.get(media_type, "bin")
+        filename = f"upload.{ext}"
+        qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
+            file_bytes, filename, input_type, education_level, subject, user_ctx,
+        )
+
+        if file_err:
+            return jsonify({"error": file_err}), 400
+
+        if qs_from_file is not None:
+            questions_raw = qs_from_file
+            if not title or title == "Auto-generated scheme":
+                title = extracted_title_or_text or title
+            generated = True
+        elif extracted_title_or_text:
+            # Text path — need to call generate_marking_scheme
+            question_paper_text = extracted_title_or_text
+            stored_qp_text = question_paper_text
 
     # ── Text → generate marking scheme ───────────────────────────────────────
     if not questions_raw and question_paper_text:
-        scheme = generate_marking_scheme(question_paper_text, education_level)
+        scheme = generate_marking_scheme(question_paper_text, education_level,
+                                         user_context=user_ctx)
         questions_raw = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
         if not title or title == "Auto-generated scheme":
             title = scheme.get("title") or title
@@ -194,6 +301,8 @@ def create_answer_key():
         total_marks=total_marks,
         open_for_submission=open_for_submission,
         generated=generated,
+        status=status,
+        question_paper_text=stored_qp_text,
     )
     upsert("answer_keys", key.id, key.model_dump())
     return jsonify(key.model_dump()), 201
@@ -227,11 +336,19 @@ def update_answer_key(key_id: str):
         file = request.files.get("file")
         question_paper_text = (request.form.get("question_paper_text") or "").strip()
 
+        # Build user context for AI calls in the update path
+        upd_class_id = key.get("class_id") or ""
+        upd_user_ctx = get_user_context(teacher_id, "teacher", class_id=upd_class_id)
+
         if file and file.filename:
             file_bytes = file.read()
             filename = (file.filename or "upload").lower()
             education_level = updates.get("education_level") or key.get("education_level", "")
-            qs_from_file, extracted_title_or_text, file_err = _questions_from_file(file_bytes, filename)
+            qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
+                file_bytes, filename,
+                education_level=education_level,
+                user_ctx=upd_user_ctx,
+            )
 
             if file_err:
                 return jsonify({"error": file_err}), 400
@@ -245,7 +362,8 @@ def update_answer_key(key_id: str):
 
         if not updates.get("questions") and question_paper_text:
             education_level = updates.get("education_level") or key.get("education_level", "")
-            scheme = generate_marking_scheme(question_paper_text, education_level)
+            scheme = generate_marking_scheme(question_paper_text, education_level,
+                                             user_context=upd_user_ctx)
             qs = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
             updates["questions"] = qs
             updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
@@ -268,7 +386,11 @@ def update_answer_key(key_id: str):
         question_paper_text = (body.get("question_paper_text") or "").strip()
         if not updates.get("questions") and question_paper_text:
             education_level = updates.get("education_level") or key.get("education_level", "")
-            scheme = generate_marking_scheme(question_paper_text, education_level)
+            json_user_ctx = get_user_context(
+                teacher_id, "teacher", class_id=key.get("class_id") or ""
+            )
+            scheme = generate_marking_scheme(question_paper_text, education_level,
+                                             user_context=json_user_ctx)
             qs = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
             updates["questions"] = qs
             updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
@@ -408,6 +530,7 @@ def generate_answer_key_scheme():
         return jsonify({"error": "forbidden"}), 403
 
     image_bytes = image_file.read()
+    route_ai_request(AIRequestType.SCHEME)  # always AIRoute.CLOUD on the backend
     user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
     scheme = generate_marking_scheme_from_image(image_bytes, education_level, subject,
                                                 user_context=user_ctx)
@@ -416,6 +539,234 @@ def generate_answer_key_scheme():
         return jsonify({"error": scheme["error"]}), 422
 
     return jsonify({"generated": True, "scheme": scheme}), 200
+
+
+# ── POST /api/homework/generate-scheme ───────────────────────────────────────
+#
+# Short-form media_type values sent by the web demo ("image", "pdf", "word",
+# "text") alongside full MIME types sent by the mobile app ("image/jpeg", etc.)
+
+_MEDIA_TYPE_SHORT_TO_EXT: dict[str, str] = {
+    "image": "jpg",
+    "photo": "jpg",
+    "pdf":   "pdf",
+    "word":  "docx",
+    "doc":   "docx",
+    "text":  "txt",
+}
+
+
+@homework_bp.post("/homework/generate-scheme")
+def create_homework_with_scheme():
+    """
+    POST /api/homework/generate-scheme
+
+    Create a new homework (answer key) record AND generate its marking scheme
+    via Gemma 4 in one call. Used by both the mobile app and the web demo.
+
+    Body (JSON):
+      title            str  — homework title (required)
+      class_id         str  — owning class (required)
+      subject          str  — subject name (optional)
+      education_level  str  — e.g. "Form 2" (optional; looked up from class if absent)
+      file_data        str  — base64-encoded file contents
+      media_type       str  — short: "image" | "pdf" | "word" | "text"
+                              OR full MIME: "image/jpeg", "application/pdf", etc.
+      text             str  — raw question paper text (alias: question_paper_text)
+
+    Returns the full answer_key document including questions[] and generated=true.
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    class_id             = (body.get("class_id") or "").strip()
+    title                = (body.get("title") or "").strip()
+    subject              = (body.get("subject") or "").strip() or None
+    education_level      = (body.get("education_level") or "").strip()
+    media_type           = (body.get("media_type") or "").strip()
+    file_data_b64        = body.get("file_data")
+    text_input           = (body.get("text") or body.get("question_paper_text") or "").strip()
+    due_date             = (body.get("due_date") or "").strip() or None
+    teacher_total_marks_raw = body.get("teacher_total_marks")
+    max_total_marks: int | None = None
+    if teacher_total_marks_raw is not None:
+        try:
+            max_total_marks = int(float(str(teacher_total_marks_raw)))
+            if max_total_marks <= 0:
+                max_total_marks = None
+        except (ValueError, TypeError):
+            max_total_marks = None
+
+    if not class_id or not title:
+        return jsonify({"error": "class_id and title are required"}), 400
+
+    if not _teacher_owns_class(teacher_id, class_id):
+        return jsonify({"error": "forbidden"}), 403
+
+    # Auto-lookup education_level from class if not provided
+    if not education_level:
+        cls = get_doc("classes", class_id)
+        education_level = (cls or {}).get("education_level", "Form 4")
+
+    questions_raw: list[dict] | None = None
+    stored_qp_text: str | None = None
+
+    # ── File path (base64 encoded) ────────────────────────────────────────────
+    if file_data_b64:
+        # Accept both full MIME types (mobile) and short-form names (web demo)
+        ext = (
+            _MEDIA_TYPE_EXT.get(media_type)                      # "image/jpeg" → "jpg"
+            or _MEDIA_TYPE_SHORT_TO_EXT.get(media_type.lower())  # "image" → "jpg"
+            or "bin"
+        )
+        filename = f"upload.{ext}"
+        logger.info(
+            "create_homework_with_scheme: file_data present, media_type=%r ext=%r class_id=%s",
+            media_type, ext, class_id,
+        )
+        try:
+            file_bytes = base64.b64decode(file_data_b64)
+        except Exception:
+            return jsonify({"error": "Invalid base64 in file_data"}), 400
+
+        user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
+        image_exts = {"jpg", "jpeg", "png", "webp", "heic", "heif"}
+
+        if ext in image_exts:
+            # ── Image: single multimodal Gemma call ───────────────────────────
+            scheme = generate_marking_scheme_from_image(
+                file_bytes, education_level, subject, user_context=user_ctx,
+                max_total_marks=max_total_marks,
+            )
+            if "error" in scheme:
+                return jsonify({"error": scheme["error"]}), 400
+            raw_qs = scheme.get("questions", [])
+            questions_raw = [_normalise_question(q, i) for i, q in enumerate(raw_qs)]
+            if not title or title == "Auto-generated scheme":
+                title = scheme.get("title") or title
+
+        elif ext == "pdf":
+            # ── PDF: try pdfplumber text extraction first ─────────────────────
+            import pdfplumber
+            pdf_text = ""
+            try:
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                    pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+                logger.info(
+                    "create_homework_with_scheme: pdfplumber extracted %d chars from PDF",
+                    len(pdf_text),
+                )
+            except Exception:
+                logger.warning("pdfplumber failed for PDF upload", exc_info=True)
+
+            if pdf_text:
+                # Searchable PDF — use text path
+                text_input = pdf_text
+            else:
+                # Scanned PDF — render first page to JPEG and use multimodal Gemma
+                logger.info(
+                    "create_homework_with_scheme: PDF text empty, falling back to image path",
+                )
+                jpeg_bytes = _pdf_first_page_as_jpeg(file_bytes)
+                if jpeg_bytes:
+                    scheme = generate_marking_scheme_from_image(
+                        jpeg_bytes, education_level, subject, user_context=user_ctx,
+                        max_total_marks=max_total_marks,
+                    )
+                    if "error" in scheme:
+                        return jsonify({"error": scheme["error"]}), 400
+                    raw_qs = scheme.get("questions", [])
+                    questions_raw = [_normalise_question(q, i) for i, q in enumerate(raw_qs)]
+                    if not title or title == "Auto-generated scheme":
+                        title = scheme.get("title") or title
+                else:
+                    return jsonify({
+                        "error": "Could not read this PDF. Try uploading a clearer scan or paste the question text instead.",
+                    }), 422
+
+        elif ext in ("docx", "doc"):
+            # ── Word document: extract text ───────────────────────────────────
+            from docx import Document
+            try:
+                doc_obj = Document(io.BytesIO(file_bytes))
+                word_text = "\n".join(p.text for p in doc_obj.paragraphs).strip()
+                logger.info(
+                    "create_homework_with_scheme: Word doc extracted %d chars",
+                    len(word_text),
+                )
+                if word_text:
+                    text_input = word_text
+            except Exception:
+                logger.warning("Word doc extraction failed", exc_info=True)
+
+        elif ext == "txt":
+            text_input = file_bytes.decode("utf-8-sig", errors="replace").strip()
+
+    # ── Text path ─────────────────────────────────────────────────────────────
+    if not questions_raw and text_input:
+        stored_qp_text = text_input
+        logger.info(
+            "create_homework_with_scheme: text path, len=%d education_level=%r",
+            len(text_input), education_level,
+        )
+        qs_result, raw_response = generate_scheme_from_text(
+            text_input, education_level, subject, max_total_marks=max_total_marks,
+        )
+        if qs_result is None:
+            if raw_response:
+                logger.error(
+                    "create_homework_with_scheme: JSON parse failed. Raw: %s", raw_response,
+                )
+                return jsonify({
+                    "error": "Gemma responded but the output could not be parsed as JSON.",
+                    "raw": raw_response,
+                }), 422
+            return jsonify({
+                "error": "Could not generate marking scheme. Try a clearer image or paste the question text instead.",
+            }), 422
+        questions_raw = [_normalise_question(q, i) for i, q in enumerate(qs_result)]
+
+    if not questions_raw:
+        logger.warning(
+            "create_homework_with_scheme: Gemma returned no questions "
+            "(media_type=%r, has_file=%s, has_text=%s)",
+            media_type, bool(file_data_b64), bool(text_input),
+        )
+        return jsonify({
+            "error": "Could not generate marking scheme. "
+                     "Try a clearer image or paste the question text instead.",
+        }), 422
+
+    # Hard-cap at 10 questions (matches the Gemma prompt instruction)
+    questions_raw = questions_raw[:10]
+
+    # Default due_date: server sets now + 24 h if teacher didn't specify one
+    if not due_date:
+        due_date = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+
+    total_marks = max_total_marks or sum(q.get("marks", 0) for q in questions_raw)
+    key = AnswerKey(
+        class_id=class_id,
+        teacher_id=teacher_id,
+        title=title,
+        education_level=education_level,
+        subject=subject,
+        questions=questions_raw,
+        total_marks=float(total_marks),
+        open_for_submission=False,
+        generated=True,
+        status="draft",
+        question_paper_text=stored_qp_text,
+        due_date=due_date,
+    )
+    upsert("answer_keys", key.id, key.model_dump())
+    logger.info(
+        "create_homework_with_scheme: created key %s with %d questions (total_marks=%s due_date=%s)",
+        key.id, len(questions_raw), total_marks, due_date,
+    )
+    return jsonify(key.model_dump()), 201
 
 
 # ── Generate marking scheme from an already-saved homework image ─────────────
@@ -488,6 +839,108 @@ def generate_scheme_from_homework(homework_id: str):
         return jsonify({"error": scheme["error"]}), 422
 
     return jsonify({"generated": True, "scheme": scheme}), 200
+
+
+# ── POST /api/answer-keys/<key_id>/regenerate ────────────────────────────────
+
+@answer_keys_bp.post("/answer-keys/<key_id>/regenerate")
+def regenerate_answer_key_scheme(key_id: str):
+    """
+    POST /api/answer-keys/{key_id}/regenerate
+
+    Re-generate the marking scheme for a DRAFT answer key. Accepts the same
+    inputs as create (multipart file or JSON text). Updates the draft in
+    Firestore and returns the new questions so the teacher can review again.
+
+    Falls back to the answer key's stored question_paper_text if no new input
+    is provided (useful when the teacher just taps "Regenerate" without
+    re-uploading).
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    key = get_doc("answer_keys", key_id)
+    if not key:
+        return jsonify({"error": "Answer key not found"}), 404
+    if key.get("teacher_id") != teacher_id:
+        return jsonify({"error": "forbidden"}), 403
+    if key.get("status") != "draft":
+        return jsonify({"error": "Only draft answer keys can be regenerated"}), 400
+
+    education_level = key.get("education_level", "")
+    subject = key.get("subject") or None
+    class_id = key.get("class_id", "")
+    questions_raw: list[dict] | None = None
+    question_paper_text = ""
+
+    is_multipart = "multipart" in (request.content_type or "")
+
+    if is_multipart:
+        education_level = (request.form.get("education_level") or education_level).strip()
+        subject = (request.form.get("subject") or subject or "").strip() or None
+        question_paper_text = (request.form.get("question_paper_text") or "").strip()
+        file = request.files.get("file")
+
+        if file and file.filename:
+            file_bytes = file.read()
+            filename = (file.filename or "upload").lower()
+            user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
+            qs_from_file, extracted_or_text, file_err = _questions_from_file(
+                file_bytes, filename, "question_paper", education_level, subject, user_ctx,
+            )
+            if file_err:
+                return jsonify({"error": file_err}), 400
+            if qs_from_file is not None:
+                questions_raw = qs_from_file
+            elif extracted_or_text:
+                question_paper_text = extracted_or_text
+    else:
+        body = request.get_json(silent=True) or {}
+        question_paper_text = (body.get("question_paper_text") or "").strip()
+        education_level = (body.get("education_level") or education_level).strip()
+        subject = (body.get("subject") or subject or "").strip() or None
+
+        # Base64 file input
+        file_data_b64 = body.get("file_data")
+        media_type = (body.get("media_type") or "").strip()
+        if file_data_b64 and not questions_raw:
+            try:
+                file_bytes = base64.b64decode(file_data_b64)
+            except Exception:
+                return jsonify({"error": "Invalid base64 in file_data"}), 400
+            ext = _MEDIA_TYPE_EXT.get(media_type, "bin")
+            filename = f"upload.{ext}"
+            user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
+            qs_from_file, extracted_or_text, file_err = _questions_from_file(
+                file_bytes, filename, "question_paper", education_level, subject, user_ctx,
+            )
+            if file_err:
+                return jsonify({"error": file_err}), 400
+            if qs_from_file is not None:
+                questions_raw = qs_from_file
+            elif extracted_or_text:
+                question_paper_text = extracted_or_text
+
+    # Fall back to stored question paper text
+    if not questions_raw and not question_paper_text:
+        question_paper_text = key.get("question_paper_text") or ""
+
+    if not questions_raw and question_paper_text:
+        scheme = generate_marking_scheme(question_paper_text, education_level)
+        questions_raw = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
+
+    if not questions_raw:
+        return jsonify({"error": "No question paper provided for regeneration and none stored on this answer key."}), 400
+
+    total_marks = sum(q.get("marks", 0) for q in questions_raw)
+    upsert("answer_keys", key_id, {
+        "questions": questions_raw,
+        "total_marks": total_marks,
+        "generated": True,
+    })
+    logger.info("regenerate_answer_key_scheme: regenerated %d question(s) for key %s", len(questions_raw), key_id)
+    return jsonify({"questions": questions_raw, "total_marks": total_marks}), 200
 
 
 # ── PATCH /api/homework/{id} ──────────────────────────────────────────────────

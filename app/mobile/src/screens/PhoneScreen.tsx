@@ -26,7 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput from '../components/PhoneInput';
-const logoImage = require('../../assets/icon.png');
+const logoImage = require('../../assets/icon-transparent.png');
 
 // E.164: + followed by 10–15 digits
 const E164_RE = /^\+[1-9]\d{9,14}$/;

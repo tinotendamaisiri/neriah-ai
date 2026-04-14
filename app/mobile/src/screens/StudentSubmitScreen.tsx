@@ -17,6 +17,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { getAssignments } from '../services/api';
 import { Assignment, StudentRootStackParamList } from '../types';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
@@ -80,7 +81,7 @@ export default function StudentSubmitScreen() {
 
       {!user?.class_id ? (
         <View style={styles.noClassCard}>
-          <Text style={styles.noClassIcon}>🏫</Text>
+          <MaterialIcons name="school" size={56} color={COLORS.gray500} style={styles.noClassIcon} />
           <Text style={styles.noClassTitle}>Not in a class yet</Text>
           <Text style={styles.noClassText}>
             Ask your teacher for a class join code and add it in Settings.
@@ -94,7 +95,7 @@ export default function StudentSubmitScreen() {
           contentContainerStyle={assignments.length === 0 ? styles.emptyFlex : styles.listContent}
           ListEmptyComponent={() => (
             <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>📋</Text>
+              <Ionicons name="clipboard-outline" size={56} color={COLORS.gray500} style={styles.emptyIcon} />
               <Text style={styles.emptyTitle}>No open assignments</Text>
               <Text style={styles.emptyText}>Your teacher hasn't opened any assignments yet.</Text>
             </View>
@@ -102,7 +103,7 @@ export default function StudentSubmitScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.card} onPress={() => startSubmission(item)}>
               <View style={styles.cardIcon}>
-                <Text style={styles.cardIconText}>📝</Text>
+                <Ionicons name="create-outline" size={22} color={COLORS.teal500} />
               </View>
               <View style={styles.cardBody}>
                 <Text style={styles.cardTitle}>{item.title ?? item.subject ?? 'Assignment'}</Text>
@@ -138,13 +139,13 @@ const styles = StyleSheet.create({
   listContent: { padding: 16 },
   emptyFlex: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyIcon: { fontSize: 56, marginBottom: 16 },
+  emptyIcon: { marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
   emptyText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20 },
   noClassCard: {
     flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40,
   },
-  noClassIcon: { fontSize: 56, marginBottom: 16 },
+  noClassIcon: { marginBottom: 16 },
   noClassTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
   noClassText: { fontSize: 14, color: COLORS.gray500, textAlign: 'center', lineHeight: 20 },
   card: {
@@ -166,7 +167,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 14,
   },
-  cardIconText: { fontSize: 22 },
   cardBody: { flex: 1 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text },
   cardSub: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },

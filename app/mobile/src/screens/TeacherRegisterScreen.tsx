@@ -15,13 +15,14 @@ import {
   Alert,
   Modal,
   SectionList,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { requestRegisterOtp, getSchools } from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 import { School, AuthStackParamList } from '../types';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import PhoneInput from '../components/PhoneInput';
 
@@ -220,7 +221,7 @@ export default function TeacherRegisterScreen() {
           </TouchableOpacity>
 
           <View style={styles.iconBadge}>
-            <Text style={styles.iconEmoji}>📋</Text>
+            <Ionicons name="clipboard-outline" size={36} color={COLORS.teal500} />
           </View>
 
           <Text style={styles.heading}>{t('create_teacher_account')}</Text>
@@ -419,7 +420,6 @@ const styles = StyleSheet.create({
     width: 72, height: 72, borderRadius: 20, backgroundColor: COLORS.teal50,
     justifyContent: 'center', alignItems: 'center', marginBottom: 20,
   },
-  iconEmoji: { fontSize: 36 },
   heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },
   subheading: { fontSize: 14, color: COLORS.gray500, marginBottom: 32 },
   form: { gap: 8 },

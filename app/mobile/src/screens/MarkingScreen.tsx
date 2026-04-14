@@ -5,7 +5,7 @@
 //   3. Teacher selects an answer key
 //   4. Camera capture → upload → annotated result
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -20,9 +20,17 @@ import {
 import { useRoute, useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { listStudents, listAnswerKeys, submitMark } from '../services/api';
+import {
+  resolveRoute,
+  gradeOnDevice,
+  showUnavailableAlert,
+  queueMarkingScan,
+  type OnDeviceUserContext,
+} from '../services/router';
 import { showError } from '../utils/showError';
 import { retryWithBackoff } from '../utils/retry';
 import { useAuth } from '../context/AuthContext';
+import { useModel } from '../context/ModelContext';
 import { Student, AnswerKey, MarkResult, RootStackParamList, EducationLevel } from '../types';
 import ScanButton from '../components/ScanButton';
 import MarkResultComponent from '../components/MarkResult';
@@ -33,6 +41,13 @@ type RouteParams = RootStackParamList['Mark'];
 export default function MarkingScreen() {
   const route = useRoute<any>();
   const { user } = useAuth();
+  const { suppressNudge } = useModel();
+
+  // Suppress the Wi-Fi download nudge while grading is in progress.
+  useEffect(() => {
+    suppressNudge(true);
+    return () => suppressNudge(false);
+  }, [suppressNudge]);
 
   const routeClassId: string | undefined = route.params?.class_id;
   const routeClassName: string | undefined = route.params?.class_name;
@@ -102,17 +117,52 @@ export default function MarkingScreen() {
     }
     if (!user) return;
 
+    const scanPayload = {
+      image_uri: imageUri,
+      teacher_id: user.id,
+      student_id: selectedStudent.id,
+      class_id: classId,
+      answer_key_id: selectedAnswerKey.id,
+      education_level: educationLevel,
+    };
+
+    const route = await resolveRoute('grading');
+
+    if (route === 'unavailable') {
+      showUnavailableAlert(() => {
+        queueMarkingScan(scanPayload).catch(() => {});
+      });
+      return;
+    }
+
     setMarking(true);
     try {
-      const payload = {
-        image_uri: imageUri,
-        teacher_id: user.id,
-        student_id: selectedStudent.id,
-        class_id: classId,
-        answer_key_id: selectedAnswerKey.id,
-        education_level: educationLevel,
-      };
-      const markResult = await retryWithBackoff(() => submitMark(payload));
+      let markResult: MarkResult;
+
+      if (route === 'on-device') {
+        // On-device grading is text-only — requires pre-extracted student answers.
+        // The on-device path is wired here for when LiteRT is linked and the E4B
+        // model is loaded. Falls through to cloud if the model throws (e.g. stub).
+        const questions = selectedAnswerKey.questions.map(q => ({
+          number: q.number,
+          correct_answer: q.correct_answer,
+          max_marks: q.max_marks,
+          marking_notes: q.marking_notes,
+        }));
+        // Serialize available profile context so LiteRT gets curriculum-aware prompts.
+        const onDeviceCtx: OnDeviceUserContext = {
+          education_level: educationLevel,
+          subject: selectedAnswerKey.subject ?? undefined,
+          // country/curriculum come from the teacher's school — not cached locally,
+          // so omit them here; the cloud path injects full RAG context instead.
+        };
+        const raw = await gradeOnDevice(questions, '', educationLevel, onDeviceCtx);
+        markResult = JSON.parse(raw) as MarkResult;
+      } else {
+        // Cloud path — full multimodal pipeline via Vertex Gemma 4.
+        markResult = await retryWithBackoff(() => submitMark(scanPayload));
+      }
+
       setResult(markResult);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {

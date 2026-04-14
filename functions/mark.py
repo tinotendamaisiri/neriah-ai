@@ -26,6 +26,7 @@ from shared.firestore_client import get_doc, increment_field, query, upsert
 from shared.gcs_client import generate_signed_url, upload_bytes
 from shared.gemma_client import check_image_quality, grade_submission
 from shared.models import GradingVerdict, Mark
+from shared.router import AIRequestType, route_ai_request
 from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,9 @@ def mark():
     image_file.seek(0)
 
     image_bytes = image_file.read()
+
+    # ── Route: all AI calls in this endpoint go to cloud ─────────────────────
+    route_ai_request(AIRequestType.GRADING)  # always AIRoute.CLOUD on the backend
 
     # ── 1. Image quality gate ─────────────────────────────────────────────────
     quality = check_image_quality(image_bytes)

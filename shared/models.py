@@ -115,7 +115,8 @@ class AnswerKey(BaseModel):
     total_marks: float = 0.0
     open_for_submission: bool = False
     generated: bool = False
-    status: Optional[str] = None
+    status: Optional[str] = None  # None = ready, "draft" = awaiting teacher review, "pending_setup" = unlabeled
+    question_paper_text: Optional[str] = None  # stored for server-side regeneration
     due_date: Optional[str] = None
     created_at: str = Field(default_factory=lambda: _now().isoformat())
 

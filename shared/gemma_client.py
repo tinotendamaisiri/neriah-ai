@@ -2,31 +2,36 @@
 Gemma 4 inference client — Ollama (local) and Vertex AI (cloud) backends.
 
 Backend selection via INFERENCE_BACKEND env var:
-  "ollama"  — local Ollama server (default)
-  "vertex"  — Vertex AI dedicated endpoint (VERTEX_ENDPOINT_ID required)
+  "ollama"  — local Ollama server (default, dev)
+  "vertex"  — Vertex AI Model Garden serverless via OpenAI-compatible API (production)
 
 Ollama model routing:
   Simple / student queries         →  OLLAMA_MODEL_STUDENT  (gemma4:e2b)
   Teacher grading / complex tasks  →  OLLAMA_MODEL_TEACHER  (gemma4:latest)
   Cloud-equivalent local model     →  OLLAMA_MODEL_CLOUD    (gemma4:26b-a4b-it-q4_K_M)
 
-Vertex AI model:
-  gemma-4-26b-a4b-it on a dedicated endpoint (VERTEX_ENDPOINT_ID)
+Vertex AI (INFERENCE_BACKEND=vertex):
+  Endpoint: https://aiplatform.googleapis.com/v1/projects/{GCP_PROJECT_ID}/
+            locations/global/endpoints/openapi/chat/completions
+  Model:    VERTEX_MODEL_ID  (default: google/gemma-4-26b-a4b-it-maas)
+  Auth:     Application Default Credentials — gcloud auth / Workload Identity
 
-All five function signatures and JSON output schemas are backend-agnostic.
+All function signatures and JSON output schemas are backend-agnostic.
 All functions return safe fallback values on error and never raise.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
 from functools import lru_cache
 
+import google.auth
+import google.auth.transport.requests
 import ollama
-from google import genai
-from google.genai import types
+import requests
 
 from shared.config import settings
 
@@ -40,78 +45,124 @@ def _ollama_client() -> ollama.Client:
     return ollama.Client(host=settings.OLLAMA_BASE_URL)
 
 
-@lru_cache(maxsize=1)
-def _vertex_client() -> genai.Client:
-    return genai.Client(
-        vertexai=True,
-        project=settings.GCP_PROJECT_ID,
-        location=settings.GCP_REGION,
-    )
-
-
 # ─── Backend dispatch ─────────────────────────────────────────────────────────
 
 def _generate(
     prompt: str,
     image_bytes: bytes | None = None,
     complexity: str = "complex",   # "simple" | "complex"
+    max_tokens: int | None = None,
 ) -> str:
     """
     Route to Ollama or Vertex AI based on INFERENCE_BACKEND.
     Returns raw model text. Raises on error (callers catch).
     """
     if settings.INFERENCE_BACKEND == "vertex":
-        return _vertex_generate(prompt, image_bytes)
-    return _ollama_generate(prompt, image_bytes, complexity)
+        return _vertex_generate(prompt, image_bytes, max_tokens=max_tokens)
+    return _ollama_generate(prompt, image_bytes, complexity, max_tokens=max_tokens)
 
 
 def _ollama_generate(
     prompt: str,
     image_bytes: bytes | None = None,
     complexity: str = "complex",
+    max_tokens: int | None = None,
 ) -> str:
     model = settings.OLLAMA_MODEL_STUDENT if complexity == "simple" else settings.OLLAMA_MODEL_TEACHER
     message: dict = {"role": "user", "content": prompt}
     if image_bytes is not None:
         message["images"] = [image_bytes]
-    response = _ollama_client().chat(model=model, messages=[message])
+    options = {"num_predict": max_tokens} if max_tokens is not None else {}
+    response = _ollama_client().chat(model=model, messages=[message], options=options or None)
     return response.message.content
 
 
-def _vertex_generate(prompt: str, image_bytes: bytes | None = None) -> str:
-    endpoint = (
-        settings.VERTEX_ENDPOINT_ID
-        if settings.VERTEX_ENDPOINT_ID
-        else settings.VERTEX_MODEL_ID
+def _get_vertex_token() -> str:
+    """Obtain a short-lived Bearer token from Application Default Credentials."""
+    creds, _ = google.auth.default()
+    creds.refresh(google.auth.transport.requests.Request())
+    return creds.token
+
+
+def _vertex_chat_completions(
+    messages: list[dict],
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> str:
+    """
+    POST to the Vertex AI OpenAI-compatible chat completions endpoint.
+    Returns the assistant message content string. Raises on HTTP error.
+    """
+    url = (
+        f"https://aiplatform.googleapis.com/v1/projects/{settings.GCP_PROJECT_ID}"
+        "/locations/global/endpoints/openapi/chat/completions"
     )
-    parts: list = []
+    headers = {
+        "Authorization": f"Bearer {_get_vertex_token()}",
+        "Content-Type": "application/json",
+    }
+    body: dict = {
+        "model": settings.VERTEX_MODEL_ID,
+        "stream": False,
+        "messages": messages,
+        "max_tokens": max_tokens if max_tokens is not None else settings.VERTEX_MAX_OUTPUT_TOKENS,
+        "temperature": temperature if temperature is not None else settings.VERTEX_TEMPERATURE,
+    }
+    response = requests.post(url, headers=headers, json=body, timeout=120)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
+def _vertex_generate(
+    prompt: str,
+    image_bytes: bytes | None = None,
+    max_tokens: int | None = None,
+) -> str:
     if image_bytes is not None:
-        parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
-    parts.append(prompt)
-    response = _vertex_client().models.generate_content(
-        model=endpoint,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            temperature=settings.VERTEX_TEMPERATURE,
-            max_output_tokens=settings.VERTEX_MAX_OUTPUT_TOKENS,
-        ),
-    )
-    return response.text
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        content: list = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            {"type": "text", "text": prompt},
+        ]
+        messages = [{"role": "user", "content": content}]
+    else:
+        messages = [{"role": "user", "content": prompt}]
+    return _vertex_chat_completions(messages, max_tokens=max_tokens)
 
 
 # ─── JSON helpers ─────────────────────────────────────────────────────────────
 
 def _parse_json(raw: str, fallback):
-    """Strip markdown fences and parse JSON. Returns fallback on failure. Never raises."""
+    """
+    Strip markdown code fences, repair truncated JSON, then parse.
+    Returns fallback on failure. Never raises.
+    """
     try:
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            start = 1
-            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
-            text = "\n".join(lines[start:end])
-        return json.loads(text)
-    except (json.JSONDecodeError, ValueError):
+        # Strip ```json ... ``` or ``` ... ``` fences
+        clean = re.sub(r'```(?:json)?', '', raw).strip()
+        if clean.endswith('```'):
+            clean = clean[:-3].strip()
+
+        # Attempt direct parse first
+        try:
+            return json.loads(clean)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Truncation repair: if the JSON doesn't end with }, find the last
+        # complete object entry and close the questions array + root object.
+        if not clean.endswith('}'):
+            last_brace = clean.rfind('}')
+            if last_brace > 0:
+                repaired = clean[:last_brace + 1] + ']}'
+                try:
+                    return json.loads(repaired)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        logger.warning("JSON parse failed — using fallback. Raw: %.200s", raw)
+        return fallback
+    except Exception:
         logger.warning("JSON parse failed — using fallback. Raw: %.200s", raw)
         return fallback
 
@@ -228,6 +279,13 @@ def grade_submission(
     subject    = ctx.get("subject") or answer_key.get("subject") or ""
     curriculum = ctx.get("curriculum") or ""
 
+    logger.info(
+        "[gemma] grade_submission level=%s curriculum=%s subject=%s "
+        "weaknesses=%d rag=%s",
+        education_level, curriculum or "-", subject or "-",
+        len(ctx.get("weakness_topics") or []), bool(ctx),
+    )
+
     # ── RAG context retrieval (additive — never blocks if it fails) ───────────
     rag_section = _build_rag_context(
         query_text=f"{curriculum} {subject} {education_level} {questions_json[:400]}",
@@ -326,15 +384,48 @@ def _build_rag_context(
 
 # ─── 3. Generate marking scheme ───────────────────────────────────────────────
 
-def generate_marking_scheme(question_paper_text: str, education_level: str) -> dict:
+def generate_marking_scheme(
+    question_paper_text: str,
+    education_level: str,
+    user_context: dict | None = None,
+    max_total_marks: int | None = None,
+) -> dict:
     """
     Auto-generates an answer key from a question paper (plain text).
     Returns {"title": str, "total_marks": int, "questions": [...]}. Never raises.
+
+    user_context — from shared.user_context.get_user_context(); used to retrieve
+    curriculum marking conventions from the vector DB.
     """
     _FALLBACK: dict = {"title": "Auto-generated scheme", "total_marks": 0, "questions": []}
+    ctx = user_context or {}
+    curriculum = ctx.get("curriculum") or ""
+    subject    = ctx.get("subject") or ""
+
+    logger.info(
+        "[gemma] generate_marking_scheme level=%s curriculum=%s subject=%s "
+        "rag=%s",
+        education_level, curriculum or "-", subject or "-",
+        bool(ctx),
+    )
+
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject} {education_level} marking scheme",
+        user_context=ctx,
+        include_grading_examples=False,
+    )
+
+    marks_constraint = (
+        f"The total marks for this paper is {max_total_marks}. "
+        "Allocate marks per question accordingly.\n"
+        if max_total_marks else ""
+    )
+
     prompt = f"""You are an expert {education_level} teacher.
 Grading standard: {_intensity(education_level)}.
-
+{f"Curriculum: {curriculum}" if curriculum else ""}
+{f"Subject: {subject}" if subject else ""}
+{marks_constraint}{rag_section}
 Generate a complete marking scheme for the question paper below.
 
 Question paper:
@@ -369,6 +460,88 @@ Rules:
         return _FALLBACK
 
 
+# ─── 3a. Generate marking scheme from text (with raw-response logging) ───────
+
+def generate_scheme_from_text(
+    question_paper_text: str,
+    education_level: str,
+    subject: str | None = None,
+    user_context: dict | None = None,
+    max_total_marks: int | None = None,
+) -> tuple[list[dict] | None, str | None]:
+    """
+    Generate a marking scheme from plain text with full logging and robust JSON parsing.
+
+    Returns:
+      (questions, None)      — success; questions is a list of question dicts
+      (None, raw_response)   — Gemma responded but JSON parse failed
+      (None, None)           — generation error (already logged)
+    Never raises.
+
+    user_context — from shared.user_context.get_user_context(); used to retrieve
+    curriculum marking conventions from the vector DB.
+    """
+    ctx = user_context or {}
+    curriculum = ctx.get("curriculum") or ""
+    subject = subject or ctx.get("subject") or None
+
+    logger.info(
+        "[gemma] generate_scheme_from_text level=%s curriculum=%s subject=%s rag=%s",
+        education_level, curriculum or "-", subject or "-", bool(ctx),
+    )
+
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject or ''} {education_level} marking scheme",
+        user_context=ctx,
+        include_grading_examples=False,
+    )
+
+    subject_line = f"Subject: {subject}" if subject else ""
+    curriculum_line = f"Curriculum: {curriculum}" if curriculum else ""
+    marks_constraint = (
+        f"The total marks for this paper is {max_total_marks}. "
+        "Allocate marks per question accordingly.\n"
+        if max_total_marks else ""
+    )
+    prompt = (
+        f"You are an expert {education_level} examiner. {subject_line}\n"
+        f"{curriculum_line}\n"
+        f"Grading standard: {_intensity(education_level)}.\n"
+        f"{marks_constraint}{rag_section}\n"
+        "Generate a complete marking scheme for the question paper below.\n\n"
+        f"Question paper:\n{question_paper_text}\n\n"
+        "Return ONLY valid JSON with no markdown fences, no extra text:\n"
+        "{\n"
+        '  "title": "<subject or paper title>",\n'
+        '  "total_marks": <integer>,\n'
+        '  "questions": [\n'
+        '    {\n'
+        '      "question_number": 1,\n'
+        '      "question_text": "<full question text>",\n'
+        '      "correct_answer": "<model answer>",\n'
+        '      "marks": <integer>,\n'
+        '      "marking_notes": "<what to accept, partial credit rules>"\n'
+        '    }\n'
+        '  ]\n'
+        "}"
+    )
+
+    raw: str = ""
+    try:
+        raw = _generate(prompt, complexity="complex")
+        logger.info("Gemma raw response: %.500s", raw)
+        cleaned = re.sub(r"```json|```", "", raw).strip()
+        data = json.loads(cleaned)
+        questions = data.get("questions", [])
+        return questions, None
+    except json.JSONDecodeError:
+        logger.error("generate_scheme_from_text JSON parse failed. Full response: %s", raw)
+        return None, raw
+    except Exception:
+        logger.exception("generate_scheme_from_text failed")
+        return None, None
+
+
 # ─── 3b. Generate marking scheme from image (multimodal) ─────────────────────
 
 def generate_marking_scheme_from_image(
@@ -376,6 +549,7 @@ def generate_marking_scheme_from_image(
     education_level: str,
     subject: str | None = None,
     user_context: dict | None = None,
+    max_total_marks: int | None = None,
 ) -> dict:
     """
     Auto-generates a marking scheme from a question paper photograph.
@@ -392,6 +566,11 @@ def generate_marking_scheme_from_image(
     curriculum = ctx.get("curriculum") or ""
     subject_line = f"Subject: {subject}" if subject else ""
 
+    logger.info(
+        "[gemma] generate_marking_scheme_from_image level=%s curriculum=%s subject=%s rag=%s",
+        education_level, curriculum or "-", subject or "-", bool(ctx),
+    )
+
     # RAG: retrieve curriculum marking conventions (no grading examples needed here)
     rag_section = _build_rag_context(
         query_text=f"{curriculum} {subject or ''} {education_level} marking scheme conventions",
@@ -399,15 +578,24 @@ def generate_marking_scheme_from_image(
         include_grading_examples=False,
     )
 
+    marks_constraint = (
+        f"The total marks for this paper is {max_total_marks}. "
+        "Allocate marks per question accordingly.\n"
+        if max_total_marks else ""
+    )
+
     prompt = f"""You are a curriculum-aligned marking scheme generator for African schools.
-You are looking at a photograph of a question paper. Read every question visible in the image.
-Generate a complete marking scheme with correct answers for each question.
+You are looking at a photograph of a question paper. Read the questions visible in the image.
+Generate a marking scheme for UP TO 10 questions maximum. If the paper has more than 10 questions, pick the most important ones.
 Education level: {education_level}
 {f"Curriculum: {curriculum}" if curriculum else ""}
 {subject_line}
-{rag_section}
+{marks_constraint}{rag_section}
 
-Respond ONLY with valid JSON matching this schema exactly:
+Keep correct_answer concise — one sentence maximum per question.
+Assign marks proportionally based on question complexity and education level.
+
+Respond ONLY with valid JSON matching this schema exactly — no text before or after the JSON:
 {{
   "title": "string — short title for this marking scheme",
   "total_marks": number,
@@ -415,17 +603,15 @@ Respond ONLY with valid JSON matching this schema exactly:
     {{
       "number": int,
       "question_text": "string — the question as read from the image",
-      "correct_answer": "string — the expected correct answer",
+      "correct_answer": "string — concise expected answer, one sentence max",
       "max_marks": number,
-      "marking_notes": "string or null — guidance on acceptable alternative answers or partial credit"
+      "marking_notes": "string or null — brief guidance on partial credit only"
     }}
   ]
-}}
-Assign marks proportionally based on question complexity and education level.
-Do not include any text outside the JSON object."""
+}}"""
 
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex")
+        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex", max_tokens=4096)
 
         # Primary parse (handles markdown fences)
         parsed = _parse_json(raw, None)
@@ -454,14 +640,41 @@ Do not include any text outside the JSON object."""
 
 # ─── 4. Grade document (tertiary text-based submissions) ─────────────────────
 
-def grade_document(extracted_text: str, rubric: dict, education_level: str) -> list[dict]:
+def grade_document(
+    extracted_text: str,
+    rubric: dict,
+    education_level: str,
+    user_context: dict | None = None,
+) -> list[dict]:
     """
     Grades a tertiary submission (text extracted from PDF/DOCX) against a rubric.
     Returns list of criterion verdict dicts. Never raises.
+
+    user_context — from shared.user_context.get_user_context(); used to retrieve
+    curriculum context for tertiary assessment.
     """
     _FALLBACK: list[dict] = []
+    ctx = user_context or {}
+    curriculum = ctx.get("curriculum") or ""
+    subject    = ctx.get("subject") or ""
+
+    logger.info(
+        "[gemma] grade_document level=%s curriculum=%s subject=%s weaknesses=%d rag=%s",
+        education_level, curriculum or "-", subject or "-",
+        len(ctx.get("weakness_topics") or []), bool(ctx),
+    )
+
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject} {education_level} rubric assessment",
+        user_context=ctx,
+        include_grading_examples=True,
+    )
+
     rubric_json = json.dumps(rubric.get("criteria", []), indent=2)
     prompt = f"""You are a {education_level} lecturer assessing a student submission.
+{f"Curriculum: {curriculum}" if curriculum else ""}
+{f"Subject: {subject}" if subject else ""}
+{rag_section}
 
 Rubric criteria:
 {rubric_json}
@@ -520,27 +733,20 @@ def _vertex_chat(
     current_message: str,
     image_bytes: bytes | None,
 ) -> str:
-    """Multi-turn Vertex AI chat. Converts history to Content objects."""
-    endpoint = settings.VERTEX_ENDPOINT_ID if settings.VERTEX_ENDPOINT_ID else settings.VERTEX_MODEL_ID
-    contents: list = []
+    """Multi-turn Vertex AI chat via OpenAI-compatible endpoint."""
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
     for msg in history:
-        role = "model" if msg["role"] == "assistant" else "user"
-        contents.append(types.Content(role=role, parts=[types.Part.from_text(msg["content"])]))
-    current_parts: list = []
+        messages.append({"role": msg["role"], "content": msg["content"]})
     if image_bytes is not None:
-        current_parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
-    current_parts.append(types.Part.from_text(current_message))
-    contents.append(types.Content(role="user", parts=current_parts))
-    response = _vertex_client().models.generate_content(
-        model=endpoint,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=settings.VERTEX_TEMPERATURE,
-            max_output_tokens=settings.VERTEX_MAX_OUTPUT_TOKENS,
-        ),
-    )
-    return response.text
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        content: list = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            {"type": "text", "text": current_message},
+        ]
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": current_message})
+    return _vertex_chat_completions(messages)
 
 
 # ─── 5. Generate rubric ───────────────────────────────────────────────────────
@@ -641,6 +847,15 @@ def student_tutor(
     """
     ctx = user_context or {}
     weak_topics: list[str] = ctx.get("weakness_topics") or []
+
+    logger.info(
+        "[gemma] student_tutor level=%s curriculum=%s subject=%s weaknesses=%d rag=%s",
+        education_level,
+        ctx.get("curriculum", "-"),
+        ctx.get("subject", "-"),
+        len(weak_topics),
+        bool(ctx),
+    )
 
     # Augment short/generic queries with weak topics so RAG retrieves relevant content
     rag_query = message

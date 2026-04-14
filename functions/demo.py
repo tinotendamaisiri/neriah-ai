@@ -22,7 +22,8 @@ from flask import Blueprint, jsonify, request
 
 from shared.auth import create_jwt
 from shared.config import is_demo, settings
-from shared.firestore_client import delete_doc, get_db, query, upsert
+from shared.firestore_client import delete_doc, get_db, get_doc, query, upsert
+from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
 demo_bp = Blueprint("demo", __name__)
@@ -377,6 +378,12 @@ def demo_grade():
     answer_key_id = (body.get("answer_key_id") or DEMO_HW_ID).strip()
     submission_id = body.get("submission_id") or str(uuid.uuid4())
 
+    # Resolve and log the demo user context so RAG injection is visible in logs.
+    # This mirrors what real endpoints do — the demo teacher profile maps to
+    # country=Zimbabwe, curriculum=ZIMSEC, subject=Mathematics, level=form_2.
+    demo_ctx = get_user_context(DEMO_TEACHER_ID, "teacher", class_id=DEMO_CLASS_ID)
+    logger.info("[demo] grade context: %s", demo_ctx)
+
     mark_id = str(uuid.uuid4())
     now = _now()
     score = sum(v["awarded_marks"] for v in _DEMO_VERDICTS)
@@ -413,6 +420,91 @@ def demo_grade():
 
     logger.info("[demo] Created pre-canned mark %s (%.0f%%)", mark_id, mark_doc["percentage"])
     return jsonify(mark_doc), 201
+
+
+# ── POST /api/demo/ai-grade ──────────────────────────────────────────────────
+
+@demo_bp.post("/demo/ai-grade")
+def demo_ai_grade():
+    """
+    Real AI grading for the web demo — accepts a question paper image and runs
+    the full grade_submission pipeline with demo user context injected.
+
+    Unlike /api/demo/grade (pre-canned), this calls Gemma and returns live verdicts.
+    Requires NERIAH_ENV=demo.
+
+    Body (multipart/form-data):
+        image        — JPEG / PNG of the student's work
+        answer_key_id — optional; defaults to DEMO_HW_ID
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    image_file = request.files.get("image")
+    if not image_file:
+        return jsonify({"error": "image file is required"}), 400
+
+    image_file.seek(0, 2)
+    if image_file.tell() > 10 * 1024 * 1024:
+        return jsonify({"error": "Image too large (max 10 MB)"}), 413
+    image_file.seek(0)
+    image_bytes = image_file.read()
+
+    answer_key_id = (request.form.get("answer_key_id") or DEMO_HW_ID).strip()
+
+    # Fetch demo answer key
+    answer_key = get_doc("answer_keys", answer_key_id) or {
+        "questions": _DEMO_QUESTIONS,
+        "education_level": "form_2",
+        "subject": "Mathematics",
+        "class_id": DEMO_CLASS_ID,
+    }
+    education_level = answer_key.get("education_level", "form_2")
+
+    # Build demo user context (country=Zimbabwe, curriculum=ZIMSEC, subject=Mathematics)
+    demo_ctx = get_user_context(DEMO_TEACHER_ID, "teacher", class_id=DEMO_CLASS_ID)
+    logger.info("[demo/ai-grade] context: %s", demo_ctx)
+
+    try:
+        from shared.gemma_client import check_image_quality, grade_submission  # noqa: PLC0415
+        from shared.models import GradingVerdict  # noqa: PLC0415
+
+        quality = check_image_quality(image_bytes)
+        if not quality.get("pass", True):
+            reason = quality.get("reason", "")
+            return jsonify({"error": "image_quality_rejected", "message": reason}), 422
+
+        raw_verdicts = grade_submission(
+            image_bytes, answer_key, education_level, user_context=demo_ctx,
+        )
+        verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
+        score     = sum(v.awarded_marks for v in verdicts)
+        max_score = sum(v.max_marks for v in verdicts) or float(
+            answer_key.get("total_marks", len(_DEMO_QUESTIONS) * 2)
+        )
+        percentage = round(score / max_score * 100, 1) if max_score else 0.0
+
+        logger.info("[demo/ai-grade] %.0f%% (%s/%s)", percentage, score, max_score)
+        return jsonify({
+            "score": score,
+            "max_score": max_score,
+            "percentage": percentage,
+            "verdicts": [v.model_dump() for v in verdicts],
+            "context_injected": demo_ctx,
+        }), 200
+
+    except Exception:
+        logger.exception("[demo/ai-grade] AI grading failed — falling back to pre-canned")
+        score     = sum(v["awarded_marks"] for v in _DEMO_VERDICTS)
+        max_score = sum(q["marks"] for q in _DEMO_QUESTIONS)
+        return jsonify({
+            "score": score,
+            "max_score": max_score,
+            "percentage": round(score / max_score * 100, 1),
+            "verdicts": _DEMO_VERDICTS,
+            "context_injected": demo_ctx,
+            "fallback": True,
+        }), 200
 
 
 # ── POST /api/demo/approve ────────────────────────────────────────────────────

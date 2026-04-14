@@ -3,6 +3,7 @@
 // React error boundaries must be class components.
 
 import React, { Component, ReactNode } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -46,7 +47,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <View style={styles.container}>
-          <Text style={styles.icon}>⚠️</Text>
+          <Ionicons name="warning-outline" size={56} color={COLORS.amber500} style={styles.icon} />
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.body}>
             An unexpected error occurred. Your data is safe — tap below to try again.
@@ -69,7 +70,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     padding: 32,
   },
-  icon: { fontSize: 56, marginBottom: 20 },
+  icon: { marginBottom: 20 },
   title: { fontSize: 22, fontWeight: '700', color: COLORS.gray900, marginBottom: 12, textAlign: 'center' },
   body: {
     fontSize: 15,

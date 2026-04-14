@@ -15,15 +15,21 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
-  SafeAreaView,
   FlatList,
 } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { listClasses, createAnswerKey, createAnswerKeyWithFile } from '../services/api';
+import * as FileSystem from 'expo-file-system/legacy';
+import { listClasses, createAnswerKey } from '../services/api';
+import { resolveRoute, showUnavailableAlert } from '../services/router';
+import { processPickedImage } from '../utils/imageProcessing';
 import { Class } from '../types';
 import { COLORS } from '../constants/colors';
+import InAppCamera from '../components/InAppCamera';
 
 const COMMON_SUBJECTS = [
   'Mathematics',
@@ -58,6 +64,10 @@ interface QPFile {
   name: string;
   mimeType: string;
   label: string;
+  /** Pre-read base64 string. Set at pick time so handleCreate never re-reads. */
+  base64?: string;
+  /** True if auto-enhancement was applied to this file. */
+  enhanced?: boolean;
 }
 
 export default function AddHomeworkScreen() {
@@ -74,6 +84,16 @@ export default function AddHomeworkScreen() {
   const [subjectModalVisible, setSubjectModalVisible] = useState(false);
   const [subjectSearch, setSubjectSearch] = useState('');
 
+  // Due date — default tomorrow at the same time
+  const [dueDate, setDueDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d;
+  });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  // Total marks — empty = AI decides automatically
+  const [teacherTotalMarks, setTeacherTotalMarks] = useState('');
+
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>(prefilledClassId ?? '');
   const [showClassPicker, setShowClassPicker] = useState(false);
@@ -84,6 +104,9 @@ export default function AddHomeworkScreen() {
   const [qpText, setQpText] = useState('');
   const [textModalVisible, setTextModalVisible] = useState(false);
   const [textDraft, setTextDraft] = useState('');
+
+  // Camera state — which slot is currently requesting the camera ('qp' | 'ms' | null)
+  const [cameraTarget, setCameraTarget] = useState<'qp' | 'ms' | null>(null);
 
   // Manual marking scheme state (takes precedence over auto-generate when present)
   const [showManualScheme, setShowManualScheme] = useState(false);
@@ -134,16 +157,14 @@ export default function AddHomeworkScreen() {
 
   // ── Homework paper pickers ─────────────────────────────────────────────────
 
-  const handleCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera access is required.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: 'images', quality: 0.85 });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    setQpFile({ uri: asset.uri, name: `homework_${Date.now()}.jpg`, mimeType: 'image/jpeg', label: '📷 Camera photo' });
+  const handleCamera = () => {
+    setCameraTarget('qp');
+  };
+
+  // ── Shared: apply a processed image to the QP slot ───────────────────────────
+  const applyQPImage = (processed: { uri: string; base64: string; enhanced: boolean }, name: string) => {
+    setQpFile({ uri: processed.uri, name, mimeType: 'image/jpeg', label: `Gallery: ${name}`, base64: processed.base64, enhanced: processed.enhanced });
+    console.log('[AddHomework] qp image set:', { enhanced: processed.enhanced, base64Length: processed.base64?.length });
     setQpText('');
   };
 
@@ -151,17 +172,46 @@ export default function AddHomeworkScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.85 });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
+    if (!asset.uri) { Alert.alert('Error', 'Could not read image. Please try again.'); return; }
     const name = asset.fileName ?? `homework_${Date.now()}.jpg`;
-    setQpFile({ uri: asset.uri, name, mimeType: asset.mimeType ?? 'image/jpeg', label: `🖼 ${name}` });
-    setQpText('');
+
+    const processed = await processPickedImage(asset.uri);
+
+    if (processed.warnings.length > 0) {
+      Alert.alert(
+        'This image may be hard to read',
+        processed.warnings.join('\n'),
+        [
+          { text: 'Choose Another', onPress: () => handleGallery() },
+          { text: 'Use Anyway', onPress: () => applyQPImage(processed, name) },
+        ],
+      );
+    } else {
+      applyQPImage(processed, name);
+    }
   };
 
   const handlePickPDF = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf'], copyToCacheDirectory: true });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setQpFile({ uri: asset.uri, name: asset.name ?? 'document.pdf', mimeType: 'application/pdf', label: `📄 ${asset.name}` });
-    setQpText('');
+    if (!asset.uri) { Alert.alert('Error', 'Could not read PDF. Please try again.'); return; }
+    try {
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' as any });
+      if (!base64) throw new Error('base64 is empty after reading');
+      setQpFile({ uri: asset.uri, name: asset.name ?? 'document.pdf', mimeType: 'application/pdf', label: `PDF: ${asset.name}`, base64 });
+      setQpText('');
+      // Advisory: scanned PDFs may produce lower quality results
+      Alert.alert(
+        'PDF uploaded',
+        'If this is a scanned document, results may vary. A clear photo or typed text gives the best results.',
+        [{ text: 'OK' }],
+        { cancelable: true },
+      );
+    } catch (err: any) {
+      console.error('[PDF] FileSystem read failed:', err);
+      Alert.alert('Error', 'Could not read the PDF file. Please try again.');
+    }
   };
 
   const handlePickWord = async () => {
@@ -171,8 +221,17 @@ export default function AddHomeworkScreen() {
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setQpFile({ uri: asset.uri, name: asset.name ?? 'document.docx', mimeType: asset.mimeType ?? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', label: `📝 ${asset.name}` });
-    setQpText('');
+    if (!asset.uri) { Alert.alert('Error', 'Could not read Word file. Please try again.'); return; }
+    try {
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' as any });
+      if (!base64) throw new Error('base64 is empty after reading');
+      const mimeType = asset.mimeType ?? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      setQpFile({ uri: asset.uri, name: asset.name ?? 'document.docx', mimeType, label: `Word: ${asset.name}`, base64 });
+      setQpText('');
+    } catch (err: any) {
+      console.error('[Word] FileSystem read failed:', err);
+      Alert.alert('Error', 'Could not read the Word file. Please try again.');
+    }
   };
 
   const handleTextDone = () => {
@@ -191,13 +250,13 @@ export default function AddHomeworkScreen() {
 
   // ── Manual scheme pickers ──────────────────────────────────────────────────
 
-  const handleMSCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') { Alert.alert('Permission needed', 'Camera access is required.'); return; }
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: 'images', quality: 0.85 });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    setMsFile({ uri: asset.uri, name: `scheme_${Date.now()}.jpg`, mimeType: 'image/jpeg', label: '📷 Camera photo' });
+  const handleMSCamera = () => {
+    setCameraTarget('ms');
+  };
+
+  // ── Shared: apply a processed image to the MS slot ───────────────────────────
+  const applyMSImage = (processed: { uri: string; base64: string; enhanced: boolean }, name: string) => {
+    setMsFile({ uri: processed.uri, name, mimeType: 'image/jpeg', label: `Gallery: ${name}`, base64: processed.base64, enhanced: processed.enhanced });
     setMsText('');
   };
 
@@ -205,17 +264,45 @@ export default function AddHomeworkScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.85 });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
+    if (!asset.uri) { Alert.alert('Error', 'Could not read image. Please try again.'); return; }
     const name = asset.fileName ?? `scheme_${Date.now()}.jpg`;
-    setMsFile({ uri: asset.uri, name, mimeType: asset.mimeType ?? 'image/jpeg', label: `🖼 ${name}` });
-    setMsText('');
+
+    const processed = await processPickedImage(asset.uri);
+
+    if (processed.warnings.length > 0) {
+      Alert.alert(
+        'This image may be hard to read',
+        processed.warnings.join('\n'),
+        [
+          { text: 'Choose Another', onPress: () => handleMSGallery() },
+          { text: 'Use Anyway', onPress: () => applyMSImage(processed, name) },
+        ],
+      );
+    } else {
+      applyMSImage(processed, name);
+    }
   };
 
   const handleMSPickPDF = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf'], copyToCacheDirectory: true });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setMsFile({ uri: asset.uri, name: asset.name ?? 'scheme.pdf', mimeType: 'application/pdf', label: `📄 ${asset.name}` });
-    setMsText('');
+    if (!asset.uri) { Alert.alert('Error', 'Could not read PDF. Please try again.'); return; }
+    try {
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' as any });
+      if (!base64) throw new Error('base64 is empty');
+      setMsFile({ uri: asset.uri, name: asset.name ?? 'scheme.pdf', mimeType: 'application/pdf', label: `PDF: ${asset.name}`, base64 });
+      setMsText('');
+      Alert.alert(
+        'PDF uploaded',
+        'If this is a scanned document, results may vary. A clear photo or typed text gives the best results.',
+        [{ text: 'OK' }],
+        { cancelable: true },
+      );
+    } catch (err: any) {
+      console.error('[MS PDF] FileSystem read failed:', err);
+      Alert.alert('Error', 'Could not read the PDF file. Please try again.');
+    }
   };
 
   const handleMSPickWord = async () => {
@@ -225,8 +312,17 @@ export default function AddHomeworkScreen() {
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setMsFile({ uri: asset.uri, name: asset.name ?? 'scheme.docx', mimeType: asset.mimeType ?? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', label: `📝 ${asset.name}` });
-    setMsText('');
+    if (!asset.uri) { Alert.alert('Error', 'Could not read Word file. Please try again.'); return; }
+    try {
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' as any });
+      if (!base64) throw new Error('base64 is empty');
+      const mimeType = asset.mimeType ?? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      setMsFile({ uri: asset.uri, name: asset.name ?? 'scheme.docx', mimeType, label: `Word: ${asset.name}`, base64 });
+      setMsText('');
+    } catch (err: any) {
+      console.error('[MS Word] FileSystem read failed:', err);
+      Alert.alert('Error', 'Could not read the Word file. Please try again.');
+    }
   };
 
   const handleMSTextDone = () => {
@@ -236,6 +332,20 @@ export default function AddHomeworkScreen() {
   };
 
   const clearMS = () => { setMsFile(null); setMsText(''); };
+
+  // ── Due date helpers ───────────────────────────────────────────────────────
+
+  const fmtDueDate = (d: Date): string => {
+    const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+    const datePart = d.toLocaleDateString(undefined, opts);
+    const timePart = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `${datePart} · ${timePart}`;
+  };
+
+  const handleDateChange = (_event: DateTimePickerEvent, selected?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selected) setDueDate(selected);
+  };
 
   // ── Create ─────────────────────────────────────────────────────────────────
 
@@ -255,20 +365,54 @@ export default function AddHomeworkScreen() {
     }
 
     const educationLevel = selectedClass?.education_level ?? prefilledLevel ?? '';
+    const dueDateIso = dueDate.toISOString();
+    const totalMarksNum = teacherTotalMarks.trim() ? parseInt(teacherTotalMarks.trim(), 10) : undefined;
+
+    // ── Route check ───────────────────────────────────────────────────────────
+    // Scheme generation requires cloud (Gemma 4 multimodal). On-device scheme
+    // generation via LiteRT is text-only and wired through resolveRoute below.
+    const route = await resolveRoute('scheme');
+    if (route === 'unavailable') {
+      showUnavailableAlert();
+      return;
+    }
 
     setLoading(true);
     try {
       let ak;
+      // base64 is pre-read at pick time — never call FileSystem here
+      let qpFileBase64: string | undefined;
+      let qpMediaType: string | undefined;
+
+      console.log('[AddHomework] Calling generate-scheme with:', {
+        title: t,
+        subject: s,
+        education_level: educationLevel,
+        media_type: qpFile?.mimeType ?? msFile?.mimeType ?? 'text',
+        base64Length: (qpFile?.base64 ?? msFile?.base64)?.length,
+        hasBase64: !!(qpFile?.base64 ?? msFile?.base64),
+        hasText: !!(qpText || msText),
+      });
 
       if (hasMS) {
-        // Manual scheme takes precedence — upload it directly as the answer key
         if (msFile) {
-          ak = await createAnswerKeyWithFile(
-            { class_id: selectedClassId, title: t, education_level: educationLevel, subject: s },
-            msFile.uri,
-            msFile.name,
-            msFile.mimeType,
-          );
+          if (!msFile.base64) {
+            Alert.alert('Error', 'Could not read file. Please re-select it and try again.');
+            return;
+          }
+          qpFileBase64 = msFile.base64;
+          qpMediaType = msFile.mimeType;
+          ak = await createAnswerKey({
+            class_id: selectedClassId,
+            title: t,
+            education_level: educationLevel,
+            subject: s,
+            input_type: 'answer_key',
+            file_data: msFile.base64,
+            media_type: msFile.mimeType,
+            due_date: dueDateIso,
+            teacher_total_marks: totalMarksNum,
+          });
         } else {
           ak = await createAnswerKey({
             class_id: selectedClassId,
@@ -276,31 +420,54 @@ export default function AddHomeworkScreen() {
             subject: s,
             education_level: educationLevel,
             question_paper_text: msText,
+            input_type: 'answer_key',
+            due_date: dueDateIso,
+            teacher_total_marks: totalMarksNum,
           });
         }
       } else if (qpFile) {
-        // Auto-generate from question paper file
-        ak = await createAnswerKeyWithFile(
-          { class_id: selectedClassId, title: t, education_level: educationLevel, subject: s },
-          qpFile.uri,
-          qpFile.name,
-          qpFile.mimeType,
-        );
+        if (!qpFile.base64) {
+          Alert.alert('Error', 'Could not read file. Please re-select it and try again.');
+          return;
+        }
+        qpFileBase64 = qpFile.base64;
+        qpMediaType = qpFile.mimeType;
+        ak = await createAnswerKey({
+          class_id: selectedClassId,
+          title: t,
+          education_level: educationLevel,
+          subject: s,
+          input_type: 'question_paper',
+          file_data: qpFile.base64,
+          media_type: qpFile.mimeType,
+          due_date: dueDateIso,
+          teacher_total_marks: totalMarksNum,
+        });
       } else {
-        // Auto-generate from question paper text
         ak = await createAnswerKey({
           class_id: selectedClassId,
           title: t,
           subject: s,
           education_level: educationLevel,
           question_paper_text: qpText,
+          input_type: 'question_paper',
+          due_date: dueDateIso,
+          teacher_total_marks: totalMarksNum,
         });
       }
 
-      navigation.replace('HomeworkDetail', {
+      // Navigate to review screen so teacher can inspect/edit before confirming
+      const className = selectedClass?.name ?? prefilledClassName ?? '';
+      console.log('[AddHomework] generate-scheme response:', JSON.stringify(ak));
+      console.log('[AddHomework] Navigating with questions:', JSON.stringify((ak.questions as any) ?? []));
+      navigation.replace('ReviewScheme', {
         answer_key_id: ak.id,
         class_id: selectedClassId,
-        class_name: selectedClass?.name ?? prefilledClassName ?? '',
+        class_name: className,
+        questions: (ak.questions as any) ?? [],
+        qp_text: qpText || msText || undefined,
+        qp_file_base64: qpFileBase64,
+        qp_media_type: qpMediaType,
       });
     } catch (err: any) {
       Alert.alert('Error', err.message ?? 'Could not create homework. Please try again.');
@@ -309,8 +476,28 @@ export default function AddHomeworkScreen() {
     }
   };
 
+  // ── InAppCamera handler ────────────────────────────────────────────────────
+
+  const handleCameraCapture = (base64: string, uri: string) => {
+    // InAppCamera already ran enhanceImage internally — mark as enhanced
+    if (cameraTarget === 'qp') {
+      setQpFile({ uri, name: `homework_${Date.now()}.jpg`, mimeType: 'image/jpeg', label: 'Camera photo', base64, enhanced: true });
+      setQpText('');
+    } else if (cameraTarget === 'ms') {
+      setMsFile({ uri, name: `scheme_${Date.now()}.jpg`, mimeType: 'image/jpeg', label: 'Camera photo', base64, enhanced: true });
+      setMsText('');
+    }
+    setCameraTarget(null);
+  };
+
   return (
     <>
+      <InAppCamera
+        visible={cameraTarget !== null}
+        onCapture={handleCameraCapture}
+        onClose={() => setCameraTarget(null)}
+        quality={0.85}
+      />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -378,6 +565,50 @@ export default function AddHomeworkScreen() {
               <Text style={styles.chevronText}>▾</Text>
             </TouchableOpacity>
 
+            {/* ── Due Date + Total Marks row ─────────────────────────────── */}
+            <View style={styles.dueTotalRow}>
+              <View style={styles.dueTotalLeft}>
+                <Text style={styles.label}>Due Date</Text>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => setShowDatePicker(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.dateButtonText}>{fmtDueDate(dueDate)}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.dueTotalRight}>
+                <Text style={styles.label}>Total Marks</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 20"
+                  value={teacherTotalMarks}
+                  onChangeText={setTeacherTotalMarks}
+                  keyboardType="numeric"
+                  returnKeyType="done"
+                />
+              </View>
+            </View>
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={dueDate}
+                mode="datetime"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                onChange={handleDateChange}
+                minimumDate={new Date()}
+              />
+            )}
+            {/* iOS: confirm button to dismiss inline picker */}
+            {showDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={styles.dateConfirmBtn}
+                onPress={() => setShowDatePicker(false)}
+              >
+                <Text style={styles.dateConfirmText}>Done</Text>
+              </TouchableOpacity>
+            )}
+
             {/* ── Homework paper section ──────────────────────────────────── */}
             <Text style={styles.sectionLabel}>HOMEWORK PAPER (required)</Text>
             <Text style={styles.sectionHint}>
@@ -386,23 +617,23 @@ export default function AddHomeworkScreen() {
 
             <View style={styles.uploadRow}>
               <TouchableOpacity style={styles.uploadBtn} onPress={handleCamera}>
-                <Text style={styles.uploadIcon}>📷</Text>
+                <Ionicons name="camera-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                 <Text style={styles.uploadLabel}>Camera</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.uploadBtn} onPress={handleGallery}>
-                <Text style={styles.uploadIcon}>🖼</Text>
+                <Ionicons name="image-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                 <Text style={styles.uploadLabel}>Gallery</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.uploadBtn} onPress={handlePickPDF}>
-                <Text style={styles.uploadIcon}>📄</Text>
+                <Ionicons name="document-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                 <Text style={styles.uploadLabel}>PDF</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.uploadBtn} onPress={handlePickWord}>
-                <Text style={styles.uploadIcon}>📝</Text>
+                <Ionicons name="document-text-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                 <Text style={styles.uploadLabel}>Word</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.uploadBtn} onPress={() => { setTextDraft(qpText); setTextModalVisible(true); }}>
-                <Text style={styles.uploadIcon}>✏️</Text>
+                <Ionicons name="pencil-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                 <Text style={styles.uploadLabel}>Text</Text>
               </TouchableOpacity>
             </View>
@@ -411,8 +642,13 @@ export default function AddHomeworkScreen() {
               <View style={styles.qpPreview}>
                 <Text style={styles.qpPreviewIcon}>✓</Text>
                 <Text style={styles.qpPreviewText} numberOfLines={1}>
-                  {qpFile ? qpFile.label : `✏️ ${qpText.length} characters of text`}
+                  {qpFile ? qpFile.label : `${qpText.length} characters of text`}
                 </Text>
+                {qpFile?.enhanced && (
+                  <View style={styles.enhancedBadge}>
+                    <Text style={styles.enhancedBadgeText}>✓ Enhanced</Text>
+                  </View>
+                )}
                 <TouchableOpacity onPress={clearQP} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Text style={styles.qpClear}>✕</Text>
                 </TouchableOpacity>
@@ -456,23 +692,23 @@ export default function AddHomeworkScreen() {
 
                 <View style={styles.uploadRow}>
                   <TouchableOpacity style={styles.uploadBtn} onPress={handleMSCamera}>
-                    <Text style={styles.uploadIcon}>📷</Text>
+                    <Ionicons name="camera-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                     <Text style={styles.uploadLabel}>Camera</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.uploadBtn} onPress={handleMSGallery}>
-                    <Text style={styles.uploadIcon}>🖼</Text>
+                    <Ionicons name="image-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                     <Text style={styles.uploadLabel}>Gallery</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.uploadBtn} onPress={handleMSPickPDF}>
-                    <Text style={styles.uploadIcon}>📄</Text>
+                    <Ionicons name="document-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                     <Text style={styles.uploadLabel}>PDF</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.uploadBtn} onPress={handleMSPickWord}>
-                    <Text style={styles.uploadIcon}>📝</Text>
+                    <Ionicons name="document-text-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                     <Text style={styles.uploadLabel}>Word</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.uploadBtn} onPress={() => { setMsTextDraft(msText); setMsTextModalVisible(true); }}>
-                    <Text style={styles.uploadIcon}>✏️</Text>
+                    <Ionicons name="pencil-outline" size={22} color={COLORS.teal500} style={styles.uploadIcon} />
                     <Text style={styles.uploadLabel}>Text</Text>
                   </TouchableOpacity>
                 </View>
@@ -481,8 +717,13 @@ export default function AddHomeworkScreen() {
                   <View style={styles.qpPreview}>
                     <Text style={styles.qpPreviewIcon}>✓</Text>
                     <Text style={styles.qpPreviewText} numberOfLines={1}>
-                      {msFile ? msFile.label : `✏️ ${msText.length} characters of text`}
+                      {msFile ? msFile.label : `${msText.length} characters of text`}
                     </Text>
+                    {msFile?.enhanced && (
+                      <View style={styles.enhancedBadge}>
+                        <Text style={styles.enhancedBadgeText}>✓ Enhanced</Text>
+                      </View>
+                    )}
                     <TouchableOpacity onPress={clearMS} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Text style={styles.qpClear}>✕</Text>
                     </TouchableOpacity>
@@ -504,9 +745,7 @@ export default function AddHomeworkScreen() {
                   </Text>
                 </View>
               ) : (
-                <Text style={styles.buttonText}>
-                  {hasMS ? 'Create Homework' : hasQP ? 'Generate & Create' : 'Create Homework'}
-                </Text>
+                <Text style={styles.buttonText}>Create & Generate Answers</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -671,6 +910,21 @@ const styles = StyleSheet.create({
   dropdownText: { fontSize: 15, color: COLORS.text },
   dropdownTextActive: { color: COLORS.teal500, fontWeight: '600' },
 
+  // Due Date + Total Marks row
+  dueTotalRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  dueTotalLeft: { flex: 3 },
+  dueTotalRight: { flex: 2 },
+  dateButton: {
+    borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
+    padding: 14, backgroundColor: COLORS.white,
+  },
+  dateButtonText: { fontSize: 14, color: COLORS.text },
+  dateConfirmBtn: {
+    alignSelf: 'flex-end', marginTop: 8, paddingHorizontal: 20, paddingVertical: 8,
+    backgroundColor: COLORS.teal500, borderRadius: 8,
+  },
+  dateConfirmText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
+
   // Homework paper section
   sectionLabel: {
     fontSize: 12, fontWeight: '700', color: COLORS.gray500,
@@ -684,7 +938,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
     backgroundColor: COLORS.background,
   },
-  uploadIcon: { fontSize: 22 },
+  uploadIcon: { marginBottom: 2 },
   uploadLabel: { fontSize: 11, color: COLORS.gray500, marginTop: 4, fontWeight: '500' },
   qpPreview: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -694,6 +948,13 @@ const styles = StyleSheet.create({
   qpPreviewIcon: { fontSize: 16, color: COLORS.teal500, fontWeight: '700' },
   qpPreviewText: { flex: 1, fontSize: 13, color: COLORS.teal700, fontWeight: '500' },
   qpClear: { fontSize: 14, color: COLORS.teal500 },
+  enhancedBadge: {
+    backgroundColor: COLORS.teal500,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  enhancedBadgeText: { fontSize: 10, color: COLORS.white, fontWeight: '700' },
 
   // Section divider
   divider: {

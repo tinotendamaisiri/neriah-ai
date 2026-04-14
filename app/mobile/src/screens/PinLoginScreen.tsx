@@ -12,7 +12,6 @@ import {
   Animated,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +19,7 @@ import {
   View,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { verifyPin, requestProfileOtp, updateProfile, setPin as apiSetPin, deletePin } from '../services/api';
 import { useAuth } from '../context/AuthContext';

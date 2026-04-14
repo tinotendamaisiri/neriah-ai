@@ -13,6 +13,8 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { JWT_STORAGE_KEY, USER_STORAGE_KEY, registerPushToken, setUnauthorizedHandler } from '../services/api';
 import { AuthUser, VerifyResponse } from '../types';
 import { PENDING_JOIN_CODE_KEY } from '../constants';
@@ -190,15 +192,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setNeedsPinSetup(true);
     }
 
-    // Register Expo push token in the background (best-effort)
-    try {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status === 'granted') {
-        const tokenData = await Notifications.getExpoPushTokenAsync();
-        await registerPushToken(tokenData.data);
+    // Register Expo push token in the background (best-effort).
+    // Skip in Expo Go — push notifications require a standalone/dev-client build.
+    if (Device.isDevice && Constants.appOwnership !== 'expo') {
+      try {
+        const { status } = await Notifications.requestPermissionsAsync();
+        if (status === 'granted') {
+          const tokenData = await Notifications.getExpoPushTokenAsync();
+          await registerPushToken(tokenData.data);
+        }
+      } catch {
+        // Push registration is non-critical
       }
-    } catch {
-      // Push registration is non-critical
     }
   }, []);
 

@@ -38,7 +38,7 @@ export const translations = {
     upload_question_paper_sub: 'Take photo, choose from gallery, or upload a file — AI will generate the scheme',
     generate_with_ai: 'Generate with AI',
     generate_with_ai_sub: 'Paste or type question paper text',
-    regenerate: 'Regenerate ✨',
+    regenerate: 'Regenerate',
     open_for_submissions: 'Open for student submissions',
     submissions_open: 'Students can currently submit work',
     submissions_closed: 'Students cannot yet submit',
@@ -59,7 +59,7 @@ export const translations = {
     question_paper_text: 'Question paper text',
     question_paper_hint: 'Paste or type the questions from the paper. AI will generate a marking scheme from this.',
     question_paper_placeholder: 'e.g. 1. What is 5 × 8? (2 marks)\n2. Solve for x: 2x + 3 = 11 (3 marks)',
-    generate_scheme_btn: 'Generate scheme ✨',
+    generate_scheme_btn: 'Generate scheme',
 
     // File picker
     add_question_paper: 'Add question paper',
@@ -245,7 +245,7 @@ export const translations = {
     upload_question_paper_sub: 'Tora mufananidzo kana sarudza kubva kugalari — AI ichagadzira chema',
     generate_with_ai: 'Gadzira ne AI',
     generate_with_ai_sub: 'Isa kana nyora mazwi emubvunzo',
-    regenerate: 'Gadzira zvakare ✨',
+    regenerate: 'Gadzira zvakare',
     open_for_submissions: 'Vhura kuti vadzidzi vapinde',
     submissions_open: 'Vadzidzi vanogona kupinda iye zvino',
     submissions_closed: 'Vadzidzi havagoni kupinda',
@@ -265,7 +265,7 @@ export const translations = {
     question_paper_text: 'Mazwi emubvunzo',
     question_paper_hint: 'Isa kana nyora mibvunzo. AI ichagadzira chema kubva pano.',
     question_paper_placeholder: 'p.s. 1. Chii chinoita 5 × 8? (mamaki 2)',
-    generate_scheme_btn: 'Gadzira chema ✨',
+    generate_scheme_btn: 'Gadzira chema',
 
     add_question_paper: 'Wedzera pepa remibvunzo',
     take_photo: 'Tora Mufananidzo',
@@ -442,7 +442,7 @@ export const translations = {
     upload_question_paper_sub: 'Thatha isithombe, khetha kugalari, noma layisha ifayela — i-AI izakwakha isikhema',
     generate_with_ai: 'Yenza nge-AI',
     generate_with_ai_sub: 'Namathisela noma bhala amagama emibuzo',
-    regenerate: 'Yenza futhi ✨',
+    regenerate: 'Yenza futhi',
     open_for_submissions: 'Vula ukufaka kwabafundi',
     submissions_open: 'Abafundi bangafaka manje',
     submissions_closed: 'Abafundi abanakufaka',
@@ -462,7 +462,7 @@ export const translations = {
     question_paper_text: 'Amagama emibuzo',
     question_paper_hint: 'Namathisela noma bhala imibuzo. I-AI izakwakha isikhema.',
     question_paper_placeholder: 'p.s. 1. Yimalini i-5 × 8? (amamaki 2)',
-    generate_scheme_btn: 'Yenza isikhema ✨',
+    generate_scheme_btn: 'Yenza isikhema',
 
     add_question_paper: 'Engeza ikhadi lombuzo',
     take_photo: 'Thatha Isithombe',

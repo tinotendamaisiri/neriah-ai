@@ -14,6 +14,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import * as MailComposer from 'expo-mail-composer';
 import * as MediaLibrary from 'expo-media-library';
@@ -170,7 +171,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
         disabled={submitting}
       >
         <View style={styles.channelHeader}>
-          <Text style={styles.channelIcon}>📱</Text>
+          <Ionicons name="phone-portrait-outline" size={22} color={COLORS.teal500} style={styles.channelIcon} />
           <View style={styles.channelHeaderText}>
             <Text style={styles.channelName}>Submit via App</Text>
             <View style={styles.recommendedBadge}>
@@ -192,7 +193,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
           disabled={submitting}
         >
           <View style={styles.channelHeader}>
-            <Text style={styles.channelIcon}>💬</Text>
+            <Ionicons name="chatbubbles-outline" size={22} color={COLORS.teal500} style={styles.channelIcon} />
             <Text style={styles.channelName}>Submit via WhatsApp</Text>
           </View>
           <Text style={styles.channelDesc}>
@@ -208,7 +209,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
         disabled={submitting}
       >
         <View style={styles.channelHeader}>
-          <Text style={styles.channelIcon}>✉️</Text>
+          <Ionicons name="mail-outline" size={22} color={COLORS.gray900} style={styles.channelIcon} />
           <Text style={styles.channelName}>Submit via Email</Text>
         </View>
         <Text style={styles.channelDesc}>
@@ -256,7 +257,7 @@ const styles = StyleSheet.create({
   },
   cardDisabled: { opacity: 0.6 },
   channelHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  channelIcon: { fontSize: 22, marginRight: 10 },
+  channelIcon: { marginRight: 10 },
   channelHeaderText: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   channelName: { fontSize: 16, fontWeight: '700', color: COLORS.gray900 },
   recommendedBadge: {

@@ -16,7 +16,10 @@
 //     StudentTabs (Home | Submit | Results | Settings)
 
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import {
+  ActivityIndicator, View, Modal, Text, TouchableOpacity,
+  StyleSheet,
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -25,13 +28,16 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { ModelProvider, useModel } from './src/context/ModelContext';
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinLoginScreen from './src/screens/PinLoginScreen';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import { startNetworkListener } from './src/services/offlineQueue';
+import { detectAndStoreCapability } from './src/services/deviceCapabilities';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkBanner from './src/components/NetworkBanner';
 import { COLORS } from './src/constants/colors';
+import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from './src/services/modelManager';
 import {
   AuthStackParamList,
   MainTabParamList,
@@ -56,6 +62,8 @@ import ClassDetailScreen from './src/screens/ClassDetailScreen';
 import TeacherInboxScreen from './src/screens/TeacherInboxScreen';
 import HomeworkDetailScreen from './src/screens/HomeworkDetailScreen';
 import AddHomeworkScreen from './src/screens/AddHomeworkScreen';
+import HomeworkCreatedScreen from './src/screens/HomeworkCreatedScreen';
+import ReviewSchemeScreen from './src/screens/ReviewSchemeScreen';
 import SetPinScreen from './src/screens/SetPinScreen';
 import GradingResultsScreen from './src/screens/GradingResultsScreen';
 import GradingDetailScreen from './src/screens/GradingDetailScreen';
@@ -118,8 +126,8 @@ function TeacherTabs() {
   console.log('[TeacherTabs] render, my_classes =', t('my_classes'));
   return (
     <TeacherTab.Navigator
-      lazy
       screenOptions={({ route }) => ({
+        lazy: true,
         headerShown: false,
         freezeOnBlur: true,
         tabBarActiveTintColor: COLORS.teal500,
@@ -186,6 +194,16 @@ function TeacherNavigator() {
         options={{ headerShown: false }}
       />
       <TeacherStack.Screen
+        name="ReviewScheme"
+        component={ReviewSchemeScreen}
+        options={{ headerShown: false }}
+      />
+      <TeacherStack.Screen
+        name="HomeworkCreated"
+        component={HomeworkCreatedScreen}
+        options={{ headerShown: false, gestureEnabled: false }}
+      />
+      <TeacherStack.Screen
         name="SetPin"
         component={SetPinScreen}
         options={{ headerShown: false }}
@@ -235,8 +253,8 @@ function StudentTabs() {
   const { t } = useLanguage();
   return (
     <StudentTab.Navigator
-      lazy
       screenOptions={({ route }) => ({
+        lazy: true,
         freezeOnBlur: true,
         tabBarActiveTintColor: COLORS.teal500,
         tabBarInactiveTintColor: COLORS.textLight,
@@ -318,8 +336,72 @@ function StudentNavigator() {
 
 // ── App shell — auth gate + role routing ──────────────────────────────────────
 
+// ── Download prompt modal ─────────────────────────────────────────────────────
+
+function DownloadPromptModal() {
+  const { showPrompt, variant, acceptDownload, skipDownload } = useModel();
+  if (!showPrompt || !variant) return null;
+
+  return (
+    <Modal visible animationType="fade" transparent>
+      <View style={promptStyles.overlay}>
+        <View style={promptStyles.card}>
+          <Text style={promptStyles.title}>Download AI model</Text>
+          <Text style={promptStyles.body}>
+            Neriah can grade and assist offline with an on-device AI model.{'\n\n'}
+            <Text style={promptStyles.name}>{MODEL_DISPLAY_NAME[variant]}</Text>
+            {'\n'}
+            <Text style={promptStyles.size}>{MODEL_SIZE_LABEL[variant]} — recommended on Wi-Fi</Text>
+          </Text>
+
+          <TouchableOpacity style={promptStyles.primaryBtn} onPress={acceptDownload}>
+            <Text style={promptStyles.primaryBtnText}>Download now</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={promptStyles.secondaryBtn} onPress={skipDownload}>
+            <Text style={promptStyles.secondaryBtnText}>Skip for now</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const promptStyles = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  card: {
+    backgroundColor: COLORS.white, borderRadius: 20,
+    padding: 28, width: '100%', maxWidth: 360,
+  },
+  title: { fontSize: 20, fontWeight: '800', color: COLORS.text, marginBottom: 12 },
+  body: { fontSize: 15, color: COLORS.textLight, lineHeight: 22, marginBottom: 24 },
+  name: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  size: { fontSize: 13, color: COLORS.gray500 },
+  primaryBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12,
+    padding: 16, alignItems: 'center', marginBottom: 10,
+  },
+  primaryBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 16 },
+  secondaryBtn: { padding: 12, alignItems: 'center' },
+  secondaryBtnText: { color: COLORS.gray500, fontSize: 15 },
+});
+
+// ── App shell — auth gate + role routing ──────────────────────────────────────
+
 function AppShell() {
   const { user, loading, hasPin, pinUnlocked, needsPinSetup, termsAccepted } = useAuth();
+  const { initPrompt } = useModel();
+
+  // Device capability detection — runs once on first launch only.
+  // Then check if we should show the model download prompt.
+  React.useEffect(() => {
+    detectAndStoreCapability()
+      .then(() => initPrompt())
+      .catch(() => {});
+  }, []);
 
   // Offline queue replay only needed for teachers (marking pipeline)
   React.useEffect(() => {
@@ -363,6 +445,8 @@ function AppShell() {
           {content}
         </ErrorBoundary>
       </View>
+      {/* One-time model download prompt — shown after login only if device is capable */}
+      {user && <DownloadPromptModal />}
     </NavigationContainer>
   );
 }
@@ -374,7 +458,9 @@ export default function App() {
     <SafeAreaProvider>
       <LanguageProvider>
         <AuthProvider>
-          <AppShell />
+          <ModelProvider>
+            <AppShell />
+          </ModelProvider>
         </AuthProvider>
       </LanguageProvider>
       <StatusBar style="auto" />

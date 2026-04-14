@@ -21,6 +21,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { AnswerKey, Class, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import AIStatusDot from '../components/AIStatusDot';
+import { useModel } from '../context/ModelContext';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
 
@@ -148,6 +150,7 @@ export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const { t, language } = useLanguage();
+  const { showWifiNudge, checkWifiNudge, dismissWifiNudge, acceptDownload } = useModel();
   console.log('[HomeScreen] render, language =', language, ', my_classes =', t('my_classes'));
   const [classes, setClasses] = useState<Class[]>([]);
   const [answerKeysByClass, setAnswerKeysByClass] = useState<Record<string, AnswerKey[]>>({});
@@ -228,7 +231,9 @@ export default function HomeScreen() {
       // Only show the full loading spinner on cold start (no data yet).
       if (classes.length === 0) setLoading(true);
       load();
-    }, [load]),
+      // Check Wi-Fi nudge — all gates are inside; safe to call every focus.
+      checkWifiNudge();
+    }, [load, checkWifiNudge]),
   );
 
   const handleManageClass = useCallback((cls: Class) => {
@@ -283,13 +288,44 @@ export default function HomeScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>{t('hello')}, {user ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? 'Teacher'}`.trim() : 'Teacher'}</Text>
-          <Text style={styles.heading}>{t('my_classes')}</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.greeting}>{t('hello')}, {user ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? 'Teacher'}`.trim() : 'Teacher'}</Text>
+            <Text style={styles.heading}>{t('my_classes')}</Text>
+          </View>
+          <AIStatusDot />
         </View>
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
+
+      {/* Wi-Fi nudge banner */}
+      {showWifiNudge && (
+        <View style={styles.wifiNudge}>
+          <View style={styles.wifiNudgeRow}>
+            <Ionicons name="wifi-outline" size={16} color={COLORS.teal500} />
+            <Text style={styles.wifiNudgeText}>
+              {' '}You're on Wi-Fi — download offline AI now?
+            </Text>
+          </View>
+          <View style={styles.wifiNudgeActions}>
+            <TouchableOpacity
+              style={styles.wifiNudgeDownloadBtn}
+              onPress={() => { acceptDownload(); dismissWifiNudge(); }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.wifiNudgeDownloadText}>Download</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.wifiNudgeLaterBtn}
+              onPress={dismissWifiNudge}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.wifiNudgeLaterText}>Later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Pending submissions banner */}
       {pendingCount > 0 && (
@@ -299,7 +335,7 @@ export default function HomeScreen() {
           activeOpacity={0.8}
         >
           <View style={styles.inboxBannerLeft}>
-            <Text style={styles.inboxBannerIcon}>📥</Text>
+            <Ionicons name="cloud-download-outline" size={22} color={COLORS.teal500} style={styles.inboxBannerIcon} />
             <View>
               <Text style={styles.inboxBannerTitle}>
                 {pendingCount} {t('inbox_waiting')}
@@ -393,6 +429,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white, paddingHorizontal: 20, paddingTop: 60,
     paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+  },
   greeting: { fontSize: 13, color: COLORS.gray500 },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginTop: 2 },
   error: { color: COLORS.error, paddingHorizontal: 20, paddingTop: 12, fontSize: 14 },
@@ -464,10 +503,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   inboxBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  inboxBannerIcon: { fontSize: 22 },
+  inboxBannerIcon: {},
   inboxBannerTitle: { fontSize: 14, fontWeight: '700', color: COLORS.amber700 },
   inboxBannerSub: { fontSize: 12, color: COLORS.amber500, marginTop: 2 },
   inboxBannerArrow: { fontSize: 20, color: COLORS.amber500 },
+
+  // ── Wi-Fi nudge banner ───────────────────────────────────────────────────────
+  wifiNudge: {
+    marginHorizontal: 16, marginTop: 10,
+    backgroundColor: COLORS.teal50,
+    borderRadius: 12, padding: 12,
+    borderWidth: 1, borderColor: COLORS.teal100,
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', gap: 10,
+  },
+  wifiNudgeRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  wifiNudgeText: { fontSize: 13, color: COLORS.teal500, fontWeight: '500', lineHeight: 18, flexShrink: 1 },
+  wifiNudgeActions: { flexDirection: 'row', gap: 8, flexShrink: 0 },
+  wifiNudgeDownloadBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 7,
+  },
+  wifiNudgeDownloadText: { fontSize: 13, fontWeight: '700', color: COLORS.white },
+  wifiNudgeLaterBtn: {
+    borderWidth: 1, borderColor: COLORS.teal100, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 7,
+  },
+  wifiNudgeLaterText: { fontSize: 13, fontWeight: '600', color: COLORS.teal500 },
 
   // ── Empty state ───────────────────────────────────────────────────────────────
   emptyContainer: { alignItems: 'center', paddingTop: 64 },

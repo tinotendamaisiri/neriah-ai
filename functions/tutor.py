@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.firestore_client import get_doc, increment_field, query_single, upsert
 from shared.gemma_client import student_tutor
+from shared.router import AIRequestType, route_ai_request
 from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,9 @@ def tutor_chat():
         ]
         if weak_topics:
             user_ctx = {**user_ctx, "weakness_topics": weak_topics}
+
+    # ── Route: all AI calls in this endpoint go to cloud ─────────────────────
+    route_ai_request(AIRequestType.TUTORING)  # always AIRoute.CLOUD on the backend
 
     # ── Call tutor ────────────────────────────────────────────────────────────
     response_text = student_tutor(message, history, education_level, image_bytes,

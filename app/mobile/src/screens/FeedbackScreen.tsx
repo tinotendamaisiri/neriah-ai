@@ -13,6 +13,7 @@ import {
   Alert,
   Dimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { getMark } from '../services/api';
 import { StudentMark, GradingVerdict, StudentRootStackParamList } from '../types';
@@ -120,7 +121,7 @@ export default function FeedbackScreen({ route, navigation }: Props) {
           </View>
         ) : (
           <View style={styles.imagePlaceholder}>
-            <Text style={styles.imagePlaceholderIcon}>🖼️</Text>
+            <Ionicons name="image-outline" size={40} color={COLORS.gray500} style={styles.imagePlaceholderIcon} />
             <Text style={styles.imagePlaceholderText}>Annotated image not available</Text>
           </View>
         )}
@@ -142,11 +143,14 @@ export default function FeedbackScreen({ route, navigation }: Props) {
           <View style={fStyles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Teacher's Note</Text>
             {mark.manually_edited && (
-              <Text style={fStyles.editedTag}>✏️ Teacher-edited</Text>
+              <View style={fStyles.editedTagRow}>
+                <Ionicons name="pencil-outline" size={11} color={COLORS.amber500} />
+                <Text style={fStyles.editedTag}> Teacher-edited</Text>
+              </View>
             )}
           </View>
           <View style={styles.feedbackCard}>
-            <Text style={styles.feedbackIcon}>💬</Text>
+            <Ionicons name="chatbubble-outline" size={20} color={COLORS.gray500} />
             <Text style={styles.feedbackText}>{mark.feedback}</Text>
           </View>
         </View>
@@ -254,7 +258,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderStyle: 'dashed',
   },
-  imagePlaceholderIcon: { fontSize: 36, marginBottom: 8 },
+  imagePlaceholderIcon: { marginBottom: 8 },
   imagePlaceholderText: { color: COLORS.textLight, fontSize: 14 },
   section: { marginHorizontal: 16, marginBottom: 16 },
   feedbackCard: {
@@ -266,7 +270,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     gap: 12,
   },
-  feedbackIcon: { fontSize: 20 },
   feedbackText: { flex: 1, fontSize: 14, color: COLORS.gray900, lineHeight: 21 },
   infoCard: {
     backgroundColor: COLORS.white,
@@ -305,6 +308,7 @@ const vStyles = StyleSheet.create({
 
 const fStyles = StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  editedTagRow: { flexDirection: 'row', alignItems: 'center' },
   editedTag: { fontSize: 11, color: COLORS.amber500, fontWeight: '600' },
 });
 

@@ -26,6 +26,7 @@ import {
   ClassAnalyticsSummary,
   ClassAnalyticsDetail,
   TeacherStudentAnalyticsData,
+  ReviewQuestion,
 } from '../types';
 
 const BASE_URL: string =
@@ -80,13 +81,23 @@ client.interceptors.response.use(
       return Promise.reject({ title: 'Session expired', message: 'Please sign in again.', status, _raw: error });
     }
 
+    if (status === 429) {
+      const retryAfter: number | undefined = (data as any)?.retry_after;
+      return Promise.reject({
+        title: 'Too many requests',
+        message: serverMsg || 'Please wait a moment and try again.',
+        retry_after: retryAfter,
+        status,
+        _raw: error,
+      });
+    }
+
     const mapped: Record<number, { title: string; message: string }> = {
       403: { title: 'Not allowed', message: serverMsg || "You don't have permission to do this." },
       404: { title: 'Not found', message: serverMsg || 'This item may have been removed.' },
       409: { title: 'Already exists', message: serverMsg || 'This action was already completed.' },
       410: { title: 'Expired', message: serverMsg || 'This code has expired. Request a new one.' },
       422: { title: 'Invalid data', message: serverMsg || 'Please check your input and try again.' },
-      429: { title: 'Too many requests', message: 'Please wait a moment and try again.' },
     };
 
     if (mapped[status]) {
@@ -267,23 +278,56 @@ export const createAnswerKey = async (payload: {
   education_level?: string;
   open_for_submission?: boolean;
   due_date?: string;
-  questions?: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>;
+  questions?: Array<{ number: number; correct_answer: string; marks: number; marking_notes?: string }>;
   auto_generate?: boolean;
   question_paper_text?: string;
+  /** "draft" keeps the scheme pending teacher review; omit or null for immediate use */
+  status?: string | null;
+  /** "question_paper" (default) = generate answers; "answer_key" = extract existing answers */
+  input_type?: string;
+  /** Base64-encoded file contents */
+  file_data?: string;
+  /** MIME type matching file_data (e.g. "image/jpeg", "application/pdf") */
+  media_type?: string;
+  /** Teacher-specified total marks; AI distributes marks per question to match */
+  teacher_total_marks?: number;
 }): Promise<AnswerKey> => {
-  const res: AxiosResponse<AnswerKey> = await client.post('/answer-keys', payload);
+  const res: AxiosResponse<AnswerKey> = await client.post('/homework/generate-scheme', {
+    status: 'draft',
+    input_type: 'question_paper',
+    ...payload,
+  }, { timeout: 90000 });
   return res.data;
 };
 
 export const updateAnswerKey = async (
   answer_key_id: string,
-  payload: Partial<Pick<AnswerKey, 'title' | 'open_for_submission' | 'education_level' | 'total_marks' | 'due_date'>> & {
-    questions?: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>;
+  payload: Partial<Pick<AnswerKey, 'title' | 'open_for_submission' | 'education_level' | 'total_marks' | 'due_date' | 'status'>> & {
+    questions?: Array<{ number: number; correct_answer: string; marks: number; marking_notes?: string }>;
     auto_generate?: boolean;
     question_paper_text?: string;
   },
 ): Promise<AnswerKey> => {
   const res: AxiosResponse<AnswerKey> = await client.put(`/answer-keys/${answer_key_id}`, payload);
+  return res.data;
+};
+
+/**
+ * Re-generate the marking scheme for a DRAFT answer key.
+ * The server updates the draft in Firestore and returns the new questions.
+ */
+export const regenerateScheme = async (
+  answer_key_id: string,
+  input: { text?: string; fileBase64?: string; mediaType?: string },
+): Promise<{ questions: ReviewQuestion[]; total_marks: number }> => {
+  const body: Record<string, string> = {};
+  if (input.fileBase64 && input.mediaType) {
+    body.file_data = input.fileBase64;
+    body.media_type = input.mediaType;
+  } else if (input.text) {
+    body.question_paper_text = input.text;
+  }
+  const res = await client.post(`/answer-keys/${answer_key_id}/regenerate`, body, { timeout: 90000 });
   return res.data;
 };
 
@@ -547,7 +591,16 @@ export const joinClass = async (join_code: string): Promise<{ class_id: string; 
  * Backend extracts text and auto-generates the marking scheme.
  */
 export const createAnswerKeyWithFile = async (
-  payload: { class_id: string; title: string; education_level?: string; subject?: string },
+  payload: {
+    class_id: string;
+    title: string;
+    education_level?: string;
+    subject?: string;
+    /** "draft" keeps the scheme pending teacher review (default) */
+    status?: string | null;
+    /** "question_paper" (default) = generate answers; "answer_key" = extract existing answers */
+    input_type?: string;
+  },
   fileUri: string,
   filename: string,
   mimeType: string,
@@ -557,6 +610,8 @@ export const createAnswerKeyWithFile = async (
   formData.append('title', payload.title);
   if (payload.education_level) formData.append('education_level', payload.education_level);
   if (payload.subject) formData.append('subject', payload.subject);
+  formData.append('status', payload.status ?? 'draft');
+  formData.append('input_type', payload.input_type ?? 'question_paper');
   formData.append('file', { uri: fileUri, name: filename, type: mimeType } as any);
   const res: AxiosResponse<AnswerKey> = await client.post(
     '/answer-keys',

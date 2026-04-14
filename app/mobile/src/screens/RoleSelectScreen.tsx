@@ -9,9 +9,9 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 24, justifyContent: 'center' },
   header: { alignItems: 'center', marginBottom: 40 },
   logoMark: {
-    width: 100, height: 100, marginBottom: 8, resizeMode: 'contain',
+    width: 80, height: 80, marginBottom: 12,
   },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },
   subheading: { fontSize: 15, color: COLORS.gray500 },

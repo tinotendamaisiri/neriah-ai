@@ -22,7 +22,9 @@ import {
   getStudentClassAnalytics,
 } from '../services/api';
 import { Assignment, StudentMark, StudentClassAnalytics, StudentRootStackParamList } from '../types';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import AIStatusDot from '../components/AIStatusDot';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -121,11 +123,17 @@ export default function StudentHomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Hello, {firstName} 👋</Text>
+          <View style={styles.greetingRow}>
+            <Text style={styles.greeting}>Hello, {firstName} </Text>
+            <Ionicons name="hand-left-outline" size={22} color={COLORS.white} />
+          </View>
           <Text style={styles.subGreeting}>Here's your learning overview</Text>
         </View>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
+        <View style={styles.headerRight}>
+          <AIStatusDot />
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
+          </View>
         </View>
       </View>
 
@@ -220,6 +228,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  headerRight: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  greetingRow: { flexDirection: 'row', alignItems: 'center' },
   greeting: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
   subGreeting: { color: COLORS.teal100, fontSize: 13, marginTop: 2 },
   avatar: {

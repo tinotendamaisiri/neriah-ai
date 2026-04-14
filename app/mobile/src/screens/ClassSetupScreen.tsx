@@ -11,18 +11,19 @@ import {
   ScrollView,
   Alert,
   Modal,
-  SafeAreaView,
   FlatList,
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { createClass, createStudentsBatch, extractStudentsFromImage, extractStudentsFromFile } from '../services/api';
 import { EducationLevel, RootStackParamList } from '../types';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import InAppCamera from '../components/InAppCamera';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Curriculum = 'zimsec' | 'cambridge';
@@ -73,6 +74,7 @@ export default function ClassSetupScreen() {
   const [rosterExpanded, setRosterExpanded] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cameraVisible, setCameraVisible] = useState(false);
 
   // Flat ref array: index = rowIndex * NUM_COLS + colIndex
   const cellRefs = useRef<(TextInput | null)[]>([]);
@@ -154,20 +156,15 @@ export default function ClassSetupScreen() {
     }
   }, [applyExtracted]);
 
-  const handlePhoto = useCallback(async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera access is required to photograph the register.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: 'images',
-      quality: 0.85,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
+  const handlePhoto = useCallback(() => {
+    setCameraVisible(true);
+  }, []);
+
+  const handleCameraCapture = useCallback(async (_base64: string, uri: string) => {
+    setCameraVisible(false);
     setExtracting(true);
     try {
-      const extracted = await extractStudentsFromImage(result.assets[0].uri);
+      const extracted = await extractStudentsFromImage(uri);
       applyExtracted(extracted);
     } catch {
       Alert.alert('Error', 'Could not process the image. Please try again.');
@@ -222,6 +219,12 @@ export default function ClassSetupScreen() {
 
   return (
     <>
+      <InAppCamera
+        visible={cameraVisible}
+        onCapture={handleCameraCapture}
+        onClose={() => setCameraVisible(false)}
+        quality={0.85}
+      />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -361,14 +364,22 @@ export default function ClassSetupScreen() {
               <TouchableOpacity style={styles.tableActionBtn} onPress={handleUpload} disabled={extracting}>
                 {extracting
                   ? <ActivityIndicator size="small" color={COLORS.teal500} />
-                  : <Text style={styles.tableActionText}>📎  Upload</Text>
-                }
+                  : (
+                    <View style={styles.tableActionInner}>
+                      <Ionicons name="attach-outline" size={15} color={COLORS.teal500} />
+                      <Text style={styles.tableActionText}>  Upload</Text>
+                    </View>
+                  )}
               </TouchableOpacity>
               <TouchableOpacity style={styles.tableActionBtn} onPress={handlePhoto} disabled={extracting}>
                 {extracting
                   ? <ActivityIndicator size="small" color={COLORS.teal500} />
-                  : <Text style={styles.tableActionText}>📷  Photo</Text>
-                }
+                  : (
+                    <View style={styles.tableActionInner}>
+                      <Ionicons name="camera-outline" size={15} color={COLORS.teal500} />
+                      <Text style={styles.tableActionText}>  Photo</Text>
+                    </View>
+                  )}
               </TouchableOpacity>
             </View>
           </>
@@ -521,6 +532,7 @@ const styles = StyleSheet.create({
     gap: 24,
   },
   tableActionBtn: { alignItems: 'center', paddingVertical: 4, minWidth: 72 },
+  tableActionInner: { flexDirection: 'row', alignItems: 'center' },
   tableActionText: { fontSize: 14, color: COLORS.teal500, fontWeight: '600' },
   saveButton: {
     marginTop: 32, backgroundColor: COLORS.teal500, borderRadius: 10,

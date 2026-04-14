@@ -23,16 +23,35 @@ import {
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { pickFile } from '../utils/filePicker';
+import { pickFile, PickedFile } from '../utils/filePicker';
 import { enhanceImage } from '../services/imageEnhance';
 import { AnswerKey, TeacherSubmission } from '../types';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import InAppCamera from '../components/InAppCamera';
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
   try {
     return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   } catch { return iso; }
+}
+
+function fmtDueCountdown(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    const diff = new Date(iso).getTime() - Date.now();
+    if (diff <= 0) return 'Closed';
+    const totalMins = Math.floor(diff / 60000);
+    const hours = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      const remHours = hours % 24;
+      return remHours > 0 ? `Closes in ${days}d ${remHours}h` : `Closes in ${days}d`;
+    }
+    return hours > 0 ? `Closes in ${hours}h ${mins}m` : `Closes in ${mins}m`;
+  } catch { return ''; }
 }
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -69,6 +88,10 @@ export default function HomeworkDetailScreen() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
+
+  // Camera state for file picker
+  const [cameraVisible, setCameraVisible] = useState(false);
+  const [cameraResolve, setCameraResolve] = useState<((f: PickedFile | null) => void) | null>(null);
 
   // Generate-with-AI modal state
   const [aiModalVisible, setAiModalVisible] = useState(false);
@@ -143,14 +166,40 @@ export default function HomeworkDetailScreen() {
     }
   };
 
-  const handlePickFile = async () => {
-    const file = await pickFile({
-      title: t('add_question_paper'),
-      takePhoto: t('take_photo'),
-      gallery: t('choose_from_gallery'),
-      uploadFile: t('upload_file'),
-      cancel: t('cancel'),
+  const openInAppCamera = (): Promise<PickedFile | null> => {
+    return new Promise((resolve) => {
+      setCameraResolve(() => resolve);
+      setCameraVisible(true);
     });
+  };
+
+  const handleCameraCapture = (base64: string, uri: string) => {
+    setCameraVisible(false);
+    if (cameraResolve) {
+      cameraResolve({ uri, name: `photo_${Date.now()}.jpg`, mimeType: 'image/jpeg', isImage: true });
+      setCameraResolve(null);
+    }
+  };
+
+  const handleCameraClose = () => {
+    setCameraVisible(false);
+    if (cameraResolve) {
+      cameraResolve(null);
+      setCameraResolve(null);
+    }
+  };
+
+  const handlePickFile = async () => {
+    const file = await pickFile(
+      {
+        title: t('add_question_paper'),
+        takePhoto: t('take_photo'),
+        gallery: t('choose_from_gallery'),
+        uploadFile: t('upload_file'),
+        cancel: t('cancel'),
+      },
+      openInAppCamera,
+    );
     if (!file || !answerKey) return;
 
     setGenerating(true);
@@ -203,7 +252,7 @@ export default function HomeworkDetailScreen() {
         ...q,
         question_text: qDraftText,
         correct_answer: qDraftAnswer,
-        max_marks: Math.max(1, Number(qDraftMarks) || 1),
+        marks: Math.max(1, Number(qDraftMarks) || 1),
       },
     );
     try {
@@ -212,7 +261,7 @@ export default function HomeworkDetailScreen() {
           number: q.number,
           question_text: q.question_text,
           correct_answer: q.correct_answer,
-          max_marks: q.max_marks,
+          marks: q.marks,
           marking_notes: q.marking_notes,
         })),
       });
@@ -289,6 +338,7 @@ export default function HomeworkDetailScreen() {
     );
   }
 
+  console.log('[HomeworkDetail] questions:', JSON.stringify(answerKey.questions));
   const isPendingSetup = answerKey.status === 'pending_setup';
   const hasQuestions = answerKey.questions.length > 0;
   const pendingCount = submissions.filter(s => s.status === 'pending').length;
@@ -296,6 +346,12 @@ export default function HomeworkDetailScreen() {
 
   return (
     <>
+      <InAppCamera
+        visible={cameraVisible}
+        onCapture={handleCameraCapture}
+        onClose={handleCameraClose}
+        quality={0.85}
+      />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         {/* Header */}
         <View style={styles.header}>
@@ -348,7 +404,12 @@ export default function HomeworkDetailScreen() {
         {/* Key info row */}
         <View style={styles.infoCard}>
           <InfoRow label={t('created')} value={fmtDate(answerKey.created_at)} />
-          {answerKey.due_date && <InfoRow label={t('due_date')} value={fmtDate(answerKey.due_date)} />}
+          {answerKey.due_date && (
+            <InfoRow
+              label={t('due_date')}
+              value={`${fmtDate(answerKey.due_date)}  ·  ${fmtDueCountdown(answerKey.due_date)}`}
+            />
+          )}
           {answerKey.education_level && (
             <InfoRow label="Level" value={levelLabel(answerKey.education_level)} />
           )}
@@ -365,14 +426,14 @@ export default function HomeworkDetailScreen() {
             <Text style={styles.sectionTitle}>{t('set_up_marking_scheme')}</Text>
             <Text style={styles.sectionHint}>{t('marking_scheme_hint')}</Text>
             <TouchableOpacity style={styles.setupBtn} onPress={handlePickFile}>
-              <Text style={styles.setupBtnIcon}>📄</Text>
+              <Ionicons name="document-outline" size={20} color={COLORS.teal500} style={styles.setupBtnIcon} />
               <View style={styles.setupBtnText}>
                 <Text style={styles.setupBtnLabel}>{t('upload_question_paper_photo')}</Text>
                 <Text style={styles.setupBtnSub}>{t('upload_question_paper_sub')}</Text>
               </View>
             </TouchableOpacity>
             <TouchableOpacity style={styles.setupBtn} onPress={() => setAiModalVisible(true)}>
-              <Text style={styles.setupBtnIcon}>✨</Text>
+              <Ionicons name="sparkles-outline" size={20} color={COLORS.teal500} style={styles.setupBtnIcon} />
               <View style={styles.setupBtnText}>
                 <Text style={styles.setupBtnLabel}>{t('generate_with_ai')}</Text>
                 <Text style={styles.setupBtnSub}>{t('generate_with_ai_sub')}</Text>
@@ -452,13 +513,13 @@ export default function HomeworkDetailScreen() {
                     setEditingQIdx(idx);
                     setQDraftText(q.question_text ?? '');
                     setQDraftAnswer(q.correct_answer ?? '');
-                    setQDraftMarks(String(q.max_marks ?? 1));
+                    setQDraftMarks(String(q.marks ?? 1));
                   }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.questionNum}>Q{q.number ?? idx + 1}</Text>
                   <Text style={styles.questionAnswer} numberOfLines={1}>{q.correct_answer}</Text>
-                  <Text style={styles.questionMarks}>{q.max_marks}mk</Text>
+                  <Text style={styles.questionMarks}>{(q.marks != null && q.marks > 0) ? `${q.marks} mk` : '—'}</Text>
                   <Text style={styles.editChevron}>›</Text>
                 </TouchableOpacity>
               ),
@@ -575,9 +636,10 @@ export default function HomeworkDetailScreen() {
                 {closingAndGrading ? (
                   <ActivityIndicator color={COLORS.white} />
                 ) : (
-                  <Text style={styles.gradeAllBtnText}>
-                    ✨  Close & Grade All ({pendingCount})
-                  </Text>
+                  <View style={styles.gradeAllBtnInner}>
+                    <Ionicons name="sparkles-outline" size={16} color={COLORS.white} />
+                    <Text style={styles.gradeAllBtnText}>  Close & Grade All ({pendingCount})</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             )}
@@ -586,9 +648,12 @@ export default function HomeworkDetailScreen() {
               onPress={handleMarkStudents}
               activeOpacity={0.85}
             >
-              <Text style={[styles.markBtnText, (answerKey.open_for_submission && pendingCount > 0) && styles.markBtnTextSecondary]}>
-                📷  {t('mark_students')}
-              </Text>
+              <View style={styles.markBtnInner}>
+                <Ionicons name="camera-outline" size={16} color={(answerKey.open_for_submission && pendingCount > 0) ? COLORS.teal500 : COLORS.white} />
+                <Text style={[styles.markBtnText, (answerKey.open_for_submission && pendingCount > 0) && styles.markBtnTextSecondary]}>
+                  {'  '}{t('mark_students')}
+                </Text>
+              </View>
             </TouchableOpacity>
           </>
         ) : (
@@ -597,7 +662,10 @@ export default function HomeworkDetailScreen() {
             onPress={handlePickFile}
             activeOpacity={0.85}
           >
-            <Text style={styles.uploadBtnText}>📄  Set Up Marking Scheme</Text>
+            <View style={styles.uploadBtnInner}>
+              <Ionicons name="document-outline" size={16} color={COLORS.teal500} />
+              <Text style={styles.uploadBtnText}>{'  '}Set Up Marking Scheme</Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -721,7 +789,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 14,
     paddingVertical: 14, borderTopWidth: 1, borderTopColor: COLORS.background,
   },
-  setupBtnIcon: { fontSize: 26 },
+  setupBtnIcon: { marginRight: 4 },
   setupBtnText: { flex: 1 },
   setupBtnLabel: { fontSize: 15, fontWeight: '600', color: COLORS.text },
   setupBtnSub: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
@@ -809,6 +877,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.teal500, borderRadius: 12,
     padding: 16, alignItems: 'center', marginBottom: 10,
   },
+  gradeAllBtnInner: { flexDirection: 'row', alignItems: 'center' },
   gradeAllBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
   btnDisabled: { opacity: 0.6 },
   markBtn: {
@@ -818,8 +887,10 @@ const styles = StyleSheet.create({
   markBtnSecondary: {
     backgroundColor: COLORS.white, borderWidth: 1.5, borderColor: COLORS.teal500,
   },
+  markBtnInner: { flexDirection: 'row', alignItems: 'center' },
   markBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
   markBtnTextSecondary: { color: COLORS.teal500 },
+  uploadBtnInner: { flexDirection: 'row', alignItems: 'center' },
   uploadBtn: {
     backgroundColor: COLORS.amber50, borderRadius: 12,
     padding: 16, alignItems: 'center',
