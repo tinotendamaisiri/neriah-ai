@@ -480,7 +480,7 @@ function scoreBg(pct: number): string {
 }
 
 // Student phone screen type
-type SStudentScreen = 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
+type SStudentScreen = 's-welcome' | 's-phone' | 's-otp' | 's-teacher' | 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
 
 interface TutorMessage {
   id:             string;
@@ -5887,9 +5887,16 @@ export default function DemoPage() {
   const [syncPulse, setSyncPulse]               = useState(false);
 
   // ── Student phone state ────────────────────────────────────────────────────
-  const [sScreen, setSScreen]                   = useState<SStudentScreen>('s-register');
+  const [sScreen, setSScreen]                   = useState<SStudentScreen>('s-welcome');
   const [studentName, setStudentName]           = useState('Chipo Dube');
   const [submissionFileName, setSubmissionFileName] = useState('');
+  // Student phone's own OTP state (independent from teacher phone)
+  const [sOtpPhone, setSSOtpPhone]               = useState('+263771234567');
+  const [sOtpChannel, setSSOtpChannel]           = useState<'whatsapp' | 'sms'>('whatsapp');
+  // Student phone teacher-mode navigation (fully independent from left phone)
+  const [sTeacherScreen, setSTeacherScreen]      = useState<TScreen>('register');
+  const [sTeacherPrev, setSTeacherPrev]          = useState<TScreen>('register');
+  const [sTeacherNewClass, setSTeacherNewClass]  = useState<DemoClass | null>(null);
 
   // Web is always cloud-only — set once on first visit, skip if already stored.
   useEffect(() => {
@@ -6027,7 +6034,86 @@ export default function DemoPage() {
   }
 
   function renderStudentScreen() {
+    // Student phone teacher-mode helpers (fully independent from left phone's go/back)
+    const sGo = (to: TScreen) => { setSTeacherPrev(sTeacherScreen); setSTeacherScreen(to); };
+    const sBack = () => setSTeacherScreen(sTeacherPrev);
+
     switch (sScreen) {
+      // ── Auth flow ────────────────────────────────────────────────────────────
+      case 's-welcome':
+        return (
+          <WelcomeScreen
+            onTeacher={() => { setSTeacherScreen('register'); setSTeacherPrev('register'); setSScreen('s-teacher'); }}
+            onSignIn={() => setSScreen('s-phone')}
+          />
+        );
+      case 's-phone':
+        return (
+          <PhoneScreen
+            onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); setSScreen('s-otp'); }}
+            onRegister={() => setSScreen('s-welcome')}
+          />
+        );
+      case 's-otp':
+        return (
+          <OTPScreen
+            phone={sOtpPhone} channel={sOtpChannel}
+            onVerify={() => setSScreen('s-register')}
+            onBack={() => setSScreen('s-phone')}
+          />
+        );
+
+      // ── Student phone teacher-mode (independent navigation) ──────────────────
+      case 's-teacher':
+        switch (sTeacherScreen) {
+          case 'welcome':
+            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} />;
+          case 'phone':
+            return <PhoneScreen onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} onRegister={() => sGo('welcome')} />;
+          case 'otp':
+            return <OTPScreen phone={sOtpPhone} channel={sOtpChannel} onVerify={() => sGo('classes')} onBack={sBack} />;
+          case 'register':
+            return <RegisterScreen onSignIn={() => sGo('phone')} onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} />;
+          case 'classes':
+            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onNewClass={() => sGo('class-setup')} />;
+          case 'class-setup':
+            return <ClassSetupScreen onBack={() => sGo('classes')} onCreate={(cls) => { setSTeacherNewClass(cls); sGo('class-join-code'); }} />;
+          case 'class-join-code':
+            if (!sTeacherNewClass) { sGo('classes'); return null; }
+            return <ClassJoinCodeScreen cls={sTeacherNewClass} onDone={() => { setSTeacherNewClass(null); sGo('classes'); }} />;
+          case 't-settings':
+            return <TeacherSettingsWebScreen onBack={() => sGo('classes')} />;
+          case 'add-homework':
+            return <AddHomeworkScreen onBack={() => sGo('classes')} onSuccess={(data) => { setSchemeData(data); sGo('review-scheme'); }} demoToken={demoToken} />;
+          case 'review-scheme':
+            return <ReviewSchemeScreen answerKeyId={schemeData?.answer_key_id ?? 'demo-key'} initialQuestions={schemeData?.questions ?? DEMO_QUESTIONS} onBack={() => sGo('add-homework')} onConfirm={() => sGo('homework-created')} demoToken={demoToken} />;
+          case 'homework-created':
+            return <HomeworkCreatedScreen answerKeyId={schemeData?.answer_key_id ?? 'demo-key'} onDone={() => sGo('classes')} demoToken={demoToken} />;
+          case 'homework-detail':
+            return (
+              <HomeworkDetailScreen
+                hw={hwInfo} isOpen={submissionsOpen}
+                onToggleOpen={(next) => { setSubmissionsOpen(next); setHwInfo(h => ({ ...h, is_open: next })); triggerSync(); }}
+                onBack={() => sGo('classes')} onGradeAll={() => sGo('grade-all')}
+                onViewSubmission={(sub) => { setSelectedSubmission(sub); sGo('grading-detail'); }}
+                demoToken={demoToken} gradingComplete={gradingComplete}
+              />
+            );
+          case 'grade-all':
+            return <GradeAllScreen hw={hwInfo} onBack={() => sGo('homework-detail')} demoToken={demoToken} onGradingDone={() => { setGradingComplete(true); triggerSync(); }} />;
+          case 'grading-detail':
+            if (!selectedSubmission) { sGo('homework-detail'); return null; }
+            return <GradingDetailScreen submission={selectedSubmission} hw={hwInfo} onBack={() => sGo('homework-detail')} demoToken={demoToken} onApproved={(url) => { setAnnotatedImageUrl(url); triggerSync(); }} />;
+          case 'analytics':
+            return <AnalyticsScreen onBack={() => sGo('classes')} demoToken={demoToken} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} />;
+          case 'student-analytics':
+            if (!selectedStudent) { sGo('analytics'); return null; }
+            return <StudentAnalyticsScreen student={selectedStudent} onBack={() => sGo('analytics')} demoToken={demoToken} />;
+          default:
+            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} />;
+        }
+
+      // ── Student flow ─────────────────────────────────────────────────────────
       case 's-register':
         return <StudentRegisterScreen onJoined={(name) => { setStudentName(name); setSScreen('s-home'); }} />;
       case 's-home':
