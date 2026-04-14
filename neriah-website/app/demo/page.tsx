@@ -6171,21 +6171,21 @@ export default function DemoPage() {
 
   if (authDenied) {
     return (
-      <div style={{ minHeight: '100vh', background: '#F9FAFB', display: 'flex',
+      <div style={{ minHeight: '100vh', background: C.nearWhite, display: 'flex',
         alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif' }}>
-        <div style={{ background: '#FFFFFF', borderRadius: 16, padding: 40,
+        <div style={{ background: C.white, borderRadius: 16, padding: 40,
           maxWidth: 380, width: '100%', textAlign: 'center',
           boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🔒</div>
-          <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#111827' }}>
+          <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: C.darkBg }}>
             Access restricted
           </h1>
-          <p style={{ margin: '0 0 24px', fontSize: 14, color: '#6B7280', lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 24px', fontSize: 14, color: C.grayTxt, lineHeight: 1.5 }}>
             This demo is only accessible to Neriah admins.<br />
             Please sign in to continue.
           </p>
           <a href="/admin/curriculum"
-            style={{ display: 'inline-block', background: C.teal, color: '#FFFFFF',
+            style={{ display: 'inline-block', background: C.teal, color: C.white,
               padding: '10px 24px', borderRadius: 8, fontWeight: 600, fontSize: 14,
               textDecoration: 'none' }}>
             Go to Admin Login
