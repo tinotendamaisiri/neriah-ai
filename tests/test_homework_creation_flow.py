@@ -3170,6 +3170,253 @@ class TestMinorFixes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SUITE — Teacher AI Assistant
+# ══════════════════════════════════════════════════════════════════════════════
+
+_TA_TEACHER_ID = "ta-teacher-001"
+_TA_CLASS_ID   = "ta-class-001"
+
+_TA_CLASS_DOC = {
+    "id": _TA_CLASS_ID,
+    "teacher_id": _TA_TEACHER_ID,
+    "name": "Form 2A",
+    "education_level": "Form 2",
+    "subject": "Mathematics",
+}
+
+_HW_JSON = json.dumps({
+    "title": "Algebra Practice",
+    "instructions": "Show all working.",
+    "questions": [
+        {"number": 1, "question": "Solve 2x+5=11", "marks": 2},
+        {"number": 2, "question": "Factorise x²-9", "marks": 3},
+    ],
+    "total_marks": 5,
+    "due_suggestion": "3 days",
+})
+
+_QUIZ_JSON = json.dumps({
+    "title": "Fractions Quiz",
+    "questions": [
+        {
+            "number": 1,
+            "question": "What is 1/2 + 1/4?",
+            "options": {"a": "3/4", "b": "1/2", "c": "2/6", "d": "1"},
+            "correct_answer": "a",
+            "marks": 1,
+        },
+        {
+            "number": 2,
+            "question": "Which fraction is equivalent to 2/4?",
+            "options": {"a": "1/3", "b": "1/2", "c": "3/5", "d": "2/3"},
+            "correct_answer": "b",
+            "marks": 1,
+        },
+    ],
+    "total_marks": 2,
+})
+
+
+def _ta_patches(saved: dict | None = None) -> list:
+    """Common patches for teacher_assistant tests."""
+    _saved = saved if saved is not None else {}
+    return [
+        # bypass get_doc inside the endpoint (teacher doc lookup, class ownership check)
+        patch(
+            "functions.teacher_assistant.get_doc",
+            side_effect=lambda c, d: _TA_CLASS_DOC if (c, d) == ("classes", _TA_CLASS_ID) else None,
+        ),
+        # bypass user_context Firestore calls
+        patch("functions.teacher_assistant.get_user_context", return_value={
+            "curriculum": "ZIMSEC", "education_level": "Form 2",
+            "country": "Zimbabwe", "subject": "Mathematics",
+        }),
+        # bypass RAG vector DB
+        patch("functions.teacher_assistant._rag_context", return_value=""),
+        # bypass guardrails rate limit
+        patch("functions.teacher_assistant.guardrails_rate_limit", return_value=(True, 29)),
+        # capture Firestore writes
+        patch(
+            "functions.teacher_assistant.upsert",
+            side_effect=lambda c, _id, data: _saved.update({f"{c}/{_id}": data}),
+        ),
+        # bypass guardrails audit log
+        patch("functions.teacher_assistant.log_ai_interaction"),
+    ]
+
+
+@pytest.fixture(scope="module")
+def ta_auth_headers():
+    from shared.auth import create_jwt
+    token = create_jwt(_TA_TEACHER_ID, "teacher", 1)
+    return {"Authorization": f"Bearer {token}"}
+
+
+class TestTeacherAssistant:
+    """POST /api/teacher/assistant — all action types + export."""
+
+    def _post(self, client, ta_auth_headers, body: dict):
+        return client.post(
+            "/api/teacher/assistant",
+            headers=ta_auth_headers,
+            json=body,
+        )
+
+    @feature_test("teacher_assistant_chat")
+    def test_teacher_assistant_general_chat(self, client, ta_auth_headers):
+        """POST /api/teacher/assistant with action_type='chat' returns a non-empty response."""
+        chat_reply = "Great question! Fractions represent parts of a whole."
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", return_value=chat_reply)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message": "How do I explain fractions to Grade 5 students?",
+                "action_type": "chat",
+                "curriculum": "ZIMSEC",
+                "level": "Grade 5",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["action_type"] == "chat"
+        assert "response" in body
+        assert len(body["response"]) > 0
+
+    @feature_test("teacher_assistant_create_homework")
+    def test_teacher_assistant_creates_homework(self, client, ta_auth_headers):
+        """action_type='create_homework' returns structured JSON with questions and total_marks."""
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", return_value=_HW_JSON)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message": "Create a homework on algebra for Form 2",
+                "action_type": "create_homework",
+                "curriculum": "ZIMSEC",
+                "level": "Form 2",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["action_type"] == "create_homework"
+        structured = body["structured"]
+        assert "questions" in structured, "structured output must contain 'questions'"
+        assert len(structured["questions"]) > 0
+        for q in structured["questions"]:
+            assert "number"   in q, "each question needs 'number'"
+            assert "question" in q, "each question needs 'question'"
+            assert "marks"    in q, "each question needs 'marks'"
+        assert structured["total_marks"] > 0
+        assert body.get("exportable") is True
+
+    @feature_test("teacher_assistant_create_quiz")
+    def test_teacher_assistant_creates_quiz(self, client, ta_auth_headers):
+        """action_type='create_quiz' returns MCQ questions with options a/b/c/d and correct_answer."""
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", return_value=_QUIZ_JSON)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message": "Create a short quiz on fractions",
+                "action_type": "create_quiz",
+                "curriculum": "ZIMSEC",
+                "level": "Grade 5",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["action_type"] == "create_quiz"
+        structured = body["structured"]
+        assert "questions" in structured
+        for q in structured["questions"]:
+            opts = q.get("options", {})
+            assert set("abcd").issubset(opts.keys()), (
+                f"MCQ question must have options a/b/c/d — got {list(opts.keys())}"
+            )
+            assert q.get("correct_answer") in ("a", "b", "c", "d"), (
+                "correct_answer must be one of a/b/c/d"
+            )
+
+    @feature_test("teacher_assistant_export_to_class")
+    def test_teacher_assistant_export_homework(self, client, ta_auth_headers):
+        """POST /api/teacher/assistant/export persists draft answer_key in Firestore."""
+        saved: dict = {}
+        hw_content = {
+            "title": "Algebra Practice",
+            "instructions": "Show all working.",
+            "questions": [
+                {"number": 1, "question": "Solve 2x+5=11", "marks": 2},
+                {"number": 2, "question": "Factorise x²-9", "marks": 3},
+            ],
+            "total_marks": 5,
+            "due_suggestion": "3 days",
+        }
+        with ExitStack() as stack:
+            for p in _ta_patches(saved):
+                stack.enter_context(p)
+            resp = client.post(
+                "/api/teacher/assistant/export",
+                headers=ta_auth_headers,
+                json={
+                    "content_type": "homework",
+                    "content": hw_content,
+                    "class_id": _TA_CLASS_ID,
+                },
+            )
+
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["status"] == "draft"
+        assert body["class_id"] == _TA_CLASS_ID
+        assert body["questions"] == 2
+        assert body["total_marks"] == 5
+
+        # Verify Firestore write
+        written = next(
+            (v for k, v in saved.items() if k.startswith("answer_keys/")), None
+        )
+        assert written is not None, "answer_key document was not written to Firestore"
+        assert written["teacher_id"] == _TA_TEACHER_ID
+        assert written["status"] == "draft"
+        assert written["ai_generated"] is True
+        assert written["open_for_submission"] is False
+
+    @feature_test("teacher_assistant_blocked_non_educational")
+    def test_teacher_assistant_rejects_off_topic(self, client, ta_auth_headers):
+        """Off-topic messages (e.g. cryptocurrency) are redirected without calling the model."""
+        model_called = {"called": False}
+
+        def _noop(*args, **kwargs):
+            model_called["called"] = True
+            return "should not be called"
+
+        with ExitStack() as stack:
+            for p in _ta_patches():
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=_noop)
+            )
+            resp = self._post(client, ta_auth_headers, {
+                "message": "Tell me about cryptocurrency trading strategies",
+                "action_type": "chat",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body.get("off_topic") is True, "off_topic flag must be True in response"
+        assert "response" in body
+        assert len(body["response"]) > 0
+        assert model_called["called"] is False, "model must NOT be called for off-topic requests"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SUITE — Security Guardrails
 # ══════════════════════════════════════════════════════════════════════════════
 
