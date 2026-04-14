@@ -6,6 +6,7 @@ import base64
 import csv
 import io
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +18,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.config import settings
 from shared.firestore_client import delete_doc, get_doc, query, upsert
+from shared.guardrails import log_ai_interaction, validate_input
 from shared.gemma_client import (
     extract_answer_key_from_image,
     generate_marking_scheme,
@@ -706,15 +708,32 @@ def create_homework_with_scheme():
 
     # ── Text path ─────────────────────────────────────────────────────────────
     if not questions_raw and text_input:
+        # Input guardrails on question paper text
+        _valid_in, _cleaned_text = validate_input(text_input, role="teacher", max_tokens=4000)
+        if not _valid_in:
+            log_ai_interaction(
+                teacher_id, "teacher", "generate-scheme", text_input, "",
+                tokens_used=0, latency_ms=0, blocked=True, block_reason=_cleaned_text,
+            )
+            return jsonify({"error": _cleaned_text}), 403
+        text_input = _cleaned_text
+
         stored_qp_text = text_input
         logger.info(
             "create_homework_with_scheme: text path, len=%d education_level=%r",
             len(text_input), education_level,
         )
+        _t0 = time.time()
         qs_result, raw_response = generate_scheme_from_text(
             text_input, education_level, subject, max_total_marks=max_total_marks,
         )
+        _latency_ms = int((time.time() - _t0) * 1000)
         if qs_result is None:
+            log_ai_interaction(
+                teacher_id, "teacher", "generate-scheme", text_input,
+                raw_response or "", tokens_used=0, latency_ms=_latency_ms,
+                blocked=False,
+            )
             if raw_response:
                 logger.error(
                     "create_homework_with_scheme: JSON parse failed. Raw: %s", raw_response,
@@ -726,6 +745,11 @@ def create_homework_with_scheme():
             return jsonify({
                 "error": "Could not generate marking scheme. Try a clearer image or paste the question text instead.",
             }), 422
+        log_ai_interaction(
+            teacher_id, "teacher", "generate-scheme", text_input,
+            str(qs_result), tokens_used=len(str(qs_result)) // 4,
+            latency_ms=_latency_ms, blocked=False,
+        )
         questions_raw = [_normalise_question(q, i) for i, q in enumerate(qs_result)]
 
     if not questions_raw:

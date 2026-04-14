@@ -13,7 +13,9 @@ Pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -25,6 +27,7 @@ from shared.config import settings
 from shared.firestore_client import get_doc, increment_field, query, upsert
 from shared.gcs_client import generate_signed_url, upload_bytes
 from shared.gemma_client import check_image_quality, grade_submission
+from shared.guardrails import log_ai_interaction, validate_output
 from shared.models import GradingVerdict, Mark
 from shared.router import AIRequestType, route_ai_request
 from shared.user_context import get_user_context
@@ -146,8 +149,28 @@ def mark():
     # ── 2. Grade (Gemma 4 reads handwriting directly, with RAG context) ─────────
     class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
     user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
+    _t0 = time.time()
     raw_verdicts = grade_submission(image_bytes, answer_key, education_level,
                                     user_context=user_ctx)
+    _latency_ms = int((time.time() - _t0) * 1000)
+
+    # ── Output guardrails: validate grading JSON ──────────────────────────────
+    _max_marks = float(answer_key.get("total_marks") or sum(
+        q.get("marks", 0) for q in answer_key.get("questions", [])
+    ) or 1)
+    _raw_json = json.dumps(raw_verdicts) if isinstance(raw_verdicts, list) else str(raw_verdicts)
+    # Validate each verdict's awarded_marks against total
+    _total_awarded = sum(v.get("awarded_marks", 0) for v in raw_verdicts if isinstance(v, dict))
+    _verdict_json = json.dumps({"score": _total_awarded})
+    valid_out, _out_err = validate_output(
+        _verdict_json, role="grading", context={"max_marks": _max_marks}
+    )
+    if not valid_out:
+        log_ai_interaction(
+            teacher_id, "teacher", "grading", answer_key_id, _raw_json,
+            tokens_used=0, latency_ms=_latency_ms, blocked=True, block_reason=_out_err,
+        )
+        return jsonify({"error": "Grading response failed validation. Please retry."}), 422
 
     verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
     score = sum(v.awarded_marks for v in verdicts)
@@ -189,6 +212,12 @@ def mark():
     )
     upsert("marks", mark_doc.id, mark_doc.model_dump())
     _increment_mark_usage(teacher_id)
+
+    # ── Audit log ─────────────────────────────────────────────────────────────
+    log_ai_interaction(
+        teacher_id, "teacher", "grading", answer_key_id, json.dumps(verdicts_dicts),
+        tokens_used=len(verdicts_dicts) * 10, latency_ms=_latency_ms, blocked=False,
+    )
 
     # ── 7. Return result ──────────────────────────────────────────────────────
     return jsonify({
