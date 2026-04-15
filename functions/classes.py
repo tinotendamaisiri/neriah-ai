@@ -50,6 +50,29 @@ def create_class():
     return jsonify(cls.model_dump()), 201
 
 
+@classes_bp.get("/classes/<class_id>")
+def get_class_detail(class_id: str):
+    """Get a single class by ID. Accessible by teacher or student."""
+    _, err = require_role(request, "teacher", "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    cls = get_doc("classes", class_id)
+    if not cls:
+        return jsonify({"error": "Class not found"}), 404
+
+    # Enrich with teacher's school name
+    teacher = get_doc("teachers", cls.get("teacher_id", "")) if cls.get("teacher_id") else None
+    school_name = ""
+    if teacher:
+        school_name = teacher.get("school_name") or teacher.get("name", "")
+
+    return jsonify({
+        **cls,
+        "school_name": school_name,
+    }), 200
+
+
 @classes_bp.put("/classes/<class_id>")
 def update_class(class_id: str):
     teacher_id, err = require_role(request, "teacher")

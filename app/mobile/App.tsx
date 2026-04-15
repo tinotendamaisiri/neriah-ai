@@ -362,6 +362,11 @@ function StudentNavigator() {
         component={StudentAnalyticsScreen}
         options={{ title: 'My Analytics', headerBackTitle: 'Back' }}
       />
+      <StudentRootStack.Screen
+        name="SetPin"
+        component={SetPinScreen}
+        options={{ headerShown: false }}
+      />
     </StudentRootStack.Navigator>
   );
 }
