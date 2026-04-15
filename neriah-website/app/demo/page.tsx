@@ -9,7 +9,7 @@ import {
   HelpCircle, Star, Inbox,
   Bot, Hand, X, AlertTriangle, XCircle, MailX,
   Users, BookOpen, Sparkles, Cloud, Zap,
-  MessageCircle, MessageSquare, ChevronLeft, Menu, Plus, Trash2, Eye,
+  MessageCircle, MessageSquare, ChevronLeft, Menu, Plus, Trash2, Eye, Check,
 } from 'lucide-react';
 
 import {
@@ -229,7 +229,7 @@ export async function demoFetch(path: string, opts: RequestInit = {}, token?: st
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-list' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 'homework-analytics' | 't-assistant';
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'class-detail' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-list' | 'homework-detail' | 'grade-all' | 't-settings' | 'edit-profile' | 'grading-detail' | 'grading-results' | 'inbox' | 'analytics' | 'student-analytics' | 'homework-analytics' | 't-assistant';
 
 // ── DemoClass ─────────────────────────────────────────────────────────────────
 interface DemoClass {
@@ -492,7 +492,7 @@ function scoreBg(pct: number): string {
 }
 
 // Student phone screen type
-type SStudentScreen = 's-welcome' | 's-phone' | 's-otp' | 's-teacher' | 's-register' | 's-home' | 's-submit' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
+type SStudentScreen = 's-welcome' | 's-phone' | 's-otp' | 's-teacher' | 's-register' | 's-home' | 's-submit' | 's-capture' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
 
 interface TutorMessage {
   id:             string;
@@ -4033,7 +4033,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: My Classes
 // ──────────────────────────────────────────────────────────────────────────────
-function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettings, onAnalytics, onAssistant, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onHomeworkList: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void }) {
+function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettings, onAnalytics, onAssistant, onNewClass, onClassDetail, onInbox }: { onAddHomework: () => void; onOpenHomework: () => void; onHomeworkList: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void; onClassDetail?: () => void; onInbox?: () => void }) {
   const [fabOpen, setFabOpen] = useState(false);
 
   // Demo homework items for Form 2A — 3 items so the "+ 1 more" link is exercised
@@ -4071,9 +4071,9 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
                 <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Form 2</div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ textAlign: 'center', minWidth: 40 }}>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>3</div>
-                  <div style={{ fontSize: 11, color: C.g500 }}>students</div>
+                <div onClick={onClassDetail} style={{ textAlign: 'center', minWidth: 40, cursor: 'pointer' }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>5</div>
+                  <div style={{ fontSize: 11, color: C.teal, textDecoration: 'underline' }}>students</div>
                 </div>
                 <div style={{ width: 1, height: 28, background: C.border }} />
                 <button
@@ -5486,8 +5486,8 @@ function StudentHomeScreen({
 
 // ── S3: Submit Work ───────────────────────────────────────────────────────────
 function StudentSubmitScreen({
-  onBack, onSubmitted, demoToken,
-}: { onBack: () => void; onSubmitted: (sub: { id: string; fileName: string }) => void; demoToken: string | null }) {
+  onBack, onCapture, onSubmitted, demoToken,
+}: { onBack: () => void; onCapture?: () => void; onSubmitted: (sub: { id: string; fileName: string }) => void; demoToken: string | null }) {
   const [file, setFile]       = useState<{ name: string; mimeType: string; base64: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
@@ -5609,6 +5609,7 @@ function StudentSubmitScreen({
                 { icon: <Camera size={26} color={C.amber} />, label: 'Camera',  onClick: () => setCameraOpen(true) },
                 { icon: <ImageIcon size={26} color={C.amber} />, label: 'Gallery', onClick: () => galleryRef.current?.click() },
                 { icon: <File size={26} color={C.amber} />, label: 'PDF',     onClick: () => pdfRef.current?.click() },
+                ...(onCapture ? [{ icon: <FileText size={26} color={C.amber} />, label: 'Pages', onClick: onCapture }] : []),
               ]).map(btn => (
                 <button
                   key={btn.label}
@@ -6142,7 +6143,126 @@ function StudentTutorScreen({
 }: { studentName: string; onBack: () => void; demoToken: string | null }) {
   const firstName = studentName.split(' ')[0];
 
-  const welcomeMsg: TutorMessage = {
+  // Session + chat state
+  type Msg = { id: string; role: 'user' | 'ai'; content: string; ts: number; imageUri?: string };
+  type Session = { chat_id: string; created_at: string; updated_at: string; preview: string; messages: Msg[] };
+  const STORAGE_KEY = 'neriah_student_tutor_sessions';
+  const MAX_S = 50;
+  const MAX_D = 20;
+
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [showAttach, setShowAttach] = useState(false);
+  const [attachment, setAttachment] = useState<{ name: string; base64: string; type: string; dataUrl?: string } | null>(null);
+  const [tutorCameraOpen, setTutorCameraOpen] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
+
+  const makeId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const relTime = (iso: string) => {
+    const d = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(d / 60000); const h = Math.floor(d / 3600000); const dy = Math.floor(d / 86400000);
+    if (m < 1) return 'Just now'; if (m < 60) return `${m}m ago`; if (h < 24) return `${h}h ago`;
+    if (dy === 1) return 'Yesterday'; if (dy < 7) return `${dy}d ago`;
+    return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+  };
+
+  // Load sessions on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) { const s = JSON.parse(raw) as Session[]; setSessions(s); if (s.length > 0) { setMessages(s[0].messages); setCurrentChatId(s[0].chat_id); } }
+    } catch {}
+  }, []);
+
+  // Greeting on first open
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      if (messages.length > 0) return;
+      setSending(true);
+      const res = await demoFetch('/tutor/chat', { method: 'POST', body: JSON.stringify({ message: '', is_greeting: true }) }, demoToken);
+      const content = res?.response ?? `Hi ${firstName}! I'm Neriah, your AI tutor. What would you like help with today?`;
+      const msg: Msg = { id: makeId(), role: 'ai', content, ts: Date.now() };
+      const cid = makeId();
+      setMessages([msg]); setCurrentChatId(cid); setSending(false);
+      saveSessions([msg], cid);
+    }, 500);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const scrollToBottom = () => setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+  // Save sessions
+  const saveSessions = (msgs: Msg[], cid: string) => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      let all: Session[] = raw ? JSON.parse(raw) : [];
+      const now = new Date().toISOString();
+      const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 60);
+      const existing = all.find(s => s.chat_id === cid);
+      const session: Session = { chat_id: cid, created_at: existing?.created_at ?? now, updated_at: now, preview, messages: msgs };
+      all = [session, ...all.filter(s => s.chat_id !== cid)].slice(0, MAX_S);
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+      setSessions(all);
+    } catch {}
+  };
+
+  // Send
+  const sendMsg = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text && !attachment) return;
+    const cid = currentChatId ?? makeId();
+    if (!currentChatId) setCurrentChatId(cid);
+    const userMsg: Msg = { id: makeId(), role: 'user', content: text, ts: Date.now(), imageUri: attachment?.dataUrl };
+    const next = [...messages, userMsg];
+    setMessages(next); setInput(''); const sentAtt = attachment; setAttachment(null); saveSessions(next, cid);
+    setSending(true);
+    const history = messages.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : m.role, content: m.content }));
+    const res = await demoFetch('/tutor/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: text, history, ...(sentAtt ? { image: sentAtt.base64 } : {}) }),
+    }, demoToken);
+    const aiContent = res?.response ?? "I'm thinking about that... Could you rephrase your question?";
+    const aiMsg: Msg = { id: makeId(), role: 'ai', content: aiContent, ts: Date.now() };
+    const withAi = [...next, aiMsg];
+    setMessages(withAi); saveSessions(withAi, cid); setSending(false); scrollToBottom();
+  };
+
+  const startNew = () => { if (messages.length > 0 && currentChatId) saveSessions(messages, currentChatId); setMessages([]); setCurrentChatId(null); setShowDrawer(false); };
+  const loadSess = (s: Session) => { setMessages(s.messages); setCurrentChatId(s.chat_id); setShowDrawer(false); scrollToBottom(); };
+  const deleteSess = (cid: string) => {
+    const next = sessions.filter(s => s.chat_id !== cid);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next)); setSessions(next);
+    if (cid === currentChatId) { setMessages([]); setCurrentChatId(null); }
+  };
+
+  // File input handler
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return; e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setAttachment({ name: f.name, base64: dataUrl.split(',')[1], type: f.type, dataUrl: f.type.startsWith('image/') ? dataUrl : undefined });
+    };
+    reader.readAsDataURL(f);
+  };
+
+  const QUICK_ACTIONS = [
+    { label: 'Explain this concept', icon: <Sparkles size={15} color={C.teal} /> },
+    { label: 'Help me practice', icon: <BookOpen size={15} color={C.teal} /> },
+    { label: "I don't understand this", icon: <HelpCircle size={15} color={C.teal} /> },
+    { label: 'Quiz me on this topic', icon: <ClipboardList size={15} color={C.teal} /> },
+    { label: 'What are my weak areas?', icon: <BarChart2 size={15} color={C.teal} /> },
+    { label: 'Help me prepare for exams', icon: <GraduationCap size={15} color={C.teal} /> },
+  ];
+
+  // Previously started with welcomeMsg — now replaced:
+  const _unused_welcomeMsg: Msg = {
     id:      'welcome',
     role:    'ai',
     content: `Hi ${firstName}! I'm your AI tutor powered by Gemma 4. Ask me anything about Chapter 5 Maths, or send a photo of a problem you're stuck on.`,
@@ -6246,7 +6366,7 @@ function StudentTutorScreen({
     reader.readAsDataURL(f);
   }
 
-  const dots = ['', '.', '..', '...'][dotPhase];
+  // Old render replaced — new Teacher-AI-style render follows
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
@@ -7711,7 +7831,7 @@ function Toast({ message, type = 'success', onDone }: { message: string; type?: 
 
 // SCREEN: Teacher Settings (web)
 // ──────────────────────────────────────────────────────────────────────────────
-function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void; onAnalytics?: () => void }) {
+function TeacherSettingsWebScreen({ onBack, onAnalytics, onEditProfile }: { onBack: () => void; onAnalytics?: () => void; onEditProfile?: () => void }) {
   const [pinActive, setPinActive]   = useState(false);
   const [pinModal,  setPinModal]    = useState<PinModalMode | null>(null);
   const [toast,     setToast]       = useState('');
@@ -7757,7 +7877,7 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void;
                 </div>
               </div>
               <button
-                onClick={() => { setProfileDraft({ name: profileName, school: profileSchool }); setEditProfile(true); }}
+                onClick={onEditProfile ?? (() => { setProfileDraft({ name: profileName, school: profileSchool }); setEditProfile(true); })}
                 style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
               >
                 <Pencil size={16} color={C.g400} />
@@ -8093,6 +8213,295 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
   );
 }
 
+// ── ClassDetailScreen (web) ──────────────────────────────────────────────────
+interface DemoStudent { id: string; first_name: string; surname: string; register_number?: string }
+
+const DEMO_STUDENTS: DemoStudent[] = [
+  { id: 's1', first_name: 'Chipo', surname: 'Dube', register_number: '01' },
+  { id: 's2', first_name: 'Tendai', surname: 'Moyo', register_number: '02' },
+  { id: 's3', first_name: 'Farai', surname: 'Chikumba', register_number: '03' },
+  { id: 's4', first_name: 'Rumbi', surname: 'Nyathi', register_number: '04' },
+  { id: 's5', first_name: 'Tatenda', surname: 'Phiri', register_number: '05' },
+];
+
+function ClassDetailWebScreen({ onBack, onHomeworkList, onStudentTap }: {
+  onBack: () => void; onHomeworkList: () => void; onStudentTap: (s: DemoStudent) => void;
+}) {
+  const [students, setStudents] = useState<DemoStudent[]>(DEMO_STUDENTS);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newFirst, setNewFirst] = useState('');
+  const [newSurname, setNewSurname] = useState('');
+  const [newReg, setNewReg] = useState('');
+  const handleAdd = () => {
+    if (!newFirst.trim() || !newSurname.trim()) return;
+    setStudents(p => [...p, { id: `s${Date.now()}`, first_name: newFirst.trim(), surname: newSurname.trim(), register_number: newReg.trim() || undefined }]);
+    setNewFirst(''); setNewSurname(''); setNewReg(''); setAddOpen(false);
+  };
+  const inp: React.CSSProperties = { border: `1px solid ${C.g200}`, borderRadius: 8, padding: '10px 12px', fontSize: 14, color: C.text, outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', background: C.white };
+  return (
+    <Screen>
+      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+          <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ChevronLeft size={20} color={C.g900} /></button>
+          <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Form 2A</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.teal50, borderRadius: 6, padding: '2px 7px' }}>ZIMSEC</span>
+        </div>
+        <button onClick={onHomeworkList} style={{ border: `1px solid ${C.teal}`, background: 'none', borderRadius: 10, padding: '5px 10px', cursor: 'pointer', fontSize: 12, color: C.teal, fontWeight: 600, fontFamily: 'inherit' }}>Marked Homework</button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0 10px' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Students ({students.length})</span>
+          <button onClick={() => setAddOpen(true)} style={{ background: C.teal50, border: 'none', borderRadius: 10, padding: '4px 12px', cursor: 'pointer', fontSize: 13, color: C.teal, fontWeight: 600, fontFamily: 'inherit' }}>+ Add</button>
+        </div>
+        {students.map(s => (
+          <div key={s.id} onClick={() => onStudentTap(s)} style={{ background: C.white, borderRadius: 10, padding: '11px 12px', marginBottom: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 17, background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: C.teal, flexShrink: 0 }}>{s.first_name[0]}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{s.first_name} {s.surname}</div>
+              {s.register_number && <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>#{s.register_number}</div>}
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); setStudents(p => p.filter(x => x.id !== s.id)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: C.g200, fontSize: 14 }}>✕</button>
+            <span style={{ fontSize: 18, color: C.g200 }}>›</span>
+          </div>
+        ))}
+        {students.length === 0 && <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 20 }}>No students yet. Tap + Add to add students.</div>}
+      </div>
+      {addOpen && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
+          <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Add Student</span>
+              <button onClick={() => setAddOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.g900, display: 'block', marginBottom: 3 }}>First name *</label>
+            <input value={newFirst} onChange={e => setNewFirst(e.target.value)} placeholder="e.g. Tendai" style={{ ...inp, marginBottom: 10 }} />
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.g900, display: 'block', marginBottom: 3 }}>Surname *</label>
+            <input value={newSurname} onChange={e => setNewSurname(e.target.value)} placeholder="e.g. Moyo" style={{ ...inp, marginBottom: 10 }} />
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.g900, display: 'block', marginBottom: 3 }}>Register number (optional)</label>
+            <input value={newReg} onChange={e => setNewReg(e.target.value)} placeholder="e.g. 06" style={{ ...inp, marginBottom: 14 }} />
+            <button onClick={handleAdd} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Add Student</button>
+          </div>
+        </div>
+      )}
+    </Screen>
+  );
+}
+
+// ── GradingResultsScreen (web) ──────────────────────────────────────────────
+function GradingResultsWebScreen({ onBack, onViewSubmission }: {
+  onBack: () => void; onViewSubmission: (sub: DemoSubmissionDetail) => void;
+}) {
+  const [tab, setTab] = useState<'pending' | 'graded'>('pending');
+  const [subs, setSubs] = useState([
+    { id: 'sub1', student_name: 'Chipo Dube', score: 7 as number | null, max_score: 10, percentage: 70, submitted_at: '2026-04-14T08:30:00Z', status: 'graded' as const },
+    { id: 'sub2', student_name: 'Tendai Moyo', score: 5 as number | null, max_score: 10, percentage: 50, submitted_at: '2026-04-14T09:15:00Z', status: 'graded' as const },
+    { id: 'sub3', student_name: 'Farai Chikumba', score: null as number | null, max_score: 10, percentage: 0, submitted_at: '2026-04-14T10:00:00Z', status: 'pending' as const },
+    { id: 'sub4', student_name: 'Rumbi Nyathi', score: null as number | null, max_score: 10, percentage: 0, submitted_at: '2026-04-14T10:30:00Z', status: 'pending' as const },
+  ]);
+  const graded = subs.filter(s => s.status === 'graded');
+  const pending = subs.filter(s => s.status === 'pending');
+  const visible = tab === 'pending' ? pending : graded;
+  const avg = graded.length > 0 ? Math.round(graded.reduce((a, s) => a + (s.percentage || 0), 0) / graded.length) : null;
+  const highest = graded.length > 0 ? Math.max(...graded.map(s => s.percentage || 0)) : null;
+  const lowest = graded.length > 0 ? Math.min(...graded.map(s => s.percentage || 0)) : null;
+  const approveAll = () => setSubs(p => p.map(s => s.status === 'pending' ? { ...s, status: 'graded' as const, score: Math.floor(Math.random() * 5 + 5), percentage: Math.floor(Math.random() * 40 + 50) } : s));
+  const sc = (pct: number) => pct >= 70 ? C.teal : pct >= 50 ? C.amber : C.red;
+  return (
+    <Screen>
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ChevronLeft size={20} color={C.g900} /></button>
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Grading Results</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1, background: C.white, borderRadius: 12, padding: '12px 10px', textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.teal }}>{graded.length}</div>
+            <div style={{ fontSize: 11, color: C.g500, fontWeight: 600 }}>Graded</div>
+          </div>
+          <div style={{ flex: 1, background: C.white, borderRadius: 12, padding: '12px 10px', textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.amber }}>{pending.length}</div>
+            <div style={{ fontSize: 11, color: C.g500, fontWeight: 600 }}>Pending</div>
+          </div>
+        </div>
+        {avg != null && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            {[{ v: avg, l: 'Average' }, { v: highest!, l: 'Highest' }, { v: lowest!, l: 'Lowest' }].map(x => (
+              <div key={x.l} style={{ flex: 1, background: C.white, borderRadius: 12, padding: '10px 8px', textAlign: 'center' }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: sc(x.v) }}>{x.v}%</div>
+                <div style={{ fontSize: 10, color: C.g500 }}>{x.l}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {pending.length > 1 && (
+          <button onClick={approveAll} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '12px 0', color: C.white, fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 12 }}>Approve All ({pending.length}) ✓</button>
+        )}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {(['pending', 'graded'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: tab === t ? C.teal : C.white, color: tab === t ? C.white : C.g500, fontWeight: 700, fontSize: 13 }}>{t === 'pending' ? `Pending (${pending.length})` : `Graded (${graded.length})`}</button>
+          ))}
+        </div>
+        {visible.map(s => (
+          <div key={s.id} onClick={() => s.status === 'graded' ? onViewSubmission({ submissionId: s.id, studentName: s.student_name, submittedAt: s.submitted_at, grade: { student_id: s.id, student_name: s.student_name, score: s.score ?? 0, max_score: s.max_score, percentage: s.percentage, verdicts: [] }, verdicts: [] }) : undefined} style={{ background: C.white, borderRadius: 10, padding: '10px 12px', marginBottom: 7, cursor: s.status === 'graded' ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{s.student_name}</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{new Date(s.submitted_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {s.status === 'graded' && s.score != null && <span style={{ fontSize: 16, fontWeight: 800, color: sc(s.percentage) }}>{s.score}/{s.max_score}</span>}
+              <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '3px 8px', background: s.status === 'graded' ? C.teal50 : C.amber50, color: s.status === 'graded' ? C.teal : C.amber700 }}>{s.status === 'graded' ? 'Graded' : 'Pending'}</span>
+            </div>
+          </div>
+        ))}
+        {visible.length === 0 && <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 24 }}>No {tab} submissions.</div>}
+      </div>
+    </Screen>
+  );
+}
+
+// ── EditProfileScreen (web) ─────────────────────────────────────────────────
+function EditProfileWebScreen({ onBack }: { onBack: () => void }) {
+  const [title, setTitle] = useState('Mr');
+  const [firstName, setFirstName] = useState('Tinotenda');
+  const [surname, setSurname] = useState('Maisiri');
+  const [saved, setSaved] = useState(false);
+  const titles = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof'];
+  const inp: React.CSSProperties = { border: `1px solid ${C.g200}`, borderRadius: 10, padding: '11px 12px', fontSize: 14, color: C.text, outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', background: C.white };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: C.g900, marginTop: 14, marginBottom: 4, display: 'block' };
+  return (
+    <Screen style={{ padding: '0 18px' }}>
+      <div style={{ padding: '14px 0', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ChevronLeft size={20} color={C.g900} /></button>
+        <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Edit Profile</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {saved && (
+          <div style={{ background: C.teal50, borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Check size={16} color={C.teal} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.teal }}>Profile updated successfully</span>
+          </div>
+        )}
+        <label style={lbl}>Title</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {titles.map(t => (
+            <button key={t} onClick={() => setTitle(t)} style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${title === t ? C.teal : C.g200}`, background: title === t ? C.teal50 : C.white, color: title === t ? C.teal : C.g500, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{t}</button>
+          ))}
+        </div>
+        <label style={lbl}>First name</label>
+        <input value={firstName} onChange={e => setFirstName(e.target.value)} style={inp} />
+        <label style={lbl}>Surname</label>
+        <input value={surname} onChange={e => setSurname(e.target.value)} style={inp} />
+        <label style={lbl}>Phone</label>
+        <input value="+263 77 123 4567" disabled style={{ ...inp, opacity: 0.6 }} />
+        <div style={{ fontSize: 11, color: C.g500, marginTop: 4 }}>Phone number cannot be changed in the demo.</div>
+        <button onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 3000); }} style={{ marginTop: 22, width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Save Changes</button>
+      </div>
+    </Screen>
+  );
+}
+
+// ── TeacherInboxScreen (web) ────────────────────────────────────────────────
+function TeacherInboxWebScreen({ onBack, onViewSubmission }: {
+  onBack: () => void; onViewSubmission: (sub: DemoSubmissionDetail) => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'pending' | 'graded'>('all');
+  const [subs, setSubs] = useState([
+    { id: 'in1', student_name: 'Chipo Dube', hw: 'Chapter 5 Test', score: 7 as number | null, max_score: 10, percentage: 70, submitted_at: '2026-04-15T08:30:00Z', status: 'graded' as const },
+    { id: 'in2', student_name: 'Farai Chikumba', hw: 'Chapter 5 Test', score: null as number | null, max_score: 10, percentage: 0, submitted_at: '2026-04-15T09:00:00Z', status: 'pending' as const },
+    { id: 'in3', student_name: 'Rumbi Nyathi', hw: 'Chapter 4 Quiz', score: null as number | null, max_score: 10, percentage: 0, submitted_at: '2026-04-15T09:45:00Z', status: 'pending' as const },
+    { id: 'in4', student_name: 'Tendai Moyo', hw: 'Chapter 5 Test', score: 9 as number | null, max_score: 10, percentage: 90, submitted_at: '2026-04-14T14:00:00Z', status: 'graded' as const },
+  ]);
+  const timeAgo = (d: string) => { const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000); if (m < 60) return `${m}m ago`; const h = Math.floor(m / 60); return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`; };
+  const handleApprove = (id: string) => { setSubs(p => p.map(s => s.id === id ? { ...s, status: 'graded' as const, score: Math.floor(Math.random() * 4 + 6), percentage: Math.floor(Math.random() * 30 + 60) } : s)); };
+  const visible = subs.filter(s => filter === 'all' ? true : s.status === filter);
+  const sc = (pct: number) => pct >= 70 ? C.teal : pct >= 50 ? C.amber : C.red;
+  return (
+    <Screen>
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ChevronLeft size={20} color={C.g900} /></button>
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Inbox</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.white, background: C.amber, borderRadius: 10, padding: '2px 8px', marginLeft: 'auto' }}>{subs.filter(s => s.status === 'pending').length}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, padding: '10px 14px' }}>
+        {(['all', 'pending', 'graded'] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: filter === f ? C.teal : C.white, color: filter === f ? C.white : C.g500, fontWeight: 600, fontSize: 12, textTransform: 'capitalize' }}>{f} ({f === 'all' ? subs.length : subs.filter(s => s.status === f).length})</button>
+        ))}
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 16px' }}>
+        {visible.map(s => (
+          <div key={s.id} style={{ background: C.white, borderRadius: 10, padding: '10px 12px', marginBottom: 7, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{s.student_name}</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{s.hw} · {timeAgo(s.submitted_at)}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {s.status === 'graded' && s.score != null && <span style={{ fontSize: 14, fontWeight: 800, color: sc(s.percentage) }}>{s.score}/{s.max_score}</span>}
+              {s.status === 'pending' ? (
+                <button onClick={() => handleApprove(s.id)} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 12px', color: C.white, fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>Grade</button>
+              ) : (
+                <span style={{ fontSize: 11, fontWeight: 700, background: C.teal50, color: C.teal, borderRadius: 6, padding: '3px 8px' }}>Graded</span>
+              )}
+            </div>
+          </div>
+        ))}
+        {visible.length === 0 && <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 24 }}>No submissions.</div>}
+      </div>
+    </Screen>
+  );
+}
+
+// ── CapturePagesScreen (web adaptation of StudentCameraScreen) ──────────────
+function CapturePagesWebScreen({ onBack, onDone }: {
+  onBack: () => void; onDone: (imageCount: number) => void;
+}) {
+  const [pages, setPages] = useState<string[]>([]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { if (typeof reader.result === 'string') setPages(p => [...p, reader.result as string]); };
+    reader.readAsDataURL(file); e.target.value = '';
+  };
+  const handleWebcamCapture = (base64: string) => { setCameraOpen(false); setPages(p => [...p, `data:image/jpeg;base64,${base64}`]); };
+  return (
+    <Screen>
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ChevronLeft size={20} color={C.g900} /></button>
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Capture Pages</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+        <div style={{ fontSize: 13, color: C.g500, marginBottom: 14, lineHeight: 1.5 }}>Photograph each page of your homework. You can add as many pages as needed.</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {pages.map((src, i) => (
+            <div key={i} style={{ position: 'relative', width: 80, height: 100, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.g200}` }}>
+              <img src={src} alt={`Page ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <button onClick={() => setPages(p => p.filter((_, j) => j !== i))} style={{ position: 'absolute', top: 2, right: 2, width: 20, height: 20, borderRadius: 10, background: 'rgba(0,0,0,0.6)', border: 'none', color: C.white, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', textAlign: 'center', fontSize: 10, color: C.white, padding: 2 }}>Page {i + 1}</div>
+            </div>
+          ))}
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
+        <button onClick={() => fileRef.current?.click()} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Camera size={18} color={C.white} />
+          {pages.length === 0 ? 'Capture Page 1' : 'Add Another Page'}
+        </button>
+        <button onClick={() => setCameraOpen(true)} style={{ width: '100%', background: C.white, border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 0', color: C.g900, fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Camera size={16} color={C.g500} />
+          Use Webcam
+        </button>
+        {pages.length > 0 && (
+          <button onClick={() => onDone(pages.length)} style={{ width: '100%', background: C.amber, border: 'none', borderRadius: 10, padding: '14px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Continue with {pages.length} page{pages.length !== 1 ? 's' : ''} →
+          </button>
+        )}
+      </div>
+      {cameraOpen && <WebCameraModal open={cameraOpen} onCapture={handleWebcamCapture} onClose={() => setCameraOpen(false)} />}
+    </Screen>
+  );
+}
+
+
 // ──────────────────────────────────────────────────────────────────────────────
 // PAGE
 // ──────────────────────────────────────────────────────────────────────────────
@@ -8176,7 +8585,7 @@ export default function DemoPage() {
       case 'register':
         return <RegisterScreen onSignIn={() => go('phone')} onContinue={(p, ch) => { setOtpPhone(p); setOtpChannel(ch); go('otp'); }} />;
       case 'classes':
-        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onHomeworkList={() => go('homework-list')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onAssistant={() => go('t-assistant')} onNewClass={() => go('class-setup')} />;
+        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onHomeworkList={() => go('homework-list')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onAssistant={() => go('t-assistant')} onNewClass={() => go('class-setup')} onClassDetail={() => go('class-detail')} onInbox={() => go('inbox')} />;
       case 'homework-list':
         return <HomeworkListWebScreen onBack={() => go('classes')} onOpenHomework={() => go('homework-detail')} demoToken={demoToken} />;
       case 'class-setup':
@@ -8195,7 +8604,7 @@ export default function DemoPage() {
           />
         );
       case 't-settings':
-        return <TeacherSettingsWebScreen onBack={() => go('classes')} onAnalytics={() => go('analytics')} />;
+        return <TeacherSettingsWebScreen onBack={() => go('classes')} onAnalytics={() => go('analytics')} onEditProfile={() => go('edit-profile')} />;
       case 'add-homework':
         return (
           <AddHomeworkScreen
@@ -8284,6 +8693,14 @@ export default function DemoPage() {
             demoToken={demoToken}
           />
         );
+      case 'class-detail':
+        return <ClassDetailWebScreen onBack={() => go('classes')} onHomeworkList={() => go('homework-list')} onStudentTap={(s) => { setSelectedStudent({ student_id: s.id, name: `${s.first_name} ${s.surname}`, latest_score: 65, average_score: 65, submission_count: 3, trend: 'up' }); go('student-analytics'); }} />;
+      case 'grading-results':
+        return <GradingResultsWebScreen onBack={() => go('homework-detail')} onViewSubmission={(sub) => { setSelectedSubmission(sub); go('grading-detail'); }} />;
+      case 'edit-profile':
+        return <EditProfileWebScreen onBack={() => go('t-settings')} />;
+      case 'inbox':
+        return <TeacherInboxWebScreen onBack={() => go('classes')} onViewSubmission={(sub) => { setSelectedSubmission(sub); go('grading-detail'); }} />;
       case 't-assistant':
         return <TeacherAIAssistantWebScreen onBack={() => go('classes')} />;
       default:
@@ -8334,14 +8751,14 @@ export default function DemoPage() {
           case 'register':
             return <RegisterScreen onSignIn={() => sGo('phone')} onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} />;
           case 'classes':
-            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onHomeworkList={() => sGo('homework-list')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onAssistant={() => sGo('t-assistant')} onNewClass={() => sGo('class-setup')} />;
+            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onHomeworkList={() => sGo('homework-list')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onAssistant={() => sGo('t-assistant')} onNewClass={() => sGo('class-setup')} onClassDetail={() => sGo('class-detail')} onInbox={() => sGo('inbox')} />;
           case 'class-setup':
             return <ClassSetupScreen onBack={() => sGo('classes')} onCreate={(cls) => { setSTeacherNewClass(cls); sGo('class-join-code'); }} />;
           case 'class-join-code':
             if (!sTeacherNewClass) { sGo('classes'); return null; }
             return <ClassJoinCodeScreen cls={sTeacherNewClass} onDone={() => { setSTeacherNewClass(null); sGo('classes'); }} />;
           case 't-settings':
-            return <TeacherSettingsWebScreen onBack={() => sGo('classes')} onAnalytics={() => sGo('analytics')} />;
+            return <TeacherSettingsWebScreen onBack={() => sGo('classes')} onAnalytics={() => sGo('analytics')} onEditProfile={() => sGo('edit-profile')} />;
           case 'add-homework':
             return <AddHomeworkScreen onBack={() => sGo('classes')} onSuccess={(data) => { setSchemeData(data); sGo('review-scheme'); }} demoToken={demoToken} />;
           case 'review-scheme':
@@ -8373,6 +8790,14 @@ export default function DemoPage() {
           case 'homework-analytics':
             if (!selectedHomeworkId) { sGo('analytics'); return null; }
             return <HomeworkAnalyticsWebScreen homeworkId={selectedHomeworkId} onBack={() => sGo('analytics')} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} demoToken={demoToken} />;
+          case 'class-detail':
+            return <ClassDetailWebScreen onBack={() => sGo('classes')} onHomeworkList={() => sGo('homework-list')} onStudentTap={(s) => { setSelectedStudent({ student_id: s.id, name: `${s.first_name} ${s.surname}`, latest_score: 65, average_score: 65, submission_count: 3, trend: 'up' }); sGo('student-analytics'); }} />;
+          case 'grading-results':
+            return <GradingResultsWebScreen onBack={() => sGo('homework-detail')} onViewSubmission={(sub) => { setSelectedSubmission(sub); sGo('grading-detail'); }} />;
+          case 'edit-profile':
+            return <EditProfileWebScreen onBack={() => sGo('t-settings')} />;
+          case 'inbox':
+            return <TeacherInboxWebScreen onBack={() => sGo('classes')} onViewSubmission={(sub) => { setSelectedSubmission(sub); sGo('grading-detail'); }} />;
           case 't-assistant':
             return <TeacherAIAssistantWebScreen onBack={() => sGo('classes')} />;
           default:
@@ -8386,10 +8811,13 @@ export default function DemoPage() {
         return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} demoToken={demoToken} />;
       case 's-settings':
         return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} onResults={() => setSScreen('s-results')} studentName={studentName} />;
+      case 's-capture':
+        return <CapturePagesWebScreen onBack={() => setSScreen('s-submit')} onDone={(count) => { setSubmissionFileName(`homework_${count}pages.jpg`); setHwInfo(h => ({ ...h, submission_count: h.submission_count + 1 })); triggerSync(); setSScreen('s-success'); }} />;
       case 's-submit':
         return (
           <StudentSubmitScreen
             onBack={() => setSScreen('s-home')}
+            onCapture={() => setSScreen('s-capture')}
             onSubmitted={(sub) => {
               setSubmissionFileName(sub.fileName);
               setHwInfo(h => ({ ...h, submission_count: h.submission_count + 1 }));
