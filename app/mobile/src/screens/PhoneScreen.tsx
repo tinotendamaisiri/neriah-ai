@@ -25,11 +25,9 @@ import { showError } from '../utils/showError';
 import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
-import PhoneInput from '../components/PhoneInput';
+import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 const logoImage = require('../../assets/icon-transparent.png');
 
-// E.164: + followed by 10–15 digits
-const E164_RE = /^\+[1-9]\d{9,14}$/;
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'Phone'>;
 
@@ -44,7 +42,7 @@ export default function PhoneScreen() {
     const cleanPhone = phone.trim();
     setPhoneError('');
 
-    if (!cleanPhone || !E164_RE.test(cleanPhone)) {
+    if (!cleanPhone || !isValidE164(cleanPhone)) {
       setPhoneError(t('invalid_number_msg'));
       return;
     }
@@ -56,6 +54,7 @@ export default function PhoneScreen() {
         phone: cleanPhone,
         verification_id: res.verification_id,
         ...(res.debug_otp ? { debug_otp: res.debug_otp } : {}),
+        ...(res.channel   ? { channel:   res.channel   } : {}),
       });
     } catch (err: any) {
       if (err.status === 404 || err.response?.status === 404 || err._raw?.response?.status === 404) {

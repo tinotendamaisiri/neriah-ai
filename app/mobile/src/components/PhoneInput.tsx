@@ -50,6 +50,14 @@ function buildE164(dial: string, local: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+// E.164: + then 7–15 digits total. Practical minimum for mobile numbers: 10 total digits.
+const E164_RE = /^\+[1-9]\d{6,14}$/;
+
+/** True when the E.164 string is structurally valid. */
+export function isValidE164(phone: string): boolean {
+  return E164_RE.test(phone);
+}
+
 interface PhoneInputProps {
   /** Called with the full E.164 string (or '' when incomplete). */
   onChangePhone: (e164: string) => void;
@@ -64,21 +72,28 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
   const [localNumber, setLocalNumber] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [query, setQuery] = useState('');
+  const [touched, setTouched] = useState(false);
   const inputRef = useRef<TextInput>(null);
+
+  const currentE164 = buildE164(country.dial, localNumber);
+  const showInlineError = touched && localNumber.length > 0 && !isValidE164(currentE164);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
+  // Strip non-digits immediately so raw text stays clean
   const handleLocalChange = (text: string) => {
-    setLocalNumber(text);
-    onChangePhone(buildE164(country.dial, text));
+    const digitsOnly = text.replace(/\D/g, '');
+    setLocalNumber(digitsOnly);
+    onChangePhone(buildE164(country.dial, digitsOnly));
   };
+
+  const handleBlur = () => setTouched(true);
 
   const handleSelectCountry = (selected: Country) => {
     setCountry(selected);
     setModalVisible(false);
     setQuery('');
     onChangePhone(buildE164(selected.dial, localNumber));
-    // Refocus the number input after closing modal
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
@@ -135,16 +150,22 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
           style={styles.numberInput}
           value={localNumber}
           onChangeText={handleLocalChange}
+          onBlur={handleBlur}
           keyboardType="phone-pad"
           placeholder="771 234 567"
           placeholderTextColor={COLORS.gray200}
           autoCorrect={false}
           autoCapitalize="none"
           editable={!disabled}
-          maxLength={13}
+          maxLength={10}
           returnKeyType="done"
         />
       </View>
+
+      {/* Inline validation error */}
+      {showInlineError && (
+        <Text style={styles.inlineError}>Enter a valid phone number (7–10 digits).</Text>
+      )}
 
       {/* Country picker modal */}
       <Modal
@@ -306,5 +327,11 @@ const styles = StyleSheet.create({
     marginTop: 32,
     fontSize: 14,
     color: COLORS.gray500,
+  },
+
+  inlineError: {
+    marginTop: 4,
+    fontSize: 12,
+    color: COLORS.error,
   },
 });

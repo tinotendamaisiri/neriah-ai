@@ -27,9 +27,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { studentRegister, getSchools, getClassesBySchool } from '../services/api';
 import { AuthStackParamList, School } from '../types';
 import { COLORS } from '../constants/colors';
-import PhoneInput from '../components/PhoneInput';
-
-const E164_RE = /^\+[1-9]\d{9,14}$/;
+import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'StudentRegister'>;
 
@@ -283,16 +281,9 @@ export default function StudentRegisterScreen() {
               <PhoneInput onChangePhone={setPhone} disabled={false} />
 
               <TouchableOpacity
-                style={[styles.button, !phone && styles.buttonDisabled]}
-                onPress={() => {
-                  const ph = phone.trim();
-                  if (!ph || !E164_RE.test(ph)) {
-                    Alert.alert('Invalid number', 'Please enter a valid phone number including country code.');
-                    return;
-                  }
-                  setStep('school');
-                }}
-                disabled={!phone}
+                style={[styles.button, !isValidE164(phone) && styles.buttonDisabled]}
+                onPress={() => { setStep('school'); }}
+                disabled={!isValidE164(phone)}
               >
                 <Text style={styles.buttonText}>Continue</Text>
               </TouchableOpacity>

@@ -24,9 +24,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { School, AuthStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
-import PhoneInput from '../components/PhoneInput';
-
-const E164_RE = /^\+[1-9]\d{9,14}$/;
+import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'TeacherRegister'>;
 
@@ -140,7 +138,7 @@ export default function TeacherRegisterScreen() {
       Alert.alert(t('name_required'), t('name_required_msg'));
       return;
     }
-    if (!ph || !E164_RE.test(ph)) {
+    if (!ph || !isValidE164(ph)) {
       Alert.alert(t('invalid_number'), t('invalid_number_msg'));
       return;
     }

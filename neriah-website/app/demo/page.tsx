@@ -2785,6 +2785,9 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
   const [confirmOpen,       setConfirmOpen]       = useState(false);
   const [confirmedStudents, setConfirmedStudents] = useState<{ first_name: string; surname: string }[]>([]);
   const bulkFileRef = useRef<HTMLInputElement>(null);
+  const [addStudentOpen,    setAddStudentOpen]    = useState(false);
+  const [manualFirst,       setManualFirst]       = useState('');
+  const [manualSurname,     setManualSurname]     = useState('');
 
   async function _runExtraction(base64: string, mediaType: 'image' | 'pdf') {
     setBulkExtracting(true);
@@ -2943,15 +2946,119 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
           </select>
         </div>
 
+        {/* Confirmed students list */}
+        {confirmedStudents.length > 0 && (
+          <div style={{ background: C.teal50, border: `1px solid ${C.teal100}`, borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.teal, marginBottom: 6 }}>
+              {confirmedStudents.length} student{confirmedStudents.length !== 1 ? 's' : ''} added
+            </div>
+            {confirmedStudents.slice(0, 5).map((s, i) => (
+              <div key={i} style={{ fontSize: 12, color: C.teal, paddingBlock: 2 }}>• {s.first_name} {s.surname}</div>
+            ))}
+            {confirmedStudents.length > 5 && (
+              <div style={{ fontSize: 12, color: C.teal, paddingBlock: 2 }}>+ {confirmedStudents.length - 5} more…</div>
+            )}
+          </div>
+        )}
+
         {/* Add students link */}
-        <button style={{
-          background: 'none', border: 'none', cursor: 'pointer', color: C.teal,
-          fontSize: 13, fontWeight: 600, fontFamily: 'inherit', textAlign: 'left',
-          padding: 0, display: 'flex', alignItems: 'center', gap: 4,
-        }}>
+        <button
+          onClick={() => setAddStudentOpen(v => !v)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', color: C.teal,
+            fontSize: 13, fontWeight: 600, fontFamily: 'inherit', textAlign: 'left',
+            padding: 0, display: 'flex', alignItems: 'center', gap: 4,
+          }}>
           <Plus size={14} color={C.teal} />
           Add students to this class
         </button>
+
+        {/* Student add panel */}
+        {addStudentOpen && (
+          <div style={{ background: C.g50, border: `1px solid ${C.border}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Manual entry */}
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.g700, marginBottom: 2 }}>Type student name</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                style={{ ...inputStyle, flex: 1, padding: '9px 11px', fontSize: 13 }}
+                placeholder="First name"
+                value={manualFirst}
+                onChange={e => setManualFirst(e.target.value)}
+              />
+              <input
+                style={{ ...inputStyle, flex: 1, padding: '9px 11px', fontSize: 13 }}
+                placeholder="Surname"
+                value={manualSurname}
+                onChange={e => setManualSurname(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!manualFirst.trim() && !manualSurname.trim()) return;
+                setConfirmedStudents(prev => [...prev, { first_name: manualFirst.trim(), surname: manualSurname.trim() }]);
+                setManualFirst('');
+                setManualSurname('');
+              }}
+              style={{
+                background: C.teal, border: 'none', borderRadius: 8, padding: '8px 0',
+                color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Add Student
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.g400 }}>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+              <span style={{ fontSize: 11, fontWeight: 600 }}>OR IMPORT</span>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+            </div>
+
+            {/* Import buttons */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => { setAddStudentOpen(false); setBulkCameraOpen(true); }}
+                style={{
+                  flex: 1, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 8,
+                  padding: '9px 0', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: C.text,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                }}
+              >
+                <Camera size={16} color={C.teal} />
+                Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAddStudentOpen(false); bulkFileRef.current?.click(); }}
+                style={{
+                  flex: 1, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 8,
+                  padding: '9px 0', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: C.text,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                }}
+              >
+                <FileText size={16} color={C.teal} />
+                PDF / Image
+              </button>
+            </div>
+
+            {bulkExtracting && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.teal, fontSize: 13 }}>
+                <Spinner />
+                Extracting student names…
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Hidden file input for bulk register import */}
+        <input
+          ref={bulkFileRef}
+          type="file"
+          accept="image/*,application/pdf"
+          style={{ display: 'none' }}
+          onChange={handleBulkFile}
+        />
 
         {error && (
           <div style={{ background: C.redLt, border: `1px solid ${C.red200}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: C.red700 }}>
@@ -4184,9 +4291,18 @@ function HomeworkListWebScreen({ onBack, onOpenHomework, demoToken }: {
 
   React.useEffect(() => {
     demoFetch('/demo/homeworks?class_id=demo-class-1', {}, demoToken)
-      .then(r => r.json())
       .then(data => {
-        setHomeworks(data.homeworks ?? []);
+        if (data && Array.isArray(data.homeworks)) {
+          setHomeworks(data.homeworks);
+        } else {
+          // Fallback to demo data if endpoint not yet deployed
+          setHomeworks([
+            { id: 'demo-homework-1', title: 'Maths Chapter 5 Test', subject: 'Mathematics', education_level: 'Form 2', due_date: null, created_at: '2026-04-12T07:00:00Z', submission_count: 2, graded_count: 2, pending_count: 0, status: 'graded', ai_generated: true },
+            { id: 'hw2', title: 'Chapter 6 Algebra Quiz', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-25T23:59:00Z', created_at: '2026-04-10T07:00:00Z', submission_count: 0, graded_count: 0, pending_count: 0, status: 'pending', ai_generated: false },
+            { id: 'hw3', title: 'Chapter 7 Geometry', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-18T23:59:00Z', created_at: '2026-04-08T07:00:00Z', submission_count: 1, graded_count: 0, pending_count: 1, status: 'pending', ai_generated: true },
+          ]);
+        }
+        setLoading(false);
       })
       .catch(() => {
         // Fallback to demo data if endpoint not yet deployed
@@ -4195,8 +4311,8 @@ function HomeworkListWebScreen({ onBack, onOpenHomework, demoToken }: {
           { id: 'hw2', title: 'Chapter 6 Algebra Quiz', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-25T23:59:00Z', created_at: '2026-04-10T07:00:00Z', submission_count: 0, graded_count: 0, pending_count: 0, status: 'pending', ai_generated: false },
           { id: 'hw3', title: 'Chapter 7 Geometry', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-18T23:59:00Z', created_at: '2026-04-08T07:00:00Z', submission_count: 1, graded_count: 0, pending_count: 1, status: 'pending', ai_generated: true },
         ]);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   }, [demoToken]);
 
   const graded  = homeworks.filter(h => h.status === 'graded');
@@ -6127,6 +6243,8 @@ function AnalyticsScreen({
   const [reason, setReason]       = useState<string | null>(null);
   const [limitedData, setLimitedData] = useState(false);
   const [homeworkList, setHomeworkList] = useState<Array<{ id: string; title: string }>>([]);
+  const [aiSummary, setAiSummary]     = useState<string | null>(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
 
   // Try to fetch live data; fall back to pre-canned.
   // AbortController cancels in-flight request on unmount or demoToken change.
@@ -6171,6 +6289,27 @@ function AnalyticsScreen({
       })
       .catch(() => {});
   }, [demoToken]);
+
+  async function generateAiSummary() {
+    setAiSummaryLoading(true);
+    try {
+      const res = await demoFetch('/demo/teacher/assistant', {
+        method: 'POST',
+        body: JSON.stringify({
+          action_type: 'general',
+          message: `Generate a short class performance summary for Form 2A Mathematics. Class average: ${analytics.class_average}%, highest: ${analytics.highest_score}%, lowest: ${analytics.lowest_score}%. Give 2-3 sentences of actionable commentary for the teacher.`,
+          class_id: analytics.class_id,
+        }),
+      }, demoToken);
+      const text = (res as any)?.response ?? (res as any)?.message ?? null;
+      if (text) setAiSummary(text);
+      else setAiSummary('The class is performing at a moderate level. Consider reviewing the topics where students scored below 60% and providing targeted revision exercises. Encourage top performers to assist peers during group work sessions.');
+    } catch {
+      setAiSummary('The class is performing at a moderate level. Consider reviewing the topics where students scored below 60% and providing targeted revision exercises. Encourage top performers to assist peers during group work sessions.');
+    } finally {
+      setAiSummaryLoading(false);
+    }
+  }
 
   const studentsWithSubs = analytics.students.filter(s => (s.submission_count ?? 1) > 0);
   const highestScore = studentsWithSubs.length > 0 ? Math.max(...studentsWithSubs.map(s => s.latest_score)) : 0;
@@ -6346,6 +6485,7 @@ function AnalyticsScreen({
             <div style={{
               background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
               overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+              marginBottom: 14,
             }}>
               <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.g700 }}>
                 Student Rankings
@@ -6382,6 +6522,43 @@ function AnalyticsScreen({
                 </button>
               ))}
             </div>
+
+            {/* AI Summary section */}
+            {!aiSummary && (
+              <button
+                onClick={generateAiSummary}
+                disabled={aiSummaryLoading}
+                style={{
+                  width: '100%', background: aiSummaryLoading ? C.teal100 : C.teal,
+                  border: 'none', borderRadius: 10, padding: '12px 0',
+                  cursor: aiSummaryLoading ? 'not-allowed' : 'pointer',
+                  color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                {aiSummaryLoading ? <><Spinner /> Generating summary…</> : <><Sparkles size={15} /> Generate AI Summary</>}
+              </button>
+            )}
+
+            {aiSummary && (
+              <div style={{
+                background: C.tealLt, border: `1px solid ${C.teal100}`, borderRadius: 12,
+                padding: '12px 14px', marginBottom: 8,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Sparkles size={13} color={C.teal} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.teal }}>AI Class Summary</span>
+                  <button
+                    onClick={() => setAiSummary(null)}
+                    style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: C.g500, fontFamily: 'inherit' }}
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div style={{ fontSize: 13, color: C.teal, lineHeight: 1.6 }}>{aiSummary}</div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -7363,6 +7540,12 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void;
   const [pinActive, setPinActive]   = useState(false);
   const [pinModal,  setPinModal]    = useState<PinModalMode | null>(null);
   const [toast,     setToast]       = useState('');
+  const [language,  setLanguage]    = useState<'English' | 'Shona' | 'Ndebele'>('English');
+  const [langOpen,  setLangOpen]    = useState(false);
+  const [editProfile, setEditProfile] = useState(false);
+  const [profileName,   setProfileName]   = useState('Mr Tendai Maisiri');
+  const [profileSchool, setProfileSchool] = useState('Kuwadzana High School');
+  const [profileDraft,  setProfileDraft]  = useState({ name: '', school: '' });
 
   function handlePinSuccess(msg: string) {
     setPinModal(null);
@@ -7386,43 +7569,133 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void;
         {/* ── PROFILE section ── */}
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Profile</div>
         <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '14px 16px', marginBottom: 14, position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 48, height: 48, borderRadius: 24, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>T</span>
+          {!editProfile ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 48, height: 48, borderRadius: 24, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>{profileName.charAt(0)}</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{profileName}</div>
+                  <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>+263 •••• •••• 67</div>
+                  <div style={{ fontSize: 12, color: C.g500, marginTop: 1 }}>{profileSchool}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => { setProfileDraft({ name: profileName, school: profileSchool }); setEditProfile(true); }}
+                style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
+              >
+                <Pencil size={16} color={C.g400} />
+              </button>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.g700, marginBottom: 2 }}>Edit Profile</div>
+              <input
+                style={{ width: '100%', padding: '9px 11px', fontSize: 14, borderRadius: 8, border: `1.5px solid ${C.teal}`, fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none', color: C.text }}
+                value={profileDraft.name}
+                onChange={e => setProfileDraft(d => ({ ...d, name: e.target.value }))}
+                placeholder="Full name"
+              />
+              <input
+                style={{ width: '100%', padding: '9px 11px', fontSize: 14, borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none', color: C.text }}
+                value={profileDraft.school}
+                onChange={e => setProfileDraft(d => ({ ...d, school: e.target.value }))}
+                placeholder="School name"
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setEditProfile(false)}
+                  style={{ flex: 1, padding: '9px 0', background: 'none', border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, color: C.g700, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (profileDraft.name.trim()) setProfileName(profileDraft.name.trim());
+                    if (profileDraft.school.trim()) setProfileSchool(profileDraft.school.trim());
+                    setEditProfile(false);
+                    setToast('Profile updated');
+                  }}
+                  style={{ flex: 2, padding: '9px 0', background: C.teal, border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, color: C.white, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  Save
+                </button>
+              </div>
             </div>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Mr Tendai Maisiri</div>
-              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>+263 •••• •••• 67</div>
-              <div style={{ fontSize: 12, color: C.g500, marginTop: 1 }}>Kuwadzana High School</div>
-            </div>
-          </div>
-          <button style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-            <Pencil size={16} color={C.g400} />
-          </button>
+          )}
         </div>
 
         {/* ── ACCOUNT section ── */}
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Account</div>
         <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, overflow: 'hidden' }}>
-          {[
-            { label: 'School', right: 'Kuwadzana High' },
-            { label: pinActive ? 'Change PIN' : 'Set PIN', right: pinActive ? 'Active' : '' },
-            { label: 'Language', right: 'English' },
-          ].map((row, i, arr) => (
-            <button key={row.label}
-              onClick={row.label.includes('PIN') ? () => setPinModal(pinActive ? 'change' : 'setup') : undefined}
+          {/* School row */}
+          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${C.g100}` }}>
+            <span style={{ fontSize: 14, color: C.text }}>School</span>
+            <span style={{ fontSize: 13, color: C.g400 }}>{profileSchool.split(' ').slice(0, 2).join(' ')}</span>
+          </div>
+          {/* PIN row */}
+          <button
+            onClick={() => setPinModal(pinActive ? 'change' : 'setup')}
+            style={{
+              width: '100%', background: 'none', border: 'none', borderBottom: `1px solid ${C.g100}`,
+              padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}>
+            <span style={{ fontSize: 14, color: C.text }}>{pinActive ? 'Change PIN' : 'Set PIN'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {pinActive && <span style={{ fontSize: 13, color: C.g400 }}>Active</span>}
+              <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
+            </div>
+          </button>
+          {/* Remove PIN row — only visible when PIN is active */}
+          {pinActive && (
+            <button
+              onClick={() => setPinModal('remove')}
               style={{
-                width: '100%', background: 'none', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${C.g100}` : 'none',
+                width: '100%', background: 'none', border: 'none', borderBottom: `1px solid ${C.g100}`,
                 padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 cursor: 'pointer', fontFamily: 'inherit',
               }}>
-              <span style={{ fontSize: 14, color: C.text }}>{row.label}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {row.right && <span style={{ fontSize: 13, color: C.g400 }}>{row.right}</span>}
-                <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
-              </div>
+              <span style={{ fontSize: 14, color: C.red }}>Remove PIN</span>
+              <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
             </button>
-          ))}
+          )}
+          {/* Language row */}
+          <button
+            onClick={() => setLangOpen(v => !v)}
+            style={{
+              width: '100%', background: 'none', border: 'none', borderBottom: langOpen ? `1px solid ${C.g100}` : 'none',
+              padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}>
+            <span style={{ fontSize: 14, color: C.text }}>Language</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13, color: C.g400 }}>{language}</span>
+              <ChevronLeft size={14} color={C.g400} style={{ transform: langOpen ? 'rotate(90deg)' : 'rotate(270deg)' }} />
+            </div>
+          </button>
+          {langOpen && (
+            <div>
+              {(['English', 'Shona', 'Ndebele'] as const).map((lang, i, arr) => (
+                <button
+                  key={lang}
+                  onClick={() => { setLanguage(lang); setLangOpen(false); setToast(`Language changed to ${lang}`); }}
+                  style={{
+                    width: '100%', background: lang === language ? C.teal50 : 'none', border: 'none',
+                    borderBottom: i < arr.length - 1 ? `1px solid ${C.g100}` : 'none',
+                    padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: lang === language ? C.teal : C.text, fontWeight: lang === language ? 600 : 400 }}>{lang}</span>
+                  {lang === language && <span style={{ fontSize: 13, color: C.teal }}>✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── OFFLINE AI MODEL section ── */}
