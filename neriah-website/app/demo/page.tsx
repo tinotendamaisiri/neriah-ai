@@ -1186,9 +1186,20 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Welcome / Role Select
 // ──────────────────────────────────────────────────────────────────────────────
-function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignIn: () => void }) {
+function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => void; onSignIn: () => void; highlight?: 'teacher' | 'student' }) {
   return (
     <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
+      <style>{`
+        @keyframes pulse-teal {
+          0%, 100% { box-shadow: 0 4px 14px rgba(13,115,119,0.30), 0 0 0 4px rgba(13,115,119,0.2); }
+          50%       { box-shadow: 0 4px 14px rgba(13,115,119,0.30), 0 0 0 8px rgba(13,115,119,0.1); }
+        }
+        @keyframes pulse-amber {
+          0%, 100% { box-shadow: 0 4px 14px rgba(245,166,35,0.30), 0 0 0 4px rgba(245,166,35,0.2); }
+          50%       { box-shadow: 0 4px 14px rgba(245,166,35,0.30), 0 0 0 8px rgba(245,166,35,0.1); }
+        }
+      `}</style>
+
       {/* Header */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 36, marginBottom: 0 }}>
         <Image src="/images/icon-transparent.png" alt="Neriah" width={80} height={80} style={{ marginBottom: 12, objectFit: 'contain' }} />
@@ -1200,37 +1211,51 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
       {/* Role cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 28 }}>
         {/* Teacher */}
+        {highlight === 'teacher' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.05em' }}>← Teacher</span>
+          </div>
+        )}
         <button
           onClick={onTeacher}
           style={{
-            background: C.teal, border: 'none', borderRadius: 16, padding: '18px 16px',
+            background: C.teal, border: highlight === 'teacher' ? `3px solid ${C.teal}` : 'none',
+            borderRadius: 16, padding: '18px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
             gap: 6, minHeight: 108, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(13,115,119,0.30)', transition: 'opacity 0.15s',
+            animation: highlight === 'teacher' ? 'pulse-teal 2s ease-in-out infinite' : undefined,
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
           <Briefcase size={38} color={C.white} />
-          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
+          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I&apos;m a Teacher</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Mark exercise books with AI
           </span>
         </button>
 
         {/* Student */}
+        {highlight === 'student' && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, letterSpacing: '0.05em' }}>Student →</span>
+          </div>
+        )}
         <button
           style={{
-            background: C.amber, border: 'none', borderRadius: 16, padding: '18px 16px',
+            background: C.amber, border: highlight === 'student' ? `3px solid ${C.amber}` : 'none',
+            borderRadius: 16, padding: '18px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
             gap: 6, minHeight: 108, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(245,166,35,0.30)', transition: 'opacity 0.15s',
+            animation: highlight === 'student' ? 'pulse-amber 2s ease-in-out infinite' : undefined,
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
           <GraduationCap size={38} color={C.white} />
-          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I'm a Student</span>
+          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I&apos;m a Student</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Submit work and get feedback
           </span>
@@ -7062,7 +7087,7 @@ export default function DemoPage() {
   function renderTeacherScreen() {
     switch (screen) {
       case 'welcome':
-        return <WelcomeScreen onTeacher={() => go('register')} onSignIn={() => go('phone')} />;
+        return <WelcomeScreen onTeacher={() => go('register')} onSignIn={() => go('phone')} highlight="teacher" />;
       case 'phone':
         return <PhoneScreen onContinue={(p, ch) => { setOtpPhone(p); setOtpChannel(ch); go('otp'); }} onRegister={() => go('welcome')} />;
       case 'otp':
@@ -7184,6 +7209,7 @@ export default function DemoPage() {
           <WelcomeScreen
             onTeacher={() => { setSTeacherScreen('register'); setSTeacherPrev('register'); setSScreen('s-teacher'); }}
             onSignIn={() => setSScreen('s-phone')}
+            highlight="student"
           />
         );
       case 's-phone':
@@ -7206,7 +7232,7 @@ export default function DemoPage() {
       case 's-teacher':
         switch (sTeacherScreen) {
           case 'welcome':
-            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} />;
+            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} highlight="student" />;
           case 'phone':
             return <PhoneScreen onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} onRegister={() => sGo('welcome')} />;
           case 'otp':
@@ -7251,7 +7277,7 @@ export default function DemoPage() {
           case 't-assistant':
             return <TeacherAIAssistantWebScreen onBack={() => sGo('classes')} />;
           default:
-            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} />;
+            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} highlight="student" />;
         }
 
       // ── Student flow ─────────────────────────────────────────────────────────
