@@ -96,14 +96,16 @@ def classes_by_school(school_id: str):
         return jsonify({"error": "school_id is required"}), 400
 
     sid = school_id.strip()
-    results = query("classes", [("school_id", "==", sid)], order_by="created_at")
+    # No order_by here — composite index (school_id, created_at) may not exist.
+    # Sort in Python after fetching.
+    results = query("classes", [("school_id", "==", sid)])
 
     if not results:
         # Fallback: find teachers at this school, then fetch their classes.
         # This covers classes created before school_id was stamped on the class document.
         teachers_at_school = query("teachers", [("school_id", "==", sid)])
         for t in teachers_at_school:
-            teacher_classes = query("classes", [("teacher_id", "==", t["id"])], order_by="created_at")
+            teacher_classes = query("classes", [("teacher_id", "==", t["id"])])
             results.extend(teacher_classes)
 
     if not results:
@@ -118,7 +120,7 @@ def classes_by_school(school_id: str):
         if cid not in seen:
             seen.add(cid)
             unique.append(c)
-    results = unique
+    results = sorted(unique, key=lambda c: c.get("created_at", ""))
 
     # Attach teacher name to each class so the mobile UI can display it
     teacher_cache: dict[str, dict | None] = {}
