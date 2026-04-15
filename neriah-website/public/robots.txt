@@ -7,7 +7,6 @@ User-agent: *
 Disallow: /api/
 Disallow: /studio/
 Disallow: /admin/
-Disallow: /demo
 
 # Host
 Host: https://neriah.ai

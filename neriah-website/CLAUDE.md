@@ -116,7 +116,7 @@ All three dummy WhatsApp icons have been replaced with the real WhatsApp brand S
 ## Key decisions & things to remember
 - `npm install` always needs `--legacy-peer-deps`
 - All bare `/contact` links were updated to `/site/contact?subject=demo`
-- The `middleware` file is deprecated in Next.js 16 (should be renamed to `proxy`) — not blocking, just a warning
+- The middleware file must be named `middleware.ts` in the project root — Next.js only executes that exact filename. `proxy.ts` or any other name is ignored entirely.
 - Supabase types in `types/database.ts` must stay in sync with actual schema; TypeScript build will fail if they diverge
 - `ContactForm` uses `useSearchParams` so it must be wrapped in `<Suspense>` in any server component page
 - The contact page background stays teal — only the form card itself is white
