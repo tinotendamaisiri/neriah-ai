@@ -6032,3 +6032,218 @@ class TestHomeworkList:
         sorted_desc = sorted(data, key=lambda d: d["created_at"], reverse=True)
         assert sorted_desc[0]["title"] == "Newest"
         assert sorted_desc[-1]["title"] == "Old"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestAnalytics — GET /api/analytics/class/<class_id>
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAnalytics:
+    """Tests for the analytics endpoint: has_data flag, reason, and real computation."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, bypass_token_version_check):  # noqa: F811
+        pass
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _mark(self, student_id: str, pct: float, approved: bool = True) -> dict:
+        return {
+            "id": f"mark-{student_id}-{int(pct)}",
+            "student_id": student_id,
+            "class_id": CLASS_ID,
+            "answer_key_id": HOMEWORK_ID,
+            "score": int(pct),
+            "max_score": 100,
+            "percentage": pct,
+            "approved": approved,
+            "status": "approved" if approved else "pending",
+            "verdicts": [],
+            "timestamp": "2026-04-10T08:00:00Z",
+        }
+
+    def _student(self, sid: str, name: str = "Test Student") -> dict:
+        first, *rest = name.split(" ", 1)
+        return {"id": sid, "class_id": CLASS_ID, "first_name": first, "surname": rest[0] if rest else ""}
+
+    @feature_test("analytics_no_homeworks_returns_has_data_false")
+    def test_analytics_returns_no_data_when_no_homeworks(self, client, auth_headers):
+        """GET /api/analytics/class/{id} returns has_data=False when no homeworks exist."""
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            return []  # no homeworks, no marks, no students
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert data["has_data"] is False
+        assert data["reason"] == "no_homeworks"
+        assert data["homework_count"] == 0
+        assert data["graded_submissions_count"] == 0
+
+    @feature_test("analytics_no_graded_submissions_returns_has_data_false")
+    def test_analytics_returns_no_data_when_no_graded_submissions(self, client, auth_headers):
+        """has_data=False when homeworks exist but no approved marks."""
+        hw = _HOMEWORK_ACTIVE
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "marks":
+                return []  # no marks at all
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert data["has_data"] is False
+        assert data["reason"] == "no_graded_submissions"
+        assert data["homework_count"] == 1
+        assert data["graded_submissions_count"] == 0
+
+    @feature_test("analytics_real_data_returns_has_data_true")
+    def test_analytics_returns_real_data_when_submissions_graded(self, client, auth_headers):
+        """has_data=True with correct class_average when approved marks exist."""
+        hw = _HOMEWORK_ACTIVE
+        marks = [
+            self._mark("s1", 80.0), self._mark("s2", 60.0),
+            self._mark("s3", 70.0), self._mark("s4", 55.0),
+            self._mark("s5", 90.0),
+        ]
+        students = [
+            self._student("s1", "Alice Moyo"), self._student("s2", "Bob Dube"),
+            self._student("s3", "Carol Ncube"), self._student("s4", "Dan Choto"),
+            self._student("s5", "Eve Sibanda"),
+        ]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "marks":
+                return marks
+            if collection == "students":
+                return students
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert data["has_data"] is True
+        assert 0 <= data["class_average"] <= 100
+        expected_avg = round((80 + 60 + 70 + 55 + 90) / 5, 1)
+        assert data["class_average"] == expected_avg, \
+            f"Expected class_average={expected_avg}, got {data['class_average']}"
+        assert len(data["students"]) == 5
+
+    @feature_test("analytics_student_with_no_submissions_included")
+    def test_analytics_includes_students_with_no_submissions(self, client, auth_headers):
+        """All students appear in response; those with no marks get no_submissions=True."""
+        hw = _HOMEWORK_ACTIVE
+        marks = [self._mark("s1", 75.0), self._mark("s2", 65.0)]
+        students = [
+            self._student("s1", "Alice Moyo"),
+            self._student("s2", "Bob Dube"),
+            self._student("s3", "Carol Ncube"),   # no marks
+        ]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "marks":
+                return marks
+            if collection == "students":
+                return students
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert data["has_data"] is True
+        assert len(data["students"]) == 3
+
+        by_id = {s["student_id"]: s for s in data["students"]}
+        assert by_id["s3"].get("no_submissions") is True, \
+            "Student with no submissions must have no_submissions=True"
+        assert by_id["s1"]["submission_count"] == 1
+        assert by_id["s2"]["submission_count"] == 1
+
+    @feature_test("analytics_limited_data_flag")
+    def test_analytics_flags_limited_data(self, client, auth_headers):
+        """limited_data=True when fewer than 3 graded submissions; False at 3+."""
+        hw = _HOMEWORK_ACTIVE
+        students = [self._student("s1", "Alice Moyo"), self._student("s2", "Bob Dube")]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        # ── 2 approved marks → limited_data=True ──────────────────────────────
+        two_marks = [self._mark("s1", 70.0), self._mark("s2", 50.0)]
+
+        def fake_query_two(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "marks":
+                return two_marks
+            if collection == "students":
+                return students
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query_two):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+        assert rv.status_code == 200
+        assert rv.get_json()["limited_data"] is True, "2 marks → limited_data must be True"
+
+        # ── 3 approved marks → limited_data=False ─────────────────────────────
+        three_marks = [
+            self._mark("s1", 70.0), self._mark("s2", 50.0),
+            {**self._mark("s1", 80.0), "id": "mark-s1-80-2"},
+        ]
+
+        def fake_query_three(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "marks":
+                return three_marks
+            if collection == "students":
+                return students
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query_three):
+            rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
+        assert rv.status_code == 200
+        assert rv.get_json()["limited_data"] is False, "3 marks → limited_data must be False"

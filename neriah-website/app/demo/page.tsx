@@ -6193,10 +6193,12 @@ function AnalyticsScreen({
   onSettings: () => void;
 }) {
   const [analytics, setAnalytics] = useState<DemoClassAnalytics>(DEMO_CLASS_ANALYTICS);
+  const [hasData, setHasData]     = useState<boolean | null>(null);   // null = loading
+  const [reason, setReason]       = useState<string | null>(null);
+  const [limitedData, setLimitedData] = useState(false);
 
   // Try to fetch live data; fall back to pre-canned.
-  // AbortController cancels in-flight request on unmount or demoToken change,
-  // preventing state updates on stale responses.
+  // AbortController cancels in-flight request on unmount or demoToken change.
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -6205,19 +6207,30 @@ function AnalyticsScreen({
         { signal: controller.signal },
         demoToken,
       )
-        .then(data => {
-          if (!controller.signal.aborted && data && Array.isArray((data as DemoClassAnalytics).students)) {
-            setAnalytics(data as DemoClassAnalytics);
+        .then((data: any) => {
+          if (controller.signal.aborted) return;
+          // Accept response whether it has data or not
+          if (data) {
+            setHasData(data.has_data !== false);
+            setReason(data.reason ?? null);
+            setLimitedData(!!data.limited_data);
+            if (Array.isArray(data.students)) {
+              setAnalytics(data as DemoClassAnalytics);
+            }
           }
         })
-        .catch(() => {}); // absorb abort and network errors silently
-    }, 150); // 150 ms debounce — avoids redundant calls on rapid mount/unmount
+        .catch(() => {
+          // Network error — treat canned data as has_data=true
+          setHasData(true);
+        });
+    }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [demoToken]);
 
-  const highestScore = Math.max(...analytics.students.map(s => s.latest_score));
+  const studentsWithSubs = analytics.students.filter(s => (s.submission_count ?? 1) > 0);
+  const highestScore = studentsWithSubs.length > 0 ? Math.max(...studentsWithSubs.map(s => s.latest_score)) : 0;
 
-  const barData = analytics.students.map(s => ({
+  const barData = studentsWithSubs.map(s => ({
     name: s.name.split(' ')[0],
     score: s.latest_score,
     fill: s.latest_score === highestScore ? C.amber : C.teal,
@@ -6231,6 +6244,25 @@ function AnalyticsScreen({
     return t === 'up' ? C.green : t === 'down' ? C.red : C.g500;
   }
 
+  // ── Not-enough-data states ─────────────────────────────────────────────────
+  const noDataContent = hasData === false ? (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', gap: 12, textAlign: 'center' }}>
+      {reason === 'no_homeworks' ? (
+        <>
+          <FileText size={48} color={C.g200} />
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>No homework assigned yet</div>
+          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Create and grade homework to see class analytics here.</div>
+        </>
+      ) : (
+        <>
+          <BarChart2 size={48} color={C.g200} />
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Not enough data yet</div>
+          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Analytics will appear once you have graded at least one student submission.</div>
+        </>
+      )}
+    </div>
+  ) : null;
+
   return (
     <Screen style={{ background: C.bg }}>
       <div style={{ flex: 1, padding: '16px 14px', overflowY: 'auto' }}>
@@ -6239,98 +6271,133 @@ function AnalyticsScreen({
 
         <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 14 }}>Analytics</div>
 
-        {/* Summary cards */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto' }}>
-          {[
-            { label: 'Class Average', value: `${analytics.class_average}%`, color: scoreColor(analytics.class_average) },
-            { label: 'Highest',       value: `${analytics.highest_score}%`, color: C.green },
-            { label: 'Lowest',        value: `${analytics.lowest_score}%`,  color: C.red },
-          ].map(card => (
-            <div key={card.label} style={{
-              background: C.white, borderRadius: 10, border: `1px solid ${C.border}`,
-              padding: '10px 12px', minWidth: 76, textAlign: 'center', flexShrink: 0,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-            }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: card.color }}>{card.value}</div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{card.label}</div>
+        {/* Loading skeleton */}
+        {hasData === null && (
+          <div style={{ textAlign: 'center', padding: '32px 0', color: C.g500, fontSize: 13 }}>Loading…</div>
+        )}
+
+        {/* Not enough data */}
+        {noDataContent}
+
+        {/* Limited data banner */}
+        {hasData === true && limitedData && (
+          <div style={{
+            background: C.amberFaint, border: `1px solid ${C.amber100}`, borderRadius: 10,
+            padding: '8px 12px', marginBottom: 14, fontSize: 12, color: C.amberText, fontWeight: 600,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <span>⚠</span> Limited data — analytics improve as more submissions are graded.
+          </div>
+        )}
+
+        {/* Full analytics when has_data = true */}
+        {hasData === true && (
+          <>
+            {/* Summary cards */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto' }}>
+              {[
+                { label: 'Class Average', value: `${analytics.class_average}%`, color: scoreColor(analytics.class_average) },
+                { label: 'Highest',       value: `${analytics.highest_score}%`, color: C.green },
+                { label: 'Lowest',        value: `${analytics.lowest_score}%`,  color: C.red },
+              ].map(card => (
+                <div key={card.label} style={{
+                  background: C.white, borderRadius: 10, border: `1px solid ${C.border}`,
+                  padding: '10px 12px', minWidth: 76, textAlign: 'center', flexShrink: 0,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: card.color }}>{card.value}</div>
+                  <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{card.label}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {/* Submission rate */}
-        <div style={{
-          background: C.tealLt, border: `1px solid ${C.teal100}`, borderRadius: 10,
-          padding: '8px 12px', marginBottom: 14, fontSize: 12, color: C.teal, fontWeight: 600,
-        }}>
-          {analytics.submission_rate}
-        </div>
+            {/* Submission rate */}
+            <div style={{
+              background: C.tealLt, border: `1px solid ${C.teal100}`, borderRadius: 10,
+              padding: '8px 12px', marginBottom: 14, fontSize: 12, color: C.teal, fontWeight: 600,
+            }}>
+              {analytics.submission_rate}
+            </div>
 
-        {/* Bar chart */}
-        <div style={{
-          background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
-          padding: '12px 8px', marginBottom: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.g700, marginBottom: 10, paddingLeft: 4 }}>
-            Latest Homework Scores
-          </div>
-          <ResponsiveContainer width="100%" height={140}>
-            <BarChart data={barData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.g100} vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: C.g500 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: C.g500 }} axisLine={false} tickLine={false} />
-              <Tooltip
-                formatter={(v: unknown) => [`${v}%`, 'Score']}
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }}
-              />
-              <Bar dataKey="score" radius={[4, 4, 0, 0]}>
-                {barData.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Per-student table */}
-        <div style={{
-          background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
-          overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-        }}>
-          <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.g700 }}>
-            Student Rankings
-          </div>
-          {analytics.students.map((s, i) => (
-            <button
-              key={s.student_id}
-              onClick={() => onViewStudent(s)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                padding: '10px 14px', background: 'none', border: 'none',
-                borderBottom: i < analytics.students.length - 1 ? `1px solid ${C.g100}` : 'none',
-                cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = C.g50; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-            >
+            {/* Bar chart — only when there is at least one bar to show */}
+            {barData.length > 0 ? (
               <div style={{
-                width: 28, height: 28, borderRadius: 14, flexShrink: 0, display: 'flex',
-                alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 12, color: C.white,
-                background: i === 0 ? C.teal : i === 1 ? C.amber : C.red,
+                background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+                padding: '12px 8px', marginBottom: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
               }}>
-                {i + 1}
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.g700, marginBottom: 10, paddingLeft: 4 }}>
+                  Latest Homework Scores
+                </div>
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={barData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.g100} vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: C.g500 }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: C.g500 }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      formatter={(v: unknown) => [`${v}%`, 'Score']}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }}
+                    />
+                    <Bar dataKey="score" radius={[4, 4, 0, 0]}>
+                      {barData.map((entry, i) => (
+                        <Cell key={i} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{s.name}</div>
-                <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{s.submission_count} submission · avg {s.average_score}%</div>
+            ) : (
+              <div style={{
+                background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+                padding: '24px 12px', marginBottom: 14, textAlign: 'center',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+              }}>
+                <BarChart2 size={28} color={C.g200} style={{ marginBottom: 6 }} />
+                <div style={{ fontSize: 13, color: C.g500 }}>No graded submissions to chart yet</div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: scoreColor(s.latest_score) }}>{s.latest_score}%</div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: trendCol(s.trend) }}>{trendArrow(s.trend)}</span>
-                <span style={{ fontSize: 13, color: C.g400 }}>›</span>
+            )}
+
+            {/* Per-student table */}
+            <div style={{
+              background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+              overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            }}>
+              <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.g700 }}>
+                Student Rankings
               </div>
-            </button>
-          ))}
-        </div>
+              {analytics.students.map((s, i) => (
+                <button
+                  key={s.student_id}
+                  onClick={() => onViewStudent(s)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', background: 'none', border: 'none',
+                    borderBottom: i < analytics.students.length - 1 ? `1px solid ${C.g100}` : 'none',
+                    cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.g50; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                >
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 14, flexShrink: 0, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 12, color: C.white,
+                    background: i === 0 ? C.teal : i === 1 ? C.amber : C.red,
+                  }}>
+                    {i + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{s.name}</div>
+                    <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{s.submission_count} submission · avg {s.average_score}%</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: scoreColor(s.latest_score) }}>{s.latest_score}%</div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: trendCol(s.trend) }}>{trendArrow(s.trend)}</span>
+                    <span style={{ fontSize: 13, color: C.g400 }}>›</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Bottom tab bar */}

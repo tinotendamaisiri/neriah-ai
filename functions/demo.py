@@ -989,10 +989,109 @@ _DEMO_STUDY_SUGGESTIONS: dict[str, str] = {
 
 @demo_bp.get("/demo/analytics/class/<class_id>")
 def demo_class_analytics(class_id: str):
-    """Return pre-canned class analytics for the demo class."""
+    """
+    Return class analytics, reading from Firestore when graded marks exist.
+    Falls back to pre-canned _DEMO_CLASS_ANALYTICS when Firestore is empty.
+    Always returns has_data, reason, and limited_data flags.
+    """
     if _guard():
         return jsonify({"error": "Not available in production"}), 403
-    return jsonify(_DEMO_CLASS_ANALYTICS), 200
+
+    effective_class_id = class_id or DEMO_CLASS_ID
+
+    # Count homeworks for this class
+    homeworks = query("answer_keys", [("class_id", "==", effective_class_id)])
+    homework_count = len(homeworks)
+    logger.info("[demo] analytics class=%s homework_count=%d", effective_class_id, homework_count)
+
+    if homework_count == 0:
+        return jsonify({
+            **_DEMO_CLASS_ANALYTICS,
+            "has_data": False,
+            "reason": "no_homeworks",
+            "homework_count": 0,
+            "graded_submissions_count": 0,
+            "limited_data": False,
+            "message": "No homework has been assigned for this class yet.",
+        }), 200
+
+    # Fetch approved marks from Firestore
+    all_marks = query("marks", [("class_id", "==", effective_class_id)])
+    approved = [m for m in all_marks if m.get("approved") or m.get("status") in ("approved", "graded")]
+    graded_count = len(approved)
+    logger.info("[demo] analytics class=%s marks_total=%d approved=%d", effective_class_id, len(all_marks), graded_count)
+
+    if graded_count == 0:
+        return jsonify({
+            **_DEMO_CLASS_ANALYTICS,
+            "has_data": False,
+            "reason": "no_graded_submissions",
+            "homework_count": homework_count,
+            "graded_submissions_count": 0,
+            "limited_data": False,
+            "message": "No submissions have been graded yet. Grade student work to see analytics.",
+        }), 200
+
+    # Build real analytics from Firestore marks
+    from collections import defaultdict
+    students_list = query("students", [("class_id", "==", effective_class_id)])
+    per_student: dict = defaultdict(list)
+    for m in approved:
+        sid = m.get("student_id", "")
+        if sid:
+            per_student[sid].append(m)
+
+    student_data = []
+    all_scores = []
+    for student in students_list:
+        sid = student["id"]
+        s_marks = per_student.get(sid, [])
+        name = f"{student.get('first_name', '')} {student.get('surname', '')}".strip() or student.get("name", "Unknown")
+        if s_marks:
+            scores = [float(m.get("percentage", 0)) for m in s_marks]
+            avg = round(sum(scores) / len(scores), 1)
+            all_scores.append(avg)
+            student_data.append({
+                "student_id": sid, "name": name,
+                "latest_score": round(scores[-1], 1),
+                "average_score": avg,
+                "submission_count": len(s_marks),
+                "trend": "up" if len(scores) >= 2 and scores[-1] > scores[-2] else "down" if len(scores) >= 2 and scores[-1] < scores[-2] else "stable",
+            })
+        else:
+            student_data.append({
+                "student_id": sid, "name": name,
+                "latest_score": 0, "average_score": 0,
+                "submission_count": 0, "trend": "stable", "no_submissions": True,
+            })
+
+    # If no students in Firestore, fall back to canned data
+    if not students_list:
+        student_data = _DEMO_CLASS_ANALYTICS["students"]
+        all_scores = [s["average_score"] for s in student_data]
+
+    class_average = round(sum(all_scores) / len(all_scores), 1) if all_scores else 0
+    sorted_students = sorted(student_data, key=lambda s: s["average_score"], reverse=True)
+    submitting = len([s for s in student_data if s.get("submission_count", 0) > 0])
+
+    return jsonify({
+        "class_id": effective_class_id,
+        "class_name": _DEMO_CLASS_ANALYTICS["class_name"],
+        "education_level": _DEMO_CLASS_ANALYTICS["education_level"],
+        "subject": _DEMO_CLASS_ANALYTICS.get("subject", "Mathematics"),
+        "has_data": True,
+        "limited_data": graded_count < 3,
+        "homework_count": homework_count,
+        "graded_submissions_count": graded_count,
+        "class_average": class_average,
+        "highest_score": round(max(all_scores), 1) if all_scores else 0,
+        "lowest_score": round(min(all_scores), 1) if all_scores else 0,
+        "submitted": graded_count,
+        "total_students": len(students_list) or len(_DEMO_CLASS_ANALYTICS["students"]),
+        "submission_rate": f"{submitting} of {len(students_list) or len(_DEMO_CLASS_ANALYTICS['students'])} students submitted",
+        "students": sorted_students,
+        "message": "Limited data — analytics improve as more submissions are graded." if graded_count < 3 else None,
+    }), 200
 
 
 # ── GET /api/demo/analytics/student/<student_id> ──────────────────────────────

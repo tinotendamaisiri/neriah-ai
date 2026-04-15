@@ -1,8 +1,7 @@
 // src/screens/AnalyticsScreen.tsx
 // Class list analytics view for teacher.
 // Fetches /api/analytics/classes and shows per-class summary cards.
-// Grayed out if total_submissions < 10.
-// Tap a class → navigate('TeacherClassAnalytics', { class_id, class_name })
+// Shows a proper "not enough data" state when graded submissions are absent.
 
 import React, { useCallback, useState } from 'react';
 import {
@@ -14,8 +13,8 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { getClassesAnalytics } from '../services/api';
@@ -51,6 +50,8 @@ function trendColor(trend: 'up' | 'down' | 'stable'): string {
   return COLORS.gray500;
 }
 
+// ── Card for a class with data ─────────────────────────────────────────────────
+
 interface ClassCardProps {
   item: ClassAnalyticsSummary;
   onPress: () => void;
@@ -58,16 +59,59 @@ interface ClassCardProps {
 }
 
 const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
-  const locked = item.total_submissions < 10;
-  const score = item.average_score;
-  const barW = Math.min(Math.max(score, 0), 100);
+  const hasData = (item as any).has_data !== false;
+  const reason  = (item as any).reason as string | undefined;
+  const score   = item.average_score ?? 0;
+  const barW    = Math.min(Math.max(score, 0), 100);
+
+  // Per-class "not enough data" states
+  if (!hasData) {
+    if (reason === 'no_homeworks') {
+      return (
+        <View style={[styles.card, styles.cardEmpty]}>
+          <View style={styles.cardHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.className} numberOfLines={1}>{item.class_name}</Text>
+              <Text style={styles.classLevel}>
+                {LEVEL_DISPLAY[item.education_level] ?? item.education_level}
+                {item.subject ? ` · ${item.subject}` : ''}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.emptyCardBody}>
+            <Ionicons name="document-text-outline" size={28} color={COLORS.gray200} />
+            <Text style={styles.emptyCardTitle}>No homework assigned yet</Text>
+            <Text style={styles.emptyCardSub}>Create homework to unlock analytics for this class.</Text>
+          </View>
+        </View>
+      );
+    }
+    // no_graded_submissions
+    return (
+      <View style={[styles.card, styles.cardEmpty]}>
+        <View style={styles.cardHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.className} numberOfLines={1}>{item.class_name}</Text>
+            <Text style={styles.classLevel}>
+              {LEVEL_DISPLAY[item.education_level] ?? item.education_level}
+              {item.subject ? ` · ${item.subject}` : ''}
+            </Text>
+          </View>
+          <View style={styles.hwBadge}>
+            <Text style={styles.hwBadgeText}>{(item as any).homework_count ?? 0} homework</Text>
+          </View>
+        </View>
+        <View style={styles.emptyCardBody}>
+          <Ionicons name="bar-chart-outline" size={28} color={COLORS.gray200} />
+          <Text style={styles.emptyCardTitle}>Not enough data yet</Text>
+          <Text style={styles.emptyCardSub}>Grade at least one submission to see analytics.</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
-    <TouchableOpacity
-      style={[styles.card, locked && styles.cardLocked]}
-      onPress={onPress}
-      activeOpacity={locked ? 1 : 0.7}
-    >
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.75}>
       {/* Header */}
       <View style={styles.cardHeader}>
         <View style={{ flex: 1 }}>
@@ -77,21 +121,14 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
             {item.subject ? ` · ${item.subject}` : ''}
           </Text>
         </View>
-        {!locked && (
-          <Text style={[styles.trendLabel, { color: trendColor(item.recent_trend) }]}>
-            {trendLabel(t, item.recent_trend)}
-          </Text>
-        )}
+        <Text style={[styles.trendLabel, { color: trendColor(item.recent_trend) }]}>
+          {trendLabel(t, item.recent_trend)}
+        </Text>
       </View>
 
       {/* Progress bar */}
       <View style={styles.barTrack}>
-        <View
-          style={[
-            styles.barFill,
-            { width: `${barW}%` as any, backgroundColor: locked ? COLORS.gray200 : barColor(score) },
-          ]}
-        />
+        <View style={[styles.barFill, { width: `${barW}%` as any, backgroundColor: barColor(score) }]} />
       </View>
 
       {/* Stats row */}
@@ -106,19 +143,16 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
         </Text>
         <Text style={styles.statItem}>
           {t('avg_score')}{': '}
-          <Text style={[styles.statValue, { color: locked ? COLORS.gray500 : barColor(score) }]}>
-            {locked ? '—' : `${score}%`}
+          <Text style={[styles.statValue, { color: barColor(score) }]}>
+            {`${score}%`}
           </Text>
         </Text>
       </View>
-
-      {/* Locked overlay message */}
-      {locked && (
-        <Text style={styles.lockedMsg}>{t('analytics_unlocked_after')}</Text>
-      )}
     </TouchableOpacity>
   );
 });
+
+// ── Screen ─────────────────────────────────────────────────────────────────────
 
 export default function AnalyticsScreen() {
   const { t } = useLanguage();
@@ -134,9 +168,12 @@ export default function AnalyticsScreen() {
     else setLoading(true);
     setError(null);
     try {
+      console.log('[Analytics] fetching /analytics/classes');
       const res = await getClassesAnalytics();
+      console.log('[Analytics] response:', JSON.stringify(res));
       setData(res);
     } catch (e: any) {
+      console.log('[Analytics] error:', e?.message);
       setError(e?.message ?? 'Error loading analytics');
     } finally {
       setLoading(false);
@@ -145,9 +182,7 @@ export default function AnalyticsScreen() {
   }, []);
 
   useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
+    useCallback(() => { load(); }, [load]),
   );
 
   if (loading) {
@@ -181,17 +216,17 @@ export default function AnalyticsScreen() {
             item={item}
             t={t}
             onPress={() => {
-              if (item.total_submissions >= 10) {
-                navigation.navigate('TeacherClassAnalytics', {
-                  class_id: item.class_id,
-                  class_name: item.class_name,
-                });
-              }
+              navigation.navigate('TeacherClassAnalytics', {
+                class_id: item.class_id,
+                class_name: item.class_name,
+              });
             }}
           />
         )}
         ListEmptyComponent={
           <View style={styles.center}>
+            <Ionicons name="bar-chart-outline" size={56} color={COLORS.gray200} style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyTitle}>No classes yet</Text>
             <Text style={styles.emptyText}>{t('analytics_no_classes')}</Text>
           </View>
         }
@@ -212,125 +247,42 @@ export default function AnalyticsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
   screenHeading: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.text,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    fontSize: 22, fontWeight: '700', color: COLORS.text,
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8,
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  listContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 24,
-  },
-  loadingText: {
-    marginTop: 12,
-    color: COLORS.gray500,
-    fontSize: 14,
-  },
-  errorText: {
-    color: COLORS.error,
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  retryBtn: {
-    backgroundColor: COLORS.teal500,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: COLORS.white,
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  emptyText: {
-    color: COLORS.gray500,
-    fontSize: 15,
-    textAlign: 'center',
-  },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  listContent: { paddingHorizontal: 16, paddingBottom: 24 },
+  loadingText: { marginTop: 12, color: COLORS.gray500, fontSize: 14 },
+  errorText: { color: COLORS.error, fontSize: 14, textAlign: 'center', marginBottom: 16 },
+  retryBtn: { backgroundColor: COLORS.teal500, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
+  retryText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: COLORS.gray900, marginBottom: 6, textAlign: 'center' },
+  emptyText: { color: COLORS.gray500, fontSize: 14, textAlign: 'center' },
   card: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    backgroundColor: COLORS.white, borderRadius: 12, padding: 16, marginBottom: 12,
+    borderWidth: 1, borderColor: COLORS.border,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
-  cardLocked: {
-    opacity: 0.7,
+  cardEmpty: { opacity: 0.85 },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+  className: { fontSize: 16, fontWeight: '700', color: COLORS.text },
+  classLevel: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
+  trendLabel: { fontSize: 12, fontWeight: '600', marginLeft: 8, marginTop: 2 },
+  hwBadge: {
+    backgroundColor: COLORS.teal50, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  className: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  classLevel: {
-    fontSize: 12,
-    color: COLORS.gray500,
-    marginTop: 2,
-  },
-  trendLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 8,
-    marginTop: 2,
-  },
-  barTrack: {
-    height: 8,
-    backgroundColor: COLORS.gray200,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  barFill: {
-    height: 8,
-    borderRadius: 4,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  statItem: {
-    fontSize: 12,
-    color: COLORS.gray500,
-  },
-  statValue: {
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  lockedMsg: {
-    fontSize: 11,
-    color: COLORS.gray500,
-    fontStyle: 'italic',
-    marginTop: 8,
-    textAlign: 'center',
-  },
+  hwBadgeText: { fontSize: 11, fontWeight: '600', color: COLORS.teal500 },
+  emptyCardBody: { alignItems: 'center', gap: 6, paddingVertical: 8 },
+  emptyCardTitle: { fontSize: 13, fontWeight: '700', color: COLORS.gray900, textAlign: 'center' },
+  emptyCardSub: { fontSize: 12, color: COLORS.textLight, textAlign: 'center' },
+  barTrack: { height: 8, backgroundColor: COLORS.gray200, borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
+  barFill: { height: 8, borderRadius: 4 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  statItem: { fontSize: 12, color: COLORS.gray500 },
+  statValue: { fontWeight: '700', color: COLORS.text },
 });
