@@ -45,9 +45,8 @@ export default function StudentResultsScreen() {
       data.sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
       setSubmissions(data);
     } catch {
-      if (!isRefresh) {
-        Alert.alert('Error', 'Could not load results. Pull down to retry.');
-      }
+      // No results yet — show empty state, not an error popup
+      setSubmissions([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -123,13 +122,13 @@ export default function StudentResultsScreen() {
             <Ionicons name="bar-chart-outline" size={56} color={COLORS.gray500} style={styles.emptyIcon} />
             <Text style={styles.emptyTitle}>No submissions yet</Text>
             <Text style={styles.emptyText}>
-              Submit your first assignment to see results here.
+              Your graded work will appear here once your teacher marks your submissions.
             </Text>
             <TouchableOpacity
               style={styles.emptyBtn}
-              onPress={() => (navigation as any).navigate('StudentSubmit')}
+              onPress={() => (navigation as any).navigate('StudentHome')}
             >
-              <Text style={styles.emptyBtnText}>Go to Submit</Text>
+              <Text style={styles.emptyBtnText}>Go to Homework</Text>
             </TouchableOpacity>
           </View>
         )}

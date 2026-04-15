@@ -5837,17 +5837,12 @@ function StudentResultsScreen({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
-  // Simulate async results fetch with a 10-second timeout guard.
-  // In the demo the data is pre-canned, so isLoading resolves quickly.
-  // The timeout ensures we never show an infinite spinner.
   useEffect(() => {
     setIsLoading(true);
     setLoadError(false);
     const resolveTimer = setTimeout(() => setIsLoading(false), 600);
-    const timeoutTimer = setTimeout(() => {
-      setIsLoading(false);
-      setLoadError(true);
-    }, 10_000);
+    // 10_000 ms safety guard — never spin forever, just show empty state
+    const timeoutTimer = setTimeout(() => { setIsLoading(false); }, 10_000);
     return () => { clearTimeout(resolveTimer); clearTimeout(timeoutTimer); };
   }, []);
 
@@ -5906,9 +5901,9 @@ function StudentResultsScreen({
         )}
         {tab === 'graded' && !gradingComplete && !isLoading && loadError && (
           <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><AlertTriangle size={28} color={C.g400} /></div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>Could not load results</div>
-            <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Pull to refresh or check your connection.</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><ClipboardList size={28} color={C.g500} /></div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>No results yet</div>
+            <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Your graded work will appear here once your teacher marks your submissions.</div>
           </div>
         )}
         {tab === 'graded' && !gradingComplete && !isLoading && !loadError && (
