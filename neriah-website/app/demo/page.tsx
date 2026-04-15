@@ -2872,6 +2872,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [toast, setToast]           = useState('');
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [attachment, setAttachment] = useState<{ data: string; type: 'image' | 'pdf' | 'word'; name: string; previewUrl?: string } | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -3195,6 +3196,17 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       <input ref={pdfInputRef}  type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'pdf')} />
       <input ref={wordInputRef} type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'word')} />
 
+      {/* In-app camera modal */}
+      <WebCameraModal
+        open={cameraOpen}
+        onCapture={(base64) => {
+          const previewUrl = `data:image/jpeg;base64,${base64}`;
+          setAttachment({ data: base64, type: 'image', name: `photo_${Date.now()}.jpg`, previewUrl });
+          setCameraOpen(false);
+        }}
+        onClose={() => setCameraOpen(false)}
+      />
+
       {/* Input bar */}
       <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 10px', background: C.white, position: 'relative' }}
         onClick={e => { e.stopPropagation(); setShowAttachMenu(false); }}>
@@ -3239,6 +3251,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                 boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 172, overflow: 'hidden' }}
                 onClick={e => e.stopPropagation()}>
                 {[
+                  { icon: <Camera    size={18} color={C.teal} />, label: 'Camera',        onClick: () => { setShowAttachMenu(false); setCameraOpen(true); } },
                   { icon: <ImageIcon size={18} color={C.teal} />, label: 'Gallery',       onClick: () => imgInputRef.current?.click() },
                   { icon: <FileText  size={18} color={C.teal} />, label: 'PDF Document',  onClick: () => pdfInputRef.current?.click() },
                   { icon: <File      size={18} color={C.teal} />, label: 'Word Document', onClick: () => wordInputRef.current?.click() },
