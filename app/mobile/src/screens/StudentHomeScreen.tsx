@@ -129,17 +129,14 @@ export default function StudentHomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <View style={styles.greetingRow}>
-            <Text style={styles.greeting}>Hello, {firstName} </Text>
-            <Ionicons name="hand-left-outline" size={22} color={COLORS.white} />
-          </View>
+          <Text style={styles.greeting}>Hello, {firstName}</Text>
           <Text style={styles.subGreeting}>Here's your learning overview</Text>
         </View>
         <View style={styles.headerRight}>
           <AIStatusDot />
-          <View style={styles.avatar}>
+          <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
             <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -259,7 +256,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 8,
   },
-  greetingRow: { flexDirection: 'row', alignItems: 'center' },
   greeting: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
   subGreeting: { color: COLORS.teal100, fontSize: 13, marginTop: 2 },
   avatar: {

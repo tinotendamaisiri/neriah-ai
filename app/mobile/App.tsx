@@ -288,14 +288,13 @@ function StudentTabs() {
         tabBarInactiveTintColor: COLORS.textLight,
         tabBarStyle: { borderTopColor: COLORS.border },
         tabBarIcon: ({ color, size }) => {
-          const icons: Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap> = {
+          const icons: Partial<Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap>> = {
             StudentHome: 'home-outline',
             StudentSubmit: 'camera-outline',
             StudentResults: 'checkmark-circle-outline',
             StudentTutor: 'chatbubble-ellipses-outline',
-            StudentSettings: 'settings-outline',
           };
-          return <Ionicons name={icons[route.name]} size={size} color={color} />;
+          return <Ionicons name={icons[route.name] ?? 'ellipse-outline'} size={size} color={color} />;
         },
       })}
     >
@@ -322,7 +321,7 @@ function StudentTabs() {
       <StudentTab.Screen
         name="StudentSettings"
         component={StudentSettingsScreen}
-        options={{ title: 'Settings', tabBarLabel: t('settings'), headerShown: false }}
+        options={{ title: 'Settings', headerShown: false, tabBarButton: () => null }}
       />
     </StudentTab.Navigator>
   );

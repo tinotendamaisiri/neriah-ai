@@ -5345,10 +5345,18 @@ function StudentHomeScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
       {/* Header */}
-      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-        <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>{firstName} <Hand size={18} color={C.text} /></div>
-        <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Form 2A · Harare High School</div>
+      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>{firstName}</div>
+          <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Form 2A · Harare High School</div>
+        </div>
+        <div
+          onClick={onSettings}
+          style={{ width: 40, height: 40, borderRadius: 20, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+        >
+          <span style={{ color: C.white, fontSize: 17, fontWeight: 700 }}>{firstName[0]}</span>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 70 }}>
@@ -5456,8 +5464,9 @@ function StudentHomeScreen({
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
         {([
           { icon: <Home size={16} />, label: 'Home', active: true, onClick: undefined as (() => void) | undefined },
+          { icon: <Upload size={16} />, label: 'Submit', active: false, onClick: onSubmit },
           { icon: <BarChart2 size={16} />, label: 'Results', active: false, onClick: onResults },
-          { icon: <Settings size={16} />, label: 'Settings', active: false, onClick: onSettings },
+          { icon: <Bot size={16} />, label: 'Tutor', active: false, onClick: onTutor },
         ]).map(tab => (
           <div
             key={tab.label}
