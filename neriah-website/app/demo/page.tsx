@@ -6230,6 +6230,20 @@ function AnalyticsScreen({
     return () => { clearTimeout(timer); controller.abort(); };
   }, [demoToken]);
 
+  // Fetch homework list for drill-down
+  useEffect(() => {
+    demoFetch('/demo/homeworks?class_id=demo-class-1', {}, demoToken)
+      .then((data: any) => {
+        if (data && Array.isArray(data.homeworks)) {
+          setHomeworkList(data.homeworks.map((hw: any) => ({
+            id: hw.id,
+            title: hw.title || hw.subject || 'Homework',
+          })));
+        }
+      })
+      .catch(() => {});
+  }, [demoToken]);
+
   const studentsWithSubs = analytics.students.filter(s => (s.submission_count ?? 1) > 0);
   const highestScore = studentsWithSubs.length > 0 ? Math.max(...studentsWithSubs.map(s => s.latest_score)) : 0;
 
@@ -6356,6 +6370,36 @@ function AnalyticsScreen({
               }}>
                 <BarChart2 size={28} color={C.g200} style={{ marginBottom: 6 }} />
                 <div style={{ fontSize: 13, color: C.g500 }}>No graded submissions to chart yet</div>
+              </div>
+            )}
+
+            {/* Homework list for drill-down */}
+            {homeworkList.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.g700, marginBottom: 8 }}>Homework</div>
+                <div style={{
+                  background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+                  overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                }}>
+                  {homeworkList.map((hw, i) => (
+                    <button
+                      key={hw.id}
+                      onClick={() => onViewHomework(hw.id)}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center',
+                        padding: '10px 14px', background: 'none', border: 'none',
+                        borderBottom: i < homeworkList.length - 1 ? `1px solid ${C.g100}` : 'none',
+                        cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', gap: 8,
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = C.g50; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                    >
+                      <FileText size={14} color={C.teal} style={{ flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.text }}>{hw.title}</span>
+                      <span style={{ fontSize: 14, color: C.g400 }}>›</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -6669,7 +6713,7 @@ function HomeworkAnalyticsWebScreen({
                   boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                 }}>
                   <div style={{ fontSize: 17, fontWeight: 800, color: card.color }}>{card.value}</div>
-                  <div style={{ fontSize: 10, color: C.g500, marginTop: 2 }}>{card.label}</div>
+                  <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{card.label}</div>
                 </div>
               ))}
             </div>
@@ -6717,7 +6761,7 @@ function HomeworkAnalyticsWebScreen({
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{s.name}</div>
                       <div style={{
-                        display: 'inline-block', marginTop: 2, fontSize: 10, fontWeight: 700,
+                        display: 'inline-block', marginTop: 2, fontSize: 11, fontWeight: 700,
                         color: s.pass_fail === 'pass' ? C.teal : C.red,
                         background: s.pass_fail === 'pass' ? C.tealLt : C.redLt,
                         borderRadius: 4, padding: '1px 6px',
@@ -6727,7 +6771,7 @@ function HomeworkAnalyticsWebScreen({
                     </div>
                     <div style={{ textAlign: 'right', marginRight: 4 }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: scoreColor(s.percentage) }}>{s.percentage}%</div>
-                      <div style={{ fontSize: 10, color: C.g500 }}>{s.score}/{s.max_score}</div>
+                      <div style={{ fontSize: 11, color: C.g500 }}>{s.score}/{s.max_score}</div>
                     </div>
                     <span style={{ fontSize: 14, color: C.g400 }}>›</span>
                   </button>
@@ -7831,6 +7875,7 @@ export default function DemoPage() {
             demoToken={demoToken}
             onSettings={() => go('t-settings')}
             onViewStudent={(s) => { setSelectedStudent(s); go('student-analytics'); }}
+            onViewHomework={(id) => { setSelectedHomeworkId(id); go('homework-analytics'); }}
           />
         );
       case 'student-analytics':
@@ -7839,6 +7884,16 @@ export default function DemoPage() {
           <StudentAnalyticsScreen
             student={selectedStudent}
             onBack={() => go('analytics')}
+            demoToken={demoToken}
+          />
+        );
+      case 'homework-analytics':
+        if (!selectedHomeworkId) { go('analytics'); return null; }
+        return (
+          <HomeworkAnalyticsWebScreen
+            homeworkId={selectedHomeworkId}
+            onBack={() => go('analytics')}
+            onViewStudent={(s) => { setSelectedStudent(s); go('student-analytics'); }}
             demoToken={demoToken}
           />
         );
@@ -7924,10 +7979,13 @@ export default function DemoPage() {
             if (!selectedSubmission) { sGo('homework-detail'); return null; }
             return <GradingDetailScreen submission={selectedSubmission} hw={hwInfo} onBack={() => sGo('homework-detail')} demoToken={demoToken} onApproved={(url) => { setAnnotatedImageUrl(url); triggerSync(); }} />;
           case 'analytics':
-            return <AnalyticsScreen onBack={() => sGo('classes')} demoToken={demoToken} onSettings={() => sGo('t-settings')} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} />;
+            return <AnalyticsScreen onBack={() => sGo('classes')} demoToken={demoToken} onSettings={() => sGo('t-settings')} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} onViewHomework={(id) => { setSelectedHomeworkId(id); sGo('homework-analytics'); }} />;
           case 'student-analytics':
             if (!selectedStudent) { sGo('analytics'); return null; }
             return <StudentAnalyticsScreen student={selectedStudent} onBack={() => sGo('analytics')} demoToken={demoToken} />;
+          case 'homework-analytics':
+            if (!selectedHomeworkId) { sGo('analytics'); return null; }
+            return <HomeworkAnalyticsWebScreen homeworkId={selectedHomeworkId} onBack={() => sGo('analytics')} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} demoToken={demoToken} />;
           case 't-assistant':
             return <TeacherAIAssistantWebScreen onBack={() => sGo('classes')} />;
           default:
