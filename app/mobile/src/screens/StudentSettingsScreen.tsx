@@ -168,7 +168,7 @@ export default function StudentSettingsScreen() {
   };
 
   // ── OTP for PIN change/remove ─────────────────────────────────────────────
-  const [otpMode, setOtpMode] = useState<'change' | 'remove' | null>(null);
+  const [otpMode, setOtpMode] = useState<'change' | 'remove' | 'delete_account' | null>(null);
   const [verificationId, setVerificationId] = useState('');
   const [otp, setOtp] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
@@ -178,7 +178,7 @@ export default function StudentSettingsScreen() {
   useEffect(() => { if (resendCooldown > 0) { const t2 = setTimeout(() => setResendCooldown(s => s - 1), 1000); return () => clearTimeout(t2); } }, [resendCooldown]);
   useEffect(() => { if (otpMode && otp.length === 6) handleOtpVerify(); }, [otp]);
 
-  const openOtpModal = async (mode: 'change' | 'remove') => {
+  const openOtpModal = async (mode: 'change' | 'remove' | 'delete_account') => {
     if (!user?.phone) return;
     setOtp(''); setOtpLoading(true);
     try {
@@ -186,7 +186,7 @@ export default function StudentSettingsScreen() {
       setVerificationId(res.verification_id);
       setResendCooldown(60); setOtpMode(mode);
       setTimeout(() => otpInputRef.current?.focus(), 350);
-    } catch { Alert.alert('Error', 'Could not send code.'); }
+    } catch { Alert.alert('Error', 'Could not send verification code.'); }
     finally { setOtpLoading(false); }
   };
 
@@ -197,12 +197,31 @@ export default function StudentSettingsScreen() {
       await updateProfile({ verification_id: verificationId, otp_code: otp });
       const mode = otpMode;
       setOtpMode(null); setOtp('');
-      if (mode === 'change') { navigation.navigate('StudentSettings' as any); /* TODO: SetPin */ }
-      else {
+      if (mode === 'change') {
+        (navigation as any).navigate('SetPin');
+      } else if (mode === 'remove') {
         await deletePin().catch(() => {});
         setHasPinLocal(false);
         await SecureStore.deleteItemAsync('neriah_has_pin');
         Alert.alert('PIN Removed', 'Your PIN has been removed.');
+      } else if (mode === 'delete_account') {
+        Alert.alert(
+          'Delete Account',
+          'This will permanently delete your account and all results. This cannot be undone.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete Forever', style: 'destructive',
+              onPress: async () => {
+                try {
+                  const { deleteStudentAccount } = await import('../services/api');
+                  await deleteStudentAccount(user?.id ?? '');
+                  logout();
+                } catch { Alert.alert('Error', 'Could not delete account. Contact support@neriah.africa'); }
+              },
+            },
+          ],
+        );
       }
     } catch (err: any) {
       const status = err?.status ?? err?.response?.status;
@@ -231,19 +250,7 @@ export default function StudentSettingsScreen() {
   };
 
   const handleDeleteAccount = () => {
-    gate.guard(
-      () => {
-        Alert.alert(
-          'Delete Account',
-          'This will permanently delete your account and all results. Contact support@neriah.africa to request deletion.',
-          [
-            { text: 'Contact Support', onPress: () => Linking.openURL(`mailto:support@neriah.africa?subject=${encodeURIComponent('Student Account Deletion')}&body=${encodeURIComponent(`Phone: ${user?.phone ?? ''}`)}`) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        );
-      },
-      { requirePin: true },
-    );
+    openOtpModal('delete_account');
   };
 
   const initials = user ? `${user.first_name?.[0] ?? ''}${user.surname?.[0] ?? ''}`.toUpperCase() : 'S';
@@ -264,7 +271,7 @@ export default function StudentSettingsScreen() {
       {/* ── PROFILE ─────────────────────────────────────────────────── */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Profile</Text>
-        <TouchableOpacity style={s.profileCard} onPress={() => gate.guard(() => setNameModal(true), { requirePin: true })} activeOpacity={0.7}>
+        <TouchableOpacity style={s.profileCard} onPress={() => setNameModal(true)} activeOpacity={0.7}>
           <View style={s.avatar}>
             <Text style={s.avatarText}>{initials}</Text>
           </View>
@@ -285,7 +292,7 @@ export default function StudentSettingsScreen() {
           <Row label="Class" value={classDisplay || '—'} />
           <View style={s.divider} />
 
-          <TouchableOpacity style={s.settingsRow} onPress={() => gate.guard(() => (navigation as any).navigate('ClassManagement'), { requirePin: true })}>
+          <TouchableOpacity style={s.settingsRow} onPress={() => (navigation as any).navigate('ClassManagement')}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="school-outline" size={18} color={COLORS.teal500} />
               <Text style={s.settingsRowLabel}>My Classes</Text>
@@ -535,7 +542,7 @@ export default function StudentSettingsScreen() {
         <View style={m.overlay}>
           <View style={m.sheet}>
             <View style={m.header}>
-              <Text style={m.title}>{otpMode === 'change' ? 'Change PIN' : 'Remove PIN'}</Text>
+              <Text style={m.title}>{otpMode === 'change' ? 'Change PIN' : otpMode === 'remove' ? 'Remove PIN' : 'Verify Identity'}</Text>
               <TouchableOpacity onPress={() => { setOtpMode(null); setOtp(''); }}><Text style={m.close}>✕</Text></TouchableOpacity>
             </View>
             <View style={m.body}>
