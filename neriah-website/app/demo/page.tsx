@@ -1234,12 +1234,6 @@ function WelcomeScreen({ onTeacher, highlight }: { onTeacher: () => void; highli
         </button>
 
         {/* Student */}
-        {highlight === 'student' && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginBottom: 2 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, letterSpacing: '0.05em' }}>Student</span>
-            <ChevronLeft size={13} color={C.amber} style={{ transform: 'rotate(180deg)' }} />
-          </div>
-        )}
         <button
           style={{
             background: C.amber, border: highlight === 'student' ? `3px solid ${C.amber}` : 'none',
