@@ -535,9 +535,11 @@ export const getAssignments = async (class_id: string): Promise<Assignment[]> =>
 /** Fetch question list for an answer key (student view — no answers included). */
 export const getAnswerKeyQuestions = async (
   answer_key_id: string,
-): Promise<Array<{ question_number: number; question_text: string; marks: number }>> => {
+): Promise<{ questions: Array<{ question_number: number; question_text: string; marks: number }>; question_paper_text?: string }> => {
   const res = await client.get(`/answer-keys/${answer_key_id}/questions`);
-  return Array.isArray(res.data) ? res.data : [];
+  // Handle both old (flat array) and new (object) response shapes
+  if (Array.isArray(res.data)) return { questions: res.data };
+  return res.data ?? { questions: [] };
 };
 
 /** Approved marks visible to this student. Pass limit to get recent N. */

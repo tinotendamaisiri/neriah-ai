@@ -5489,13 +5489,20 @@ function StudentSubmitScreen({
   const [fileWarningDismissed, setFileWarningDismissed] = useState(false);
   const [showQuestionsModal, setShowQuestionsModal] = useState(false);
   const [questionsData, setQuestionsData] = useState<{ question_number: number; question_text: string; marks: number }[]>([]);
+  const [questionPaperText, setQuestionPaperText] = useState('');
   const [questionsLoading, setQuestionsLoading] = useState(false);
 
   useEffect(() => {
-    if (!showQuestionsModal || questionsData.length > 0) return;
+    if (!showQuestionsModal || questionsData.length > 0 || questionPaperText) return;
     setQuestionsLoading(true);
     demoFetch(`/answer-keys/${DEMO_HOMEWORK.answer_key_id}/questions`, {}, demoToken)
-      .then(data => { if (Array.isArray(data)) setQuestionsData(data); })
+      .then(data => {
+        if (Array.isArray(data)) { setQuestionsData(data); }
+        else if (data?.questions) {
+          setQuestionsData(data.questions);
+          if (data.question_paper_text) setQuestionPaperText(data.question_paper_text);
+        }
+      })
       .finally(() => setQuestionsLoading(false));
   }, [showQuestionsModal]);
 
@@ -5729,29 +5736,45 @@ function StudentSubmitScreen({
             <div style={{ flex: 1, overflowY: 'auto', padding: '12px 18px 24px' }}>
               {questionsLoading ? (
                 <div style={{ textAlign: 'center', padding: 30, color: C.g500, fontSize: 13 }}>Loading questions...</div>
-              ) : questionsData.length === 0 ? (
+              ) : questionsData.length === 0 && !questionPaperText ? (
                 <div style={{ textAlign: 'center', padding: 30 }}>
                   <FileText size={36} color={C.g300} />
                   <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 10 }}>No question paper available</div>
                   <div style={{ fontSize: 12, color: C.g500, marginTop: 4 }}>Contact your teacher for the assignment details.</div>
                 </div>
               ) : (
-                questionsData.map(q => (
-                  <div key={q.question_number} style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0',
-                    borderBottom: `1px solid ${C.g100}`,
-                  }}>
-                    <div style={{
-                      width: 26, height: 26, borderRadius: 13, background: C.teal50,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      fontSize: 12, fontWeight: 700, color: C.teal,
-                    }}>{q.question_number}</div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{q.question_text}</div>
-                      <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</div>
+                <>
+                  {/* Question paper text */}
+                  {questionPaperText && (
+                    <div style={{ background: C.g50, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Question Paper</div>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{questionPaperText}</div>
                     </div>
-                  </div>
-                ))
+                  )}
+
+                  {/* Per-question marks breakdown */}
+                  {questionsData.length > 0 && (
+                    <>
+                      {questionPaperText && <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Marks Breakdown</div>}
+                      {questionsData.map(q => (
+                        <div key={q.question_number} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0',
+                          borderBottom: `1px solid ${C.g100}`,
+                        }}>
+                          <div style={{
+                            width: 26, height: 26, borderRadius: 13, background: C.teal50,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                            fontSize: 12, fontWeight: 700, color: C.teal,
+                          }}>{q.question_number}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{q.question_text || `Question ${q.question_number}`}</div>
+                            <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>

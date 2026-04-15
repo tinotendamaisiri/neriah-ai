@@ -482,7 +482,13 @@ def answer_key_questions(key_id: str):
         }
         for i, q in enumerate(questions)
     ]
-    return jsonify(out), 200
+    result = {"questions": out}
+    # Include the raw question paper text if available — students can read the
+    # original questions even when per-question text is empty.
+    qp_text = key.get("question_paper_text") or ""
+    if qp_text:
+        result["question_paper_text"] = qp_text
+    return jsonify(result), 200
 
 
 @answer_keys_bp.post("/answer-keys/<key_id>/close")

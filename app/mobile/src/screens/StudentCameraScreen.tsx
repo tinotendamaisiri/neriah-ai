@@ -31,6 +31,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
   const [cameraVisible, setCameraVisible] = useState(false);
   const [showQuestions, setShowQuestions] = useState(false);
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
+  const [questionPaperText, setQuestionPaperText] = useState('');
   const [questionsLoading, setQuestionsLoading] = useState(false);
 
   const captureImage = () => {
@@ -68,11 +69,12 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
 
   const openQuestions = async () => {
     setShowQuestions(true);
-    if (questions.length > 0) return;
+    if (questions.length > 0 || questionPaperText) return;
     setQuestionsLoading(true);
     try {
       const data = await getAnswerKeyQuestions(answer_key_id);
-      setQuestions(data);
+      setQuestions(data.questions);
+      if (data.question_paper_text) setQuestionPaperText(data.question_paper_text);
     } catch {
       // silently fail — modal shows "not available" state
     } finally {
@@ -103,24 +105,42 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
             <ScrollView style={styles.modalScroll} contentContainerStyle={{ paddingBottom: 20 }}>
               {questionsLoading ? (
                 <ActivityIndicator size="large" color={COLORS.teal500} style={{ marginTop: 30 }} />
-              ) : questions.length === 0 ? (
+              ) : questions.length === 0 && !questionPaperText ? (
                 <View style={styles.modalEmpty}>
                   <Ionicons name="document-text-outline" size={40} color={COLORS.gray200} />
                   <Text style={styles.modalEmptyText}>No question paper available.</Text>
                   <Text style={styles.modalEmptyHint}>Contact your teacher for the assignment details.</Text>
                 </View>
               ) : (
-                questions.map(q => (
-                  <View key={q.question_number} style={styles.questionCard}>
-                    <View style={styles.questionNumBadge}>
-                      <Text style={styles.questionNumText}>{q.question_number}</Text>
+                <>
+                  {/* Show raw question paper text when available */}
+                  {questionPaperText ? (
+                    <View style={styles.qpTextBlock}>
+                      <Text style={styles.qpTextLabel}>Question Paper</Text>
+                      <Text style={styles.qpText}>{questionPaperText}</Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.questionText}>{q.question_text}</Text>
-                      <Text style={styles.questionMarks}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</Text>
-                    </View>
-                  </View>
-                ))
+                  ) : null}
+
+                  {/* Question list with marks */}
+                  {questions.length > 0 && (
+                    <>
+                      {questionPaperText ? <Text style={styles.qpTextLabel}>Marks Breakdown</Text> : null}
+                      {questions.map(q => (
+                        <View key={q.question_number} style={styles.questionCard}>
+                          <View style={styles.questionNumBadge}>
+                            <Text style={styles.questionNumText}>{q.question_number}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.questionText}>
+                              {q.question_text || `Question ${q.question_number}`}
+                            </Text>
+                            <Text style={styles.questionMarks}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  )}
+                </>
               )}
             </ScrollView>
           </View>
@@ -343,4 +363,20 @@ const styles = StyleSheet.create({
   questionNumText: { fontSize: 13, fontWeight: '700', color: COLORS.teal500 },
   questionText: { fontSize: 14, color: COLORS.text, lineHeight: 20 },
   questionMarks: { fontSize: 12, color: COLORS.gray500, marginTop: 4 },
+  qpTextBlock: {
+    backgroundColor: COLORS.gray50,
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  qpTextLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.gray500,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  qpText: { fontSize: 14, color: COLORS.text, lineHeight: 22 },
 });
