@@ -227,7 +227,7 @@ export async function demoFetch(path: string, opts: RequestInit = {}, token?: st
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-list' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 't-assistant';
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-list' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 'homework-analytics' | 't-assistant';
 
 // ── DemoClass ─────────────────────────────────────────────────────────────────
 interface DemoClass {
@@ -1296,7 +1296,7 @@ function PhoneScreen({
       body: JSON.stringify({ phone }),
     });
     setLoading(false);
-    const channel: 'whatsapp' | 'sms' = res?.channel ?? 'whatsapp';
+    const channel: 'whatsapp' | 'sms' = res?.channel ?? 'sms';
     onContinue(phone, channel);
   };
 
@@ -1466,7 +1466,8 @@ function OTPScreen({
     if (text.length === 6) setTimeout(handleVerify, 80);
   };
 
-  const isWa      = channel === 'whatsapp';
+  const displayChannel = channel || 'sms';
+  const isWa      = displayChannel === 'whatsapp';
   const iconColor = isWa ? C.waGreen : C.teal;
   const masked    = maskWebPhone(phone);
   const allFilled = digits.every(d => d !== '');
@@ -1487,13 +1488,13 @@ function OTPScreen({
           ? <MessageCircle size={22} color={C.waGreen} />
           : <MessageSquare size={22} color={C.teal} />}
         <span style={{ fontSize: 14, fontWeight: 700, color: iconColor }}>
-          {isWa ? 'Check your WhatsApp' : 'Check your SMS'}
+          {isWa ? 'Check your WhatsApp' : 'Check your messages'}
         </span>
       </div>
 
       <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 }}>Enter your code</div>
       <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5, marginBottom: 18 }}>
-        {isWa ? 'We sent a code to your WhatsApp' : 'We sent a code to your SMS'}{' '}
+        {isWa ? 'We sent a code to your WhatsApp' : 'We sent a code to your phone'}{' '}
         <span style={{ color: C.text, fontWeight: 600 }}>{masked}</span>
       </div>
 
@@ -1779,7 +1780,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       body: JSON.stringify({ phone }),
     });
     setLoading(false);
-    const channel: 'whatsapp' | 'sms' = otpRes?.channel ?? 'whatsapp';
+    const channel: 'whatsapp' | 'sms' = otpRes?.channel ?? 'sms';
     onContinue(phone, channel);
   };
 
@@ -6185,17 +6186,19 @@ function StudentTutorScreen({
 // ──────────────────────────────────────────────────────────────────────────────
 
 function AnalyticsScreen({
-  onBack, demoToken, onViewStudent, onSettings,
+  onBack, demoToken, onViewStudent, onViewHomework, onSettings,
 }: {
   onBack: () => void;
   demoToken: string | null;
   onViewStudent: (student: DemoAnalyticsStudent) => void;
+  onViewHomework: (homeworkId: string) => void;
   onSettings: () => void;
 }) {
   const [analytics, setAnalytics] = useState<DemoClassAnalytics>(DEMO_CLASS_ANALYTICS);
   const [hasData, setHasData]     = useState<boolean | null>(null);   // null = loading
   const [reason, setReason]       = useState<string | null>(null);
   const [limitedData, setLimitedData] = useState(false);
+  const [homeworkList, setHomeworkList] = useState<Array<{ id: string; title: string }>>([]);
 
   // Try to fetch live data; fall back to pre-canned.
   // AbortController cancels in-flight request on unmount or demoToken change.
@@ -6570,6 +6573,168 @@ function StudentAnalyticsScreen({
               </div>
             ))}
           </div>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Homework Analytics (per-homework per-student scores)
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface DemoHomeworkStudentResult {
+  student_id: string;
+  name: string;
+  score: number;
+  max_score: number;
+  percentage: number;
+  pass_fail: 'pass' | 'fail';
+}
+
+interface DemoHomeworkAnalytics {
+  has_data: boolean;
+  reason?: string;
+  homework_id: string;
+  homework_title: string;
+  class_name: string;
+  submission_count: number;
+  average_score: number;
+  highest_score: number;
+  lowest_score: number;
+  pass_rate: number;
+  students: DemoHomeworkStudentResult[];
+}
+
+function HomeworkAnalyticsWebScreen({
+  homeworkId,
+  onBack,
+  onViewStudent,
+  demoToken,
+}: {
+  homeworkId: string;
+  onBack: () => void;
+  onViewStudent: (student: DemoAnalyticsStudent) => void;
+  demoToken: string | null;
+}) {
+  const [analytics, setAnalytics] = useState<DemoHomeworkAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    demoFetch(`/demo/analytics/homework/${homeworkId}`, {}, demoToken)
+      .then((data: any) => { if (data) setAnalytics(data as DemoHomeworkAnalytics); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [homeworkId, demoToken]);
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      <div style={{ flex: 1, padding: '16px 14px', overflowY: 'auto' }}>
+        <div style={{ marginBottom: 14 }}><BackButton label="Analytics" onClick={onBack} /></div>
+
+        <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 4 }}>
+          {analytics?.homework_title ?? 'Homework Analytics'}
+        </div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 14 }}>
+          {analytics?.class_name ?? ''}
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: 'center', padding: '32px 0', color: C.g500, fontSize: 13 }}>Loading…</div>
+        )}
+
+        {!loading && analytics && !analytics.has_data && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '32px 20px', textAlign: 'center' }}>
+            <BarChart2 size={48} color={C.g200} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>No graded submissions yet</div>
+            <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Grade at least one student to see analytics for this homework.</div>
+          </div>
+        )}
+
+        {!loading && analytics && analytics.has_data && (
+          <>
+            {/* Summary cards */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto' }}>
+              {[
+                { label: 'Average',   value: `${analytics.average_score}%`,  color: scoreColor(analytics.average_score) },
+                { label: 'Highest',   value: `${analytics.highest_score}%`,  color: C.green },
+                { label: 'Lowest',    value: `${analytics.lowest_score}%`,   color: C.red },
+                { label: 'Pass Rate', value: `${analytics.pass_rate}%`,      color: C.teal },
+                { label: 'Submitted', value: `${analytics.submission_count}`, color: C.text },
+              ].map(card => (
+                <div key={card.label} style={{
+                  background: C.white, borderRadius: 10, border: `1px solid ${C.border}`,
+                  padding: '10px 12px', minWidth: 70, textAlign: 'center', flexShrink: 0,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: card.color }}>{card.value}</div>
+                  <div style={{ fontSize: 10, color: C.g500, marginTop: 2 }}>{card.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Per-student results */}
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.g700, marginBottom: 8 }}>Student Results</div>
+            {analytics.students.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '16px 0', fontSize: 12, color: C.g400, fontStyle: 'italic' }}>
+                No students graded yet
+              </div>
+            ) : (
+              <div style={{
+                background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+                overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+              }}>
+                {analytics.students.map((s, i) => (
+                  <button
+                    key={s.student_id}
+                    onClick={() => onViewStudent({
+                      student_id: s.student_id,
+                      name: s.name,
+                      latest_score: s.percentage,
+                      average_score: s.percentage,
+                      submission_count: 1,
+                      trend: 'stable' as const,
+                    })}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '10px 14px', background: 'none', border: 'none',
+                      borderBottom: i < analytics.students.length - 1 ? `1px solid ${C.g100}` : 'none',
+                      cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = C.g50; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                  >
+                    {/* Rank badge */}
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 14, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 700, fontSize: 12, color: C.white,
+                      background: scoreColor(s.percentage),
+                    }}>
+                      {i + 1}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{s.name}</div>
+                      <div style={{
+                        display: 'inline-block', marginTop: 2, fontSize: 10, fontWeight: 700,
+                        color: s.pass_fail === 'pass' ? C.teal : C.red,
+                        background: s.pass_fail === 'pass' ? C.tealLt : C.redLt,
+                        borderRadius: 4, padding: '1px 6px',
+                      }}>
+                        {s.pass_fail === 'pass' ? 'Pass' : 'Fail'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', marginRight: 4 }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: scoreColor(s.percentage) }}>{s.percentage}%</div>
+                      <div style={{ fontSize: 10, color: C.g500 }}>{s.score}/{s.max_score}</div>
+                    </div>
+                    <span style={{ fontSize: 14, color: C.g400 }}>›</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </Screen>
@@ -7517,12 +7682,13 @@ export default function DemoPage() {
   const [screen, setScreen]         = useState<TScreen>('welcome');
   const [prevScreen, setPrevScreen] = useState<TScreen>('welcome');
   const [otpPhone, setOtpPhone]     = useState('+263771234567');
-  const [otpChannel, setOtpChannel] = useState<'whatsapp' | 'sms'>('whatsapp');
+  const [otpChannel, setOtpChannel] = useState<'whatsapp' | 'sms'>('sms');
   const [demoToken, setDemoToken]   = useState<string | null>(null);
   const [schemeData, setSchemeData]             = useState<{ answer_key_id: string; questions: ReviewQuestion[] } | null>(null);
   const [hwInfo, setHwInfo]                     = useState<HomeworkInfo>(DEMO_HOMEWORK);
   const [selectedSubmission, setSelectedSubmission]           = useState<DemoSubmissionDetail | null>(null);
   const [selectedStudent, setSelectedStudent]                 = useState<DemoAnalyticsStudent | null>(null);
+  const [selectedHomeworkId, setSelectedHomeworkId]           = useState<string | null>(null);
   const [newClass, setNewClass]                               = useState<DemoClass | null>(null);
   const [annotatedImageUrl, setAnnotatedImageUrl]             = useState<string>('');
 
@@ -7537,7 +7703,7 @@ export default function DemoPage() {
   const [submissionFileName, setSubmissionFileName] = useState('');
   // Student phone's own OTP state (independent from teacher phone)
   const [sOtpPhone, setSSOtpPhone]               = useState('+263771234567');
-  const [sOtpChannel, setSSOtpChannel]           = useState<'whatsapp' | 'sms'>('whatsapp');
+  const [sOtpChannel, setSSOtpChannel]           = useState<'whatsapp' | 'sms'>('sms');
   // Student phone teacher-mode navigation (fully independent from left phone)
   const [sTeacherScreen, setSTeacherScreen]      = useState<TScreen>('register');
   const [sTeacherPrev, setSTeacherPrev]          = useState<TScreen>('register');
