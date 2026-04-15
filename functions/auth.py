@@ -878,6 +878,60 @@ def auth_student_register():
     return resp
 
 
+# ─── Student profile update ──────────────────────────────────────────────────
+
+@auth_bp.put("/auth/student/update")
+def auth_student_update():
+    """
+    Authenticated — update student profile fields.
+
+    Body: { first_name?, surname? }
+    Phone changes require OTP verification (not handled here).
+    """
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    updates: dict = {}
+
+    first_name = (body.get("first_name") or "").strip()
+    surname = (body.get("surname") or "").strip()
+    if first_name:
+        updates["first_name"] = first_name
+    if surname:
+        updates["surname"] = surname
+
+    if not updates:
+        return jsonify({"error": "No valid fields to update"}), 400
+
+    upsert("students", student_id, updates)
+    updated = get_doc("students", student_id)
+    logger.info("[auth] student/update id=%s fields=%s", student_id, list(updates.keys()))
+    return jsonify({"student": updated}), 200
+
+
+@auth_bp.delete("/auth/student/<student_id>")
+def auth_student_delete(student_id: str):
+    """
+    Authenticated — delete own student account.
+    The JWT's user_id must match the student_id in the path.
+    """
+    caller_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+    if caller_id != student_id:
+        return jsonify({"error": "Forbidden"}), 403
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    delete_doc("students", student_id)
+    logger.info("[auth] student/%s deleted own account", student_id)
+    return jsonify({"deleted": True}), 200
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 _SCHOOL_ID_MAP = {

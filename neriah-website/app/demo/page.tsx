@@ -8098,99 +8098,190 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics, onEditProfile }: { onBa
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// SCREEN: Student Settings (web)
+// SCREEN: Student Settings (web) — mirrors teacher settings layout
 // ──────────────────────────────────────────────────────────────────────────────
 function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: () => void; onResults?: () => void; studentName: string }) {
   const firstName = studentName.split(' ')[0];
+  const surname = studentName.split(' ').slice(1).join(' ') || '';
+  const initials = `${firstName[0] ?? ''}${surname[0] ?? ''}`.toUpperCase() || 'S';
+
+  const [nameModal, setNameModal] = useState(false);
+  const [editFirst, setEditFirst] = useState(firstName);
+  const [editSurname, setEditSurname] = useState(surname);
+  const [nameSaved, setNameSaved] = useState(false);
+  const [language, setLanguage] = useState<'English' | 'Shona' | 'Ndebele'>('English');
+  const [langOpen, setLangOpen] = useState(false);
+  const [pinActive, setPinActive] = useState(false);
+  const [pinModal, setPinModal] = useState<PinModalMode | null>(null);
+  const [toast, setToast] = useState('');
+
+  function handlePinSuccess(msg: string) { setPinModal(null); setPinActive(msg !== 'PIN removed'); setToast(msg); }
+
+  const secLbl: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 };
+  const cardS: React.CSSProperties = { background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 18 };
+  const rowS: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderTop: `1px solid ${C.bg}`, cursor: 'pointer' };
+  const rowLbl: React.CSSProperties = { fontSize: 14, color: C.teal, fontWeight: 600 };
+  const inpS: React.CSSProperties = { border: `1px solid ${C.g200}`, borderRadius: 10, padding: '11px 12px', fontSize: 14, color: C.text, outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', background: C.white };
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg }}>
-      {/* Teal header */}
-      <div style={{ background: C.teal, paddingTop: 48, paddingBottom: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: 32,
-          background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 24, fontWeight: 800, color: C.white, marginBottom: 10,
-        }}>
-          {firstName[0].toUpperCase()}
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: C.white }}>{studentName}</div>
-        <div style={{ marginTop: 6, background: C.amber, borderRadius: 8, paddingInline: 12, paddingBlock: 3 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: C.white }}>Student</span>
-        </div>
+      {/* Header */}
+      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Settings</div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        {/* Offline AI Model */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
-          {/* Model name */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
-              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E2B</div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 6 }}>
-                Works offline for:{' '}
-                <span style={{ color: C.g900, fontWeight: 600 }}>Homework Marking · AI Tutoring</span>
-              </div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Download to use Neriah AI without internet</div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+        {/* ── Profile ── */}
+        <div style={secLbl}>Profile</div>
+        <div onClick={() => setNameModal(true)} style={{ ...cardS, display: 'flex', alignItems: 'center', padding: '14px 16px', cursor: 'pointer', position: 'relative' }}>
+          <div style={{ width: 48, height: 48, borderRadius: 24, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginRight: 12 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>{initials}</span>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{editFirst} {editSurname}</div>
+            <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>+263 •••• •••• 67</div>
+            <div style={{ marginTop: 4, display: 'inline-block', background: C.amber, borderRadius: 6, paddingInline: 8, paddingBlock: 2 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.white }}>Student</span>
             </div>
-            <div style={{ fontSize: 12, color: C.g500 }}>2.5 GB</div>
           </div>
-          {/* Cloud-only badge */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
-            <Cloud size={13} color={C.g500} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
-          </div>
-
-          <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>
-            On-device AI models run locally on the <strong>Neriah mobile app</strong>, keeping your data private and enabling offline tutoring without internet.
-          </p>
-
-          {/* App download CTA */}
-          <a
-            href="https://neriah.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              background: C.amber, color: C.white, borderRadius: 10, padding: '12px 16px',
-              textDecoration: 'none', fontSize: 14, fontWeight: 700,
-            }}
-          >
-            <span>Download the Neriah app</span>
-            <span style={{ fontSize: 16 }}>→</span>
-          </a>
+          <Pencil size={16} color={C.g400} />
         </div>
 
-        {/* Version */}
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 14, marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 14, color: C.g900 }}>Version</span>
-            <span style={{ fontSize: 14, color: C.g500 }}>Demo</span>
+        {/* ── Account ── */}
+        <div style={secLbl}>Account</div>
+        <div style={cardS}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderBottom: `1px solid ${C.bg}` }}>
+            <span style={{ fontSize: 14, color: C.g500 }}>School</span>
+            <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Harare High School</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderBottom: `1px solid ${C.bg}` }}>
+            <span style={{ fontSize: 14, color: C.g500 }}>Class</span>
+            <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Form 2A — Mathematics</span>
+          </div>
+          <div style={rowS} onClick={() => setNameModal(true)}>
+            <span style={rowLbl}>Change Name</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
+          </div>
+          {pinActive ? (
+            <>
+              <div style={rowS} onClick={() => setPinModal('change')}>
+                <span style={rowLbl}>Change PIN</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
+              </div>
+              <div style={rowS} onClick={() => setPinModal('remove')}>
+                <span style={{ ...rowLbl, color: C.red }}>Remove PIN</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
+              </div>
+            </>
+          ) : (
+            <div style={rowS} onClick={() => setPinModal('set')}>
+              <span style={rowLbl}>Set PIN</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
+            </div>
+          )}
+          <div style={rowS} onClick={() => setLangOpen(!langOpen)}>
+            <span style={rowLbl}>Language</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 14, color: C.g500 }}>{language}</span>
+              <span style={{ fontSize: 18, color: C.teal }}>›</span>
+            </div>
+          </div>
+          {langOpen && (
+            <div style={{ padding: '0 14px 12px', display: 'flex', gap: 6 }}>
+              {(['English', 'Shona', 'Ndebele'] as const).map(l => (
+                <button key={l} onClick={() => { setLanguage(l); setLangOpen(false); setToast(`Language set to ${l}`); }} style={{
+                  flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${language === l ? C.teal : C.g200}`,
+                  background: language === l ? C.teal50 : C.white, color: language === l ? C.teal : C.g500,
+                  fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+                }}>{l}</button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Offline AI Model ── */}
+        <div style={secLbl}>Offline AI Model</div>
+        <div style={cardS}>
+          <div style={{ padding: 14 }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '5px 10px', marginBottom: 10 }}>
+              <Cloud size={13} color={C.g500} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web uses Cloud AI</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.g900 }}>Gemma 4 E2B</div>
+                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>2.5 GB · AI Tutor</div>
+              </div>
+              <div style={{ background: C.g100, borderRadius: 6, padding: '4px 10px' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Mobile only</span>
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* ── About ── */}
+        <div style={secLbl}>About</div>
+        <div style={cardS}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderBottom: `1px solid ${C.bg}` }}>
+            <span style={{ fontSize: 14, color: C.g900 }}>Version</span><span style={{ fontSize: 14, color: C.g500 }}>1.0.0</span>
+          </div>
+          <div style={{ ...rowS, borderTop: 'none' }} onClick={() => window.open('https://neriah.ai/terms', '_blank')}>
+            <span style={{ fontSize: 14, color: C.g900 }}>Terms of Service</span><span style={{ fontSize: 18, color: C.g500 }}>›</span>
+          </div>
+          <div style={rowS} onClick={() => window.open('https://neriah.ai/privacy', '_blank')}>
+            <span style={{ fontSize: 14, color: C.g900 }}>Privacy Policy</span><span style={{ fontSize: 18, color: C.g500 }}>›</span>
+          </div>
+          <div style={rowS} onClick={() => setToast('Contact support@neriah.africa to delete your account.')}>
+            <span style={{ fontSize: 14, color: C.red, fontWeight: 600 }}>Delete Account</span><span style={{ fontSize: 18, color: C.g500 }}>›</span>
+          </div>
+        </div>
+
+        {/* ── Log out ── */}
+        <button onClick={onBack} style={{ width: '100%', background: C.redLt, border: `1px solid ${C.red200}`, borderRadius: 12, padding: '14px 0', cursor: 'pointer', fontFamily: 'inherit', marginBottom: 16 }}>
+          <span style={{ color: C.red, fontWeight: 700, fontSize: 16 }}>Sign out</span>
+        </button>
+
+        <div style={{ textAlign: 'center', fontSize: 12, color: C.g500, marginBottom: 16 }}>Neriah v1.0.0</div>
       </div>
 
       {/* Bottom tabs */}
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
         {[
-          { icon: <Home size={16} />,     label: 'Home',     active: false, onClick: onBack },
-          { icon: <BarChart2 size={16} />, label: 'Results',  active: false, onClick: onResults },
-          { icon: <Settings size={16} />, label: 'Settings', active: true,  onClick: undefined as (() => void) | undefined },
+          { icon: <Home size={16} />, label: 'Home', active: false, onClick: onBack },
+          { icon: <BarChart2 size={16} />, label: 'Results', active: false, onClick: onResults },
+          { icon: <Settings size={16} />, label: 'Settings', active: true, onClick: undefined as (() => void) | undefined },
         ].map(tab => (
-          <div
-            key={tab.label}
-            onClick={tab.onClick}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
-          >
+          <div key={tab.label} onClick={tab.onClick} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}>
             <span style={{ color: tab.active ? C.amber : C.g500 }}>{tab.icon}</span>
-            <span style={{
-              fontSize: 11, fontWeight: tab.active ? 600 : 400, color: tab.active ? C.amber700 : C.g500,
-              borderBottom: tab.active ? `2px solid ${C.amber}` : '2px solid transparent', paddingBottom: 1,
-            }}>{tab.label}</span>
+            <span style={{ fontSize: 11, fontWeight: tab.active ? 600 : 400, color: tab.active ? C.amber700 : C.g500, borderBottom: tab.active ? `2px solid ${C.amber}` : '2px solid transparent', paddingBottom: 1 }}>{tab.label}</span>
           </div>
         ))}
       </div>
+
+      {/* ── Change Name modal ── */}
+      {nameModal && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
+          <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Change Name</span>
+              <button onClick={() => setNameModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.g900, display: 'block', marginBottom: 3 }}>First name</label>
+            <input value={editFirst} onChange={e => setEditFirst(e.target.value)} style={{ ...inpS, marginBottom: 10 }} />
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.g900, display: 'block', marginBottom: 3 }}>Surname</label>
+            <input value={editSurname} onChange={e => setEditSurname(e.target.value)} style={{ ...inpS, marginBottom: 14 }} />
+            <button onClick={() => { setNameModal(false); setToast('Name updated'); }} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Save</button>
+          </div>
+        </div>
+      )}
+
+      {/* PIN modal */}
+      {pinModal && (
+        <PinModal
+          mode={pinModal}
+          onClose={() => setPinModal(null)}
+          onSuccess={handlePinSuccess}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
     </div>
   );
 }

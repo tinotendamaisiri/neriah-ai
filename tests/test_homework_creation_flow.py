@@ -6850,3 +6850,83 @@ class TestClassesBySchool:
         assert rv.status_code == 200
         data = rv.get_json()
         assert data == []
+
+
+# ── Student profile update/delete ────────────────────────────────────────────
+
+STUDENT_ID_SETTINGS = "student-settings-001"
+
+class TestStudentProfileUpdate:
+    """Tests for PUT /api/auth/student/update and DELETE /api/auth/student/{id}."""
+
+    @pytest.fixture(scope="class")
+    def student_headers(self):
+        from shared.auth import create_jwt
+        token = create_jwt(STUDENT_ID_SETTINGS, "student", 1)
+        return {"Authorization": f"Bearer {token}"}
+
+    @feature_test("student_update_name")
+    def test_student_can_update_name(self, client, student_headers):
+        """PUT /api/auth/student/update updates first_name and surname."""
+        saved = {}
+        def fake_upsert(collection, doc_id, data):
+            saved.update(data)
+            return data
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID_SETTINGS:
+                return {"id": STUDENT_ID_SETTINGS, "first_name": "Tendai", "surname": "Moyo", "phone": "+263771234567"}
+            return None
+
+        with patch("functions.auth.upsert", side_effect=fake_upsert), \
+             patch("functions.auth.get_doc", side_effect=fake_get_doc):
+            rv = client.put("/api/auth/student/update",
+                json={"first_name": "Tendai", "surname": "Moyo"},
+                headers=student_headers)
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert "student" in body
+        assert saved.get("first_name") == "Tendai"
+        assert saved.get("surname") == "Moyo"
+
+    @feature_test("student_update_empty_rejected")
+    def test_student_update_empty_body_rejected(self, client, student_headers):
+        """PUT /api/auth/student/update rejects empty update."""
+        with patch("functions.auth.get_doc", return_value=None):
+            rv = client.put("/api/auth/student/update",
+                json={},
+                headers=student_headers)
+
+        assert rv.status_code == 400
+
+    @feature_test("student_delete_account")
+    def test_student_can_delete_account(self, client, student_headers):
+        """DELETE /api/auth/student/{id} deletes the student's own account."""
+        deleted = {}
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID_SETTINGS:
+                return {"id": STUDENT_ID_SETTINGS, "first_name": "Test", "surname": "Student"}
+            return None
+
+        def fake_delete(collection, doc_id):
+            deleted["collection"] = collection
+            deleted["doc_id"] = doc_id
+
+        with patch("functions.auth.get_doc", side_effect=fake_get_doc), \
+             patch("functions.auth.delete_doc", side_effect=fake_delete):
+            rv = client.delete(f"/api/auth/student/{STUDENT_ID_SETTINGS}",
+                headers=student_headers)
+
+        assert rv.status_code == 200
+        assert rv.get_json()["deleted"] is True
+        assert deleted["doc_id"] == STUDENT_ID_SETTINGS
+
+    @feature_test("student_cannot_delete_other_account")
+    def test_student_cannot_delete_other_student(self, client, student_headers):
+        """DELETE /api/auth/student/other_id returns 403."""
+        with patch("functions.auth.get_doc", return_value=None):
+            rv = client.delete("/api/auth/student/other-student-999",
+                headers=student_headers)
+
+        assert rv.status_code == 403

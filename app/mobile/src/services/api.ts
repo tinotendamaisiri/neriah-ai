@@ -522,6 +522,20 @@ export const studentRegister = async (data: {
   return res.data;
 };
 
+/** Update student profile (name). */
+export const updateStudentProfile = async (data: {
+  first_name?: string;
+  surname?: string;
+}): Promise<{ student: Student }> => {
+  const res = await client.put('/auth/student/update', data);
+  return res.data;
+};
+
+/** Delete student account. */
+export const deleteStudentAccount = async (studentId: string): Promise<void> => {
+  await client.delete(`/auth/student/${studentId}`);
+};
+
 // ── Student data ──────────────────────────────────────────────────────────────
 
 /** All assignments for this student's class. */
