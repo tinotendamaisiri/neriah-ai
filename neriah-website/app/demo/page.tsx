@@ -1188,7 +1188,7 @@ function PhoneInputRow({ value, onChange, compact = false }: { value: string; on
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Welcome / Role Select
 // ──────────────────────────────────────────────────────────────────────────────
-function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => void; onSignIn: () => void; highlight?: 'teacher' | 'student' }) {
+function WelcomeScreen({ onTeacher, highlight }: { onTeacher: () => void; highlight?: 'teacher' | 'student' }) {
   return (
     <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       <style>{`
@@ -1213,12 +1213,6 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
       {/* Role cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
         {/* Teacher */}
-        {highlight === 'teacher' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 2 }}>
-            <ChevronLeft size={13} color={C.teal} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.05em' }}>Teacher</span>
-          </div>
-        )}
         <button
           onClick={onTeacher}
           style={{
@@ -1266,16 +1260,6 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
         </button>
       </div>
 
-      {/* Sign in link */}
-      <div style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: C.g500 }}>
-        Already have an account?{' '}
-        <button
-          onClick={onSignIn}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, padding: 0 }}
-        >
-          Sign in
-        </button>
-      </div>
     </Screen>
   );
 }
@@ -1413,7 +1397,8 @@ function OTPScreen({
       body: JSON.stringify({ code }),
     });
     setLoading(false);
-    if (res?.success) {
+    // Demo accepts any 6-digit code. If backend is unreachable (res===null), still proceed.
+    if (res?.success || res === null) {
       onVerify();
     } else {
       triggerShake();
@@ -7741,7 +7726,7 @@ export default function DemoPage() {
   function renderTeacherScreen() {
     switch (screen) {
       case 'welcome':
-        return <WelcomeScreen onTeacher={() => go('register')} onSignIn={() => go('phone')} highlight="teacher" />;
+        return <WelcomeScreen onTeacher={() => go('register')} highlight="teacher" />;
       case 'phone':
         return <PhoneScreen onContinue={(p, ch) => { setOtpPhone(p); setOtpChannel(ch); go('otp'); }} onRegister={() => go('welcome')} />;
       case 'otp':
@@ -7875,7 +7860,6 @@ export default function DemoPage() {
         return (
           <WelcomeScreen
             onTeacher={() => { setSTeacherScreen('register'); setSTeacherPrev('register'); setSScreen('s-teacher'); }}
-            onSignIn={() => setSScreen('s-phone')}
             highlight="student"
           />
         );
@@ -7899,7 +7883,7 @@ export default function DemoPage() {
       case 's-teacher':
         switch (sTeacherScreen) {
           case 'welcome':
-            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} highlight="student" />;
+            return <WelcomeScreen onTeacher={() => sGo('register')} highlight="student" />;
           case 'phone':
             return <PhoneScreen onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} onRegister={() => sGo('welcome')} />;
           case 'otp':
@@ -7949,7 +7933,7 @@ export default function DemoPage() {
           case 't-assistant':
             return <TeacherAIAssistantWebScreen onBack={() => sGo('classes')} />;
           default:
-            return <WelcomeScreen onTeacher={() => sGo('register')} onSignIn={() => sGo('phone')} highlight="student" />;
+            return <WelcomeScreen onTeacher={() => sGo('register')} highlight="student" />;
         }
 
       // ── Student flow ─────────────────────────────────────────────────────────
