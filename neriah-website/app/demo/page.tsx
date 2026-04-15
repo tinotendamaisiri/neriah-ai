@@ -3517,7 +3517,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           {/* Hero: centers icon + title + subtitle in remaining space */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', padding: '20px 20px 12px', gap: 8 }}>
-            <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#E8F4F4',
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: C.primaryLight,
               border: `2px solid ${C.teal}`, display: 'flex', alignItems: 'center',
               justifyContent: 'center', marginBottom: 8 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
