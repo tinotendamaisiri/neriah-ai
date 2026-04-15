@@ -250,7 +250,8 @@ export interface TeacherSubmission {
   class_name?: string;
   answer_key_id: string;
   answer_key_title?: string;
-  status: 'pending' | 'graded';
+  status: 'pending' | 'graded' | 'approved' | 'graded_pending_approval';
+  approved?: boolean;
   submitted_at: string;
   graded_at?: string;
   score?: number;

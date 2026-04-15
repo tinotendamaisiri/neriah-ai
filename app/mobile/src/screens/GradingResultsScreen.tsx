@@ -1,5 +1,5 @@
 // src/screens/GradingResultsScreen.tsx
-// Per-student grading results for a single homework assignment.
+// Per-homework grading results: Graded / Pending count cards + tabbed submissions list.
 
 import React, { useCallback, useState } from 'react';
 import {
@@ -7,9 +7,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
+  FlatList,
   ActivityIndicator,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -22,11 +23,20 @@ import { COLORS } from '../constants/colors';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+type Tab = 'pending' | 'graded';
+
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
   try {
     return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   } catch { return iso ?? ''; }
+}
+
+function fmtTime(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
 }
 
 function pct(score?: number, max?: number): string {
@@ -42,9 +52,14 @@ function scoreColor(score?: number, max?: number): string {
   return COLORS.error;
 }
 
-function hasAnyFeedback(s: TeacherSubmission): boolean {
-  if (s.overall_feedback) return true;
-  return (s.verdicts ?? []).some(v => v.feedback);
+/** Submission is graded/approved if approved=true OR status is 'graded'|'approved'. */
+function isGraded(s: TeacherSubmission): boolean {
+  return s.approved === true || s.status === 'graded' || s.status === 'approved';
+}
+
+/** Submission is pending if not yet graded. */
+function isPending(s: TeacherSubmission): boolean {
+  return !isGraded(s);
 }
 
 export default function GradingResultsScreen() {
@@ -59,36 +74,48 @@ export default function GradingResultsScreen() {
     answer_key_title?: string;
   };
 
-  // When answer_key_id is absent we're showing all marked homework for the class.
   const isClassView = !answer_key_id;
 
   const [submissions, setSubmissions] = useState<TeacherSubmission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [tab, setTab] = useState<Tab>('pending');
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const subs = await getTeacherSubmissions({ class_id, teacher_id: user?.id });
+      const subs = await getTeacherSubmissions({
+        class_id,
+        teacher_id: user?.id,
+        ...(answer_key_id ? { answer_key_id } : {}),
+      });
       setSubmissions(
         isClassView
-          ? subs.filter(s => s.status === 'graded' || s.status === 'pending')
-          : subs.filter(s => s.answer_key_id === answer_key_id),
+          ? subs
+          : subs.filter(s => s.answer_key_id === answer_key_id || !answer_key_id),
       );
     } catch (err: any) {
       Alert.alert('Error', err.message ?? 'Could not load grading results.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [answer_key_id, class_id, isClassView, user?.id]);
 
+  // Refetch every time this screen gains focus (e.g. returning from GradingDetail)
   useFocusEffect(
     useCallback(() => { loadData(); }, [loadData]),
   );
 
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData(true);
+  }, [loadData]);
+
   const handleApproveAll = useCallback(() => {
     const pendingIds = submissions
-      .filter(s => s.status === 'pending' && s.mark_id)
+      .filter(s => isPending(s) && s.mark_id)
       .map(s => s.mark_id!);
     if (pendingIds.length === 0) return;
     Alert.alert(
@@ -108,7 +135,7 @@ export default function GradingResultsScreen() {
               );
               loadData();
             } catch (err: any) {
-              Alert.alert('Error', err.message ?? 'Could not approve all marks.');
+              Alert.alert('Error', err.message ?? 'Could not approve marks.');
             } finally {
               setApproving(false);
             }
@@ -118,8 +145,9 @@ export default function GradingResultsScreen() {
     );
   }, [submissions, loadData]);
 
-  const graded = submissions.filter(s => s.status === 'graded');
-  const pending = submissions.filter(s => s.status === 'pending');
+  const graded = submissions.filter(isGraded);
+  const pending = submissions.filter(isPending);
+
   const gradedPcts = graded.map(s => s.max_score ? ((s.score ?? 0) / s.max_score) : 0);
   const avgPct = gradedPcts.length > 0
     ? Math.round(gradedPcts.reduce((a, b) => a + b, 0) / gradedPcts.length * 100)
@@ -127,8 +155,164 @@ export default function GradingResultsScreen() {
   const highestPct = gradedPcts.length > 0 ? Math.round(Math.max(...gradedPcts) * 100) : null;
   const lowestPct = gradedPcts.length > 0 ? Math.round(Math.min(...gradedPcts) * 100) : null;
 
+  const visibleList = tab === 'pending' ? pending : graded;
+
+  const renderPendingRow = ({ item: s }: { item: TeacherSubmission }) => (
+    <View style={styles.row}>
+      <View style={styles.rowLeft}>
+        <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
+        {isClassView && s.answer_key_title && (
+          <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
+        )}
+        <Text style={styles.submittedDate}>
+          {fmtDate(s.submitted_at)}{s.submitted_at ? ' · ' + fmtTime(s.submitted_at) : ''}
+        </Text>
+      </View>
+      <View style={styles.rowRight}>
+        <View style={styles.pendingBadge}>
+          <Text style={styles.pendingBadgeText}>Pending</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.gradeBtn}
+          onPress={() => navigation.navigate('GradingDetail', {
+            mark_id: s.mark_id,
+            student_name: s.student_name ?? 'Student',
+            class_name,
+            answer_key_title: answer_key_title ?? '',
+          })}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.gradeBtnText}>Grade</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderGradedRow = ({ item: s }: { item: TeacherSubmission }) => (
+    <TouchableOpacity
+      style={styles.row}
+      onPress={() => navigation.navigate('GradingDetail', {
+        mark_id: s.mark_id,
+        student_name: s.student_name ?? 'Student',
+        class_name,
+        answer_key_title: answer_key_title ?? '',
+      })}
+      activeOpacity={0.7}
+    >
+      <View style={styles.rowLeft}>
+        <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
+        {isClassView && s.answer_key_title && (
+          <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
+        )}
+        <Text style={styles.submittedDate}>
+          {fmtDate(s.graded_at ?? s.submitted_at)}
+        </Text>
+      </View>
+      <View style={styles.rowRight}>
+        <Text style={[styles.score, { color: scoreColor(s.score, s.max_score) }]}>
+          {s.score ?? 0}/{s.max_score ?? '?'}
+        </Text>
+        <Text style={[styles.scorePct, { color: scoreColor(s.score, s.max_score) }]}>
+          {pct(s.score, s.max_score)}
+        </Text>
+        <View style={styles.gradedBadge}>
+          <Text style={styles.gradedBadgeText}>Graded</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const listHeader = (
+    <>
+      {/* Summary cards */}
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Text style={[styles.summaryNum, { color: COLORS.teal500 }]}>{graded.length}</Text>
+          <Text style={styles.summaryLabel}>{t('graded')}</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={[styles.summaryNum, { color: COLORS.amber500 }]}>{pending.length}</Text>
+          <Text style={styles.summaryLabel}>{t('pending')}</Text>
+        </View>
+      </View>
+
+      {/* Class stats (only when some are graded) */}
+      {avgPct != null && (
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={[styles.summaryNum, { color: scoreColor(avgPct, 100) }]}>{avgPct}%</Text>
+            <Text style={styles.summaryLabel}>{t('class_avg')}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={[styles.summaryNum, { color: scoreColor(highestPct!, 100) }]}>{highestPct}%</Text>
+            <Text style={styles.summaryLabel}>{t('highest')}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={[styles.summaryNum, { color: scoreColor(lowestPct!, 100) }]}>{lowestPct}%</Text>
+            <Text style={styles.summaryLabel}>{t('lowest')}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Grade All button */}
+      {pending.length > 1 && (
+        <View style={styles.gradeAllRow}>
+          <TouchableOpacity
+            style={[styles.gradeAllBtn, approving && styles.btnDisabled]}
+            onPress={handleApproveAll}
+            disabled={approving}
+            activeOpacity={0.8}
+          >
+            {approving
+              ? <ActivityIndicator color={COLORS.white} size="small" />
+              : <Text style={styles.gradeAllBtnText}>Grade All ({pending.length}) ✓</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Pill tabs */}
+      {submissions.length > 0 && (
+        <View style={styles.tabRow}>
+          {(['pending', 'graded'] as Tab[]).map(t => (
+            <TouchableOpacity
+              key={t}
+              style={[styles.tabPill, tab === t && styles.tabPillActive]}
+              onPress={() => setTab(t)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.tabPillText, tab === t && styles.tabPillTextActive]}>
+                {t === 'pending' ? `Pending (${pending.length})` : `Graded (${graded.length})`}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </>
+  );
+
+  const emptyComponent = (
+    <View style={styles.empty}>
+      {tab === 'pending' ? (
+        <>
+          <Ionicons name="checkmark-circle-outline" size={40} color={COLORS.teal500} />
+          <Text style={[styles.emptyText, { color: COLORS.teal500, marginTop: 10 }]}>
+            All submissions graded
+          </Text>
+        </>
+      ) : (
+        <>
+          <Ionicons name="time-outline" size={40} color={COLORS.gray400} />
+          <Text style={[styles.emptyText, { marginTop: 10 }]}>
+            No graded submissions yet
+          </Text>
+        </>
+      )}
+    </View>
+  );
+
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+    <View style={styles.flex}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -144,146 +328,38 @@ export default function GradingResultsScreen() {
         <View style={styles.centre}>
           <ActivityIndicator size="large" color={COLORS.teal500} />
         </View>
+      ) : submissions.length === 0 ? (
+        <View style={styles.centre}>
+          <Ionicons name="document-outline" size={40} color={COLORS.gray500} />
+          <Text style={[styles.emptyText, { marginTop: 12 }]}>{t('no_submissions')}</Text>
+        </View>
       ) : (
-        <>
-          {/* Summary row */}
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryNum}>{graded.length}</Text>
-              <Text style={styles.summaryLabel}>{t('graded')}</Text>
-            </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryNum}>{pending.length}</Text>
-              <Text style={styles.summaryLabel}>{t('pending')}</Text>
-            </View>
-          </View>
-          {avgPct != null && (
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryCard}>
-                <Text style={[styles.summaryNum, { color: scoreColor(avgPct, 100) }]}>
-                  {avgPct}%
-                </Text>
-                <Text style={styles.summaryLabel}>{t('class_avg')}</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={[styles.summaryNum, { color: scoreColor(highestPct!, 100) }]}>
-                  {highestPct}%
-                </Text>
-                <Text style={styles.summaryLabel}>{t('highest')}</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={[styles.summaryNum, { color: scoreColor(lowestPct!, 100) }]}>
-                  {lowestPct}%
-                </Text>
-                <Text style={styles.summaryLabel}>{t('lowest')}</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Approve all button */}
-          {pending.length > 0 && (
-            <View style={styles.approveAllRow}>
-              <TouchableOpacity
-                style={[styles.approveAllBtn, approving && styles.btnDisabled]}
-                onPress={handleApproveAll}
-                disabled={approving}
-                activeOpacity={0.8}
-              >
-                {approving
-                  ? <ActivityIndicator color={COLORS.white} size="small" />
-                  : <Text style={styles.approveAllBtnText}>Approve All ({pending.length}) ✓</Text>
-                }
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Graded submissions */}
-          {graded.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{t('graded')}</Text>
-              {graded.map(s => (
-                <TouchableOpacity
-                  key={s.id}
-                  style={styles.row}
-                  onPress={() => navigation.navigate('GradingDetail', {
-                    mark_id: s.mark_id,
-                    student_name: s.student_name ?? 'Student',
-                    class_name,
-                    answer_key_title,
-                  })}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.rowLeft}>
-                    <View style={styles.nameRow}>
-                      <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
-                      {hasAnyFeedback(s) && (
-                        <Ionicons name="chatbubble-outline" size={13} color={COLORS.gray500} />
-                      )}
-                    </View>
-                    {isClassView && s.answer_key_title && (
-                      <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
-                    )}
-                    <Text style={styles.submittedDate}>{fmtDate(s.submitted_at)}</Text>
-                  </View>
-                  <View style={styles.rowRight}>
-                    <Text style={[styles.score, { color: scoreColor(s.score, s.max_score) }]}>
-                      {s.score ?? 0}/{s.max_score ?? '?'}
-                    </Text>
-                    <Text style={[styles.scorePct, { color: scoreColor(s.score, s.max_score) }]}>
-                      {pct(s.score, s.max_score)}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {/* Pending submissions */}
-          {pending.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{t('pending')}</Text>
-              {pending.map(s => (
-                <TouchableOpacity
-                  key={s.id}
-                  style={styles.row}
-                  onPress={() => navigation.navigate('GradingDetail', {
-                    mark_id: s.mark_id,
-                    student_name: s.student_name ?? 'Student',
-                    class_name,
-                    answer_key_title,
-                  })}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.rowLeft}>
-                    <Text style={styles.studentName}>{s.student_name ?? 'Student'}</Text>
-                    {isClassView && s.answer_key_title && (
-                      <Text style={styles.homeworkLabel}>{s.answer_key_title}</Text>
-                    )}
-                    <Text style={styles.submittedDate}>{fmtDate(s.submitted_at)}</Text>
-                  </View>
-                  <View style={[styles.pendingBadge]}>
-                    <Text style={styles.pendingBadgeText}>{t('awaiting_grade')}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {submissions.length === 0 && (
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>{t('no_submissions')}</Text>
-            </View>
-          )}
-        </>
+        <FlatList
+          data={visibleList}
+          keyExtractor={item => item.id}
+          renderItem={tab === 'pending' ? renderPendingRow : renderGradedRow}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={emptyComponent}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={COLORS.teal500}
+              colors={[COLORS.teal500]}
+            />
+          }
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+        />
       )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: COLORS.background },
-  content: { paddingBottom: 60 },
-  centre: { paddingTop: 60, alignItems: 'center' },
+  flex: { flex: 1, backgroundColor: COLORS.background },
+  centre: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 40 },
+  listContent: { paddingBottom: 60 },
 
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
@@ -294,9 +370,8 @@ const styles = StyleSheet.create({
   heading: { fontSize: 20, fontWeight: 'bold', color: COLORS.text },
   subheading: { fontSize: 13, color: COLORS.gray500, marginTop: 2 },
 
-  summaryRow: {
-    flexDirection: 'row', gap: 12, padding: 16,
-  },
+  // ── Summary cards ─────────────────────────────────────────────────────────
+  summaryRow: { flexDirection: 'row', gap: 12, padding: 16 },
   summaryCard: {
     flex: 1, backgroundColor: COLORS.white, borderRadius: 12,
     padding: 14, alignItems: 'center',
@@ -306,44 +381,65 @@ const styles = StyleSheet.create({
   summaryNum: { fontSize: 24, fontWeight: 'bold', color: COLORS.teal500 },
   summaryLabel: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
 
-  section: {
-    backgroundColor: COLORS.white, marginHorizontal: 16, marginBottom: 12,
-    borderRadius: 12, padding: 16,
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  // ── Grade All ─────────────────────────────────────────────────────────────
+  gradeAllRow: { paddingHorizontal: 16, paddingBottom: 4 },
+  gradeAllBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
   },
-  sectionTitle: {
-    fontSize: 12, fontWeight: '700', color: COLORS.gray500,
-    textTransform: 'uppercase', marginBottom: 12,
-  },
+  gradeAllBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 15 },
+  btnDisabled: { opacity: 0.5 },
 
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  tabRow: {
+    flexDirection: 'row', gap: 10,
+    paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12,
+  },
+  tabPill: {
+    flex: 1, paddingVertical: 9, borderRadius: 20,
+    backgroundColor: COLORS.gray50, alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  tabPillActive: {
+    backgroundColor: COLORS.teal500, borderColor: COLORS.teal500,
+  },
+  tabPillText: { fontSize: 13, fontWeight: '600', color: COLORS.gray500 },
+  tabPillTextActive: { color: COLORS.white },
+
+  // ── Row ───────────────────────────────────────────────────────────────────
   row: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.background,
+    paddingVertical: 12, paddingHorizontal: 16,
+    backgroundColor: COLORS.white,
   },
+  separator: { height: 1, backgroundColor: COLORS.background },
   rowLeft: { flex: 1 },
-  rowRight: { alignItems: 'flex-end' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowRight: { alignItems: 'flex-end', gap: 4 },
   studentName: { fontSize: 15, fontWeight: '600', color: COLORS.text },
   homeworkLabel: { fontSize: 12, color: COLORS.teal500, fontWeight: '600', marginTop: 1 },
   submittedDate: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
   score: { fontSize: 16, fontWeight: 'bold' },
-  scorePct: { fontSize: 12, marginTop: 2 },
+  scorePct: { fontSize: 12 },
 
   pendingBadge: {
     backgroundColor: COLORS.amber50, borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 4,
+    paddingHorizontal: 8, paddingVertical: 3,
   },
-  pendingBadgeText: { fontSize: 12, color: COLORS.amber700, fontWeight: '600' },
+  pendingBadgeText: { fontSize: 11, color: COLORS.amber700, fontWeight: '600' },
 
-  empty: { alignItems: 'center', paddingTop: 48 },
+  gradedBadge: {
+    backgroundColor: COLORS.teal50, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  gradedBadgeText: { fontSize: 11, color: COLORS.teal500, fontWeight: '600' },
+
+  gradeBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  gradeBtnText: { fontSize: 12, color: COLORS.white, fontWeight: '700' },
+
+  // ── Empty ─────────────────────────────────────────────────────────────────
+  empty: { alignItems: 'center', paddingTop: 48, paddingBottom: 24 },
   emptyText: { fontSize: 14, color: COLORS.gray500 },
-
-  approveAllRow: { paddingHorizontal: 16, paddingBottom: 4 },
-  approveAllBtn: {
-    backgroundColor: COLORS.teal500, borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center',
-  },
-  approveAllBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 15 },
-  btnDisabled: { opacity: 0.5 },
 });

@@ -643,6 +643,7 @@ export const getTeacherSubmissions = async (params?: {
   status?: 'pending' | 'graded';
   class_id?: string;
   teacher_id?: string;
+  answer_key_id?: string;
 }): Promise<TeacherSubmission[]> => {
   const res: AxiosResponse<TeacherSubmission[]> = await client.get('/submissions', { params });
   return res.data;

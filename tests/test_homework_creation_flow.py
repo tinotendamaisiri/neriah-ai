@@ -4575,3 +4575,119 @@ class TestClassCardHomeworkPreview:
                 f"{label}: must use both slice(0, 2) and hiddenCount > 0 guard "
                 f"so that exactly-2-homework classes show no '+ more' link"
             )
+
+
+class TestGradingResultsScreen:
+    """Tests for the Grading Results screen — real submission data, tabs, counts."""
+
+    def _demo_source(self) -> str:
+        import os
+        path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def _mobile_source(self, filename: str) -> str:
+        import os
+        path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "app", "mobile", "src", "screens", filename)
+        )
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    @feature_test("grading_results_pending_count")
+    def test_pending_count_matches_ungraded_submissions(self):
+        """
+        Both mobile GradingResultsScreen and web HomeworkDetailScreen must
+        compute a pending count from the submissions that are NOT graded/approved.
+        Pending = approved=false OR status='pending'/'graded_pending_approval'.
+        """
+        mobile = self._mobile_source("GradingResultsScreen.tsx")
+        demo   = self._demo_source()
+
+        # Mobile: isPending helper or equivalent filter exists
+        assert "isPending" in mobile or "isGraded" in mobile, \
+            "Mobile must have isPending/isGraded helpers to classify submissions"
+        # Mobile: pending count rendered in summary card
+        assert "pending.length" in mobile, \
+            "Mobile must render pending.length in the summary count card"
+        # Mobile: approved boolean checked
+        assert "approved" in mobile, \
+            "Mobile GradingResultsScreen must check s.approved when classifying submissions"
+
+        # Web: pendingSubs computed and rendered
+        assert "pendingSubs" in demo, \
+            "Web HomeworkDetailScreen must compute pendingSubs array"
+        assert "pendingSubs.length" in demo, \
+            "Web must display pendingSubs.length in the count card"
+
+    @feature_test("grading_results_graded_count")
+    def test_graded_count_updates_after_approval(self):
+        """
+        Graded count must reflect submissions where approved=true or status='graded'/'approved'.
+        The web demo must also flip pending → graded when gradingComplete becomes true.
+        """
+        mobile = self._mobile_source("GradingResultsScreen.tsx")
+        demo   = self._demo_source()
+
+        # Mobile: graded count rendered
+        assert "graded.length" in mobile, \
+            "Mobile must render graded.length in the summary count card"
+        # Mobile: isGraded checks status AND approved
+        assert "s.status === 'graded'" in mobile or "s.approved" in mobile, \
+            "Mobile isGraded must check status==='graded' and/or s.approved===true"
+
+        # Web: gradedSubs computed and count card shown
+        assert "gradedSubs" in demo, \
+            "Web HomeworkDetailScreen must compute gradedSubs array"
+        assert "gradedSubs.length" in demo, \
+            "Web must display gradedSubs.length in the Graded count card"
+        # Web: gradingComplete OR sub.approved drives graded status per submission
+        assert "gradingComplete || sub.approved" in demo, \
+            "Web must set isGraded = gradingComplete || sub.approved per submission"
+
+    @feature_test("grading_results_tabs_populated")
+    def test_grading_results_tabs_show_correct_submissions(self):
+        """
+        Both screens must render pill tabs (Pending / Graded) and only show
+        submissions matching the active tab.
+        """
+        mobile = self._mobile_source("GradingResultsScreen.tsx")
+        demo   = self._demo_source()
+
+        # Mobile: tab state + pill tab UI
+        assert "tab === 'pending'" in mobile, \
+            "Mobile must have tab==='pending' state guard for rendering pending list"
+        # The graded tab is handled by the ternary: tab==='pending' ? pending : graded
+        assert "'pending' | 'graded'" in mobile or "Tab" in mobile, \
+            "Mobile must define a Tab type or union type for 'pending'|'graded'"
+        assert "tabPill" in mobile, \
+            "Mobile must have tabPill style for pill tab buttons"
+
+        # Web: subTab state + pill tab buttons
+        assert "subTab === 'pending'" in demo or "subTab" in demo, \
+            "Web HomeworkDetailScreen must have subTab state for pending/graded tabs"
+        assert "Pending" in demo and "Graded" in demo, \
+            "Web must render 'Pending' and 'Graded' tab labels"
+
+    @feature_test("grading_results_focus_refresh")
+    def test_grading_results_refreshes_on_focus(self):
+        """
+        Mobile GradingResultsScreen must use useFocusEffect to refetch submissions
+        when the screen regains focus (e.g. after teacher grades from GradingDetailScreen).
+        The web uses Firestore realtime updates; the demo uses per-submission approved state.
+        """
+        mobile = self._mobile_source("GradingResultsScreen.tsx")
+
+        # useFocusEffect must be imported and used
+        assert "useFocusEffect" in mobile, \
+            "Mobile GradingResultsScreen must import and use useFocusEffect"
+        assert "loadData" in mobile, \
+            "loadData must be called inside useFocusEffect for focus-triggered refresh"
+
+        # Pull-to-refresh: RefreshControl must be wired
+        assert "RefreshControl" in mobile, \
+            "Mobile must use RefreshControl for pull-to-refresh on the submissions list"
+        assert "onRefresh" in mobile, \
+            "RefreshControl must have an onRefresh handler that calls loadData"

@@ -4000,6 +4000,7 @@ function HomeworkDetailScreen({
   const [toggling, setToggling] = useState(false);
   const [regen, setRegen]       = useState(false);
   const [hwToast, setHwToast]   = useState('');
+  const [subTab, setSubTab]     = useState<'pending' | 'graded'>('pending');
 
   // Inline question editing
   const [editingQIdx, setEditingQIdx]   = useState<number | null>(null);
@@ -4079,14 +4080,16 @@ function HomeworkDetailScreen({
     5: { question_text: 'Probability of drawing red (3 red, 7 blue marbles)',     correct_answer: '3/10'    },
   };
 
-  // Submissions — demo list sorted earliest first
+  // Submissions — demo list sorted earliest first.
+  // approved: true = graded, false = awaiting grade.
+  // First 2 pre-approved so the screen shows real Graded/Pending split on load.
   const DEMO_SUBMISSIONS: Array<{
     name: string; submittedAt: string; grade: StudentGrade;
-    submissionId: string; verdicts: DemoVerdict[];
+    submissionId: string; verdicts: DemoVerdict[]; approved: boolean;
   }> = [
     {
       name: 'Tendai Moyo', submittedAt: '2026-04-13T08:00:00Z',
-      grade: DEMO_GRADES[0], submissionId: 'sub-s1',
+      grade: DEMO_GRADES[0], submissionId: 'sub-s1', approved: true,
       verdicts: [
         { question_number: 1, verdict: 'correct'   as const, awarded: 2, max: 2, student_answer: '2x = 11−5, 2x = 6, x = 3',   feedback: 'Full working shown — correct', ...Q_META[1] },
         { question_number: 2, verdict: 'correct'   as const, awarded: 2, max: 2, student_answer: '15/100 × 200 = 30',           feedback: 'Correct method and answer',    ...Q_META[2] },
@@ -4097,7 +4100,7 @@ function HomeworkDetailScreen({
     },
     {
       name: 'Chipo Dube', submittedAt: '2026-04-13T08:14:00Z',
-      grade: DEMO_GRADES[1], submissionId: 'sub-s2',
+      grade: DEMO_GRADES[1], submissionId: 'sub-s2', approved: false,
       verdicts: [
         { question_number: 1, verdict: 'correct'   as const, awarded: 2, max: 2, student_answer: 'x = 3',             feedback: 'Correct', ...Q_META[1] },
         { question_number: 2, verdict: 'partial'   as const, awarded: 1, max: 2, student_answer: '0.15 × 200 = 30',   feedback: 'Method mark awarded; accuracy mark lost on write-up', ...Q_META[2] },
@@ -4108,7 +4111,7 @@ function HomeworkDetailScreen({
     },
     {
       name: 'Takudzwa Ncube', submittedAt: '2026-04-13T09:01:00Z',
-      grade: DEMO_GRADES[2], submissionId: 'sub-s3',
+      grade: DEMO_GRADES[2], submissionId: 'sub-s3', approved: false,
       verdicts: [
         { question_number: 1, verdict: 'correct'   as const, awarded: 2, max: 2, student_answer: 'x = 3',    feedback: 'Correct', ...Q_META[1] },
         { question_number: 2, verdict: 'incorrect' as const, awarded: 0, max: 2, student_answer: '0.15%',    feedback: 'Incorrect — percentage symbol misapplied', ...Q_META[2] },
@@ -4265,133 +4268,200 @@ function HomeworkDetailScreen({
         </div>
 
         {/* SUBMISSIONS section */}
-        <div style={{
-          background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
-          overflow: 'hidden', marginBottom: 12,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-        }}>
-          {/* Section header: SUBMISSIONS + open/closed toggle */}
-          <div style={{
-            padding: '11px 16px', borderBottom: `1px solid ${C.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: C.g700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Submissions ({DEMO_SUBMISSIONS.length})
-            </span>
-            {/* Open / Closed toggle */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: isOpen ? C.teal : C.g500, fontWeight: 600 }}>
-                {isOpen ? 'Open' : 'Closed'}
-              </span>
-              <button
-                onClick={handleToggle}
-                disabled={toggling}
-                aria-label={isOpen ? 'Close submissions' : 'Open submissions'}
-                style={{
-                  flexShrink: 0, width: 40, height: 22, borderRadius: 11,
-                  background: isOpen ? C.teal : C.g200, border: 'none',
-                  cursor: toggling ? 'not-allowed' : 'pointer',
-                  position: 'relative', transition: 'background 0.2s', padding: 0,
-                }}
-              >
-                <div style={{
-                  position: 'absolute', top: 3,
-                  left: isOpen ? 21 : 3,
-                  width: 16, height: 16, borderRadius: 8,
-                  background: C.white, transition: 'left 0.2s',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-                }} />
-              </button>
-            </div>
-          </div>
+        {(() => {
+          // Per-submission graded status: approved in data OR all graded after Grade All
+          const subsWithStatus = DEMO_SUBMISSIONS.map(sub => ({
+            ...sub,
+            isGraded: gradingComplete || sub.approved,
+          }));
+          const gradedSubs  = subsWithStatus.filter(s => s.isGraded);
+          const pendingSubs = subsWithStatus.filter(s => !s.isGraded);
+          const visibleSubs = subTab === 'graded' ? gradedSubs : pendingSubs;
 
-          {/* Grade All button — only shown when an answer key with questions is confirmed */}
-          {hw.answer_key_id && questions.length > 0 && (
-            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
-              <button
-                onClick={onGradeAll}
-                style={{
-                  width: '100%', background: C.teal, border: 'none', borderRadius: 9, padding: '11px 0',
-                  cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  boxShadow: '0 3px 10px rgba(13,115,119,0.25)', transition: 'opacity 0.15s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-                onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-              >
-                <Sparkles size={13} /> Grade All with AI
-              </button>
-            </div>
-          )}
-
-          {/* Submissions list — sorted earliest first */}
-          {DEMO_SUBMISSIONS.length === 0 ? (
-            <div style={{ padding: '24px 16px', textAlign: 'center', color: C.g500, fontSize: 13 }}>
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><Inbox size={24} color={C.g400} /></div>
-              No submissions yet
-            </div>
-          ) : (
-            DEMO_SUBMISSIONS.map((sub, i) => {
-              const isGraded = gradingComplete;
-              const grade = sub.grade;
-              return (
-                <button
-                  key={sub.submissionId}
-                  onClick={isGraded ? () => onViewSubmission({
-                    submissionId: sub.submissionId,
-                    studentName:  sub.name,
-                    submittedAt:  sub.submittedAt,
-                    grade:        sub.grade,
-                    verdicts:     sub.verdicts,
-                  }) : undefined}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 10,
-                    borderBottom: i < DEMO_SUBMISSIONS.length - 1 ? `1px solid ${C.g100}` : 'none',
-                    background: 'none', border: 'none', textAlign: 'left', fontFamily: 'inherit',
-                    cursor: isGraded ? 'pointer' : 'default',
-                    transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={e => { if (isGraded) e.currentTarget.style.background = C.g50; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-                >
-                  <div style={{
-                    width: 32, height: 32, borderRadius: 16, background: C.teal50,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 700, color: C.teal, flexShrink: 0,
-                  }}>
-                    {sub.name.charAt(0)}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{sub.name}</div>
-                    <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>
-                      {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      {isGraded ? ' · Graded' : ' · Awaiting grade'}
-                    </div>
-                  </div>
-                  {isGraded ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <div style={{
-                        background: scoreBg(grade.percentage), color: scoreColor(grade.percentage),
-                        fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 6,
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {grade.score} / {grade.max_score}
-                      </div>
-                      <span style={{ fontSize: 14, color: C.g400 }}>›</span>
-                    </div>
-                  ) : (
+          return (
+            <div style={{
+              background: C.white, borderRadius: 12, border: `1px solid ${C.border}`,
+              overflow: 'hidden', marginBottom: 12,
+              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            }}>
+              {/* Section header: SUBMISSIONS + open/closed toggle */}
+              <div style={{
+                padding: '11px 16px', borderBottom: `1px solid ${C.border}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: C.g700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                  Submissions ({DEMO_SUBMISSIONS.length})
+                </span>
+                {/* Open / Closed toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: isOpen ? C.teal : C.g500, fontWeight: 600 }}>
+                    {isOpen ? 'Open' : 'Closed'}
+                  </span>
+                  <button
+                    onClick={handleToggle}
+                    disabled={toggling}
+                    aria-label={isOpen ? 'Close submissions' : 'Open submissions'}
+                    style={{
+                      flexShrink: 0, width: 40, height: 22, borderRadius: 11,
+                      background: isOpen ? C.teal : C.g200, border: 'none',
+                      cursor: toggling ? 'not-allowed' : 'pointer',
+                      position: 'relative', transition: 'background 0.2s', padding: 0,
+                    }}
+                  >
                     <div style={{
-                      background: C.amber50, color: C.amber700,
-                      fontSize: 11, fontWeight: 700, paddingInline: 7, paddingBlock: 4, borderRadius: 6,
-                    }}>
-                      Pending
-                    </div>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
+                      position: 'absolute', top: 3,
+                      left: isOpen ? 21 : 3,
+                      width: 16, height: 16, borderRadius: 8,
+                      background: C.white, transition: 'left 0.2s',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                    }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Count cards: Graded + Pending */}
+              <div style={{ display: 'flex', gap: 10, padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+                <div style={{
+                  flex: 1, background: C.gradedBg, borderRadius: 10, padding: '9px 12px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.greenDk }}>{gradedSubs.length}</div>
+                  <div style={{ fontSize: 11, color: C.greenDk, fontWeight: 600 }}>Graded</div>
+                </div>
+                <div style={{
+                  flex: 1, background: C.pendingBg, borderRadius: 10, padding: '9px 12px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.amberText }}>{pendingSubs.length}</div>
+                  <div style={{ fontSize: 11, color: C.amberText, fontWeight: 600 }}>Pending</div>
+                </div>
+              </div>
+
+              {/* Grade All button — shown when pending > 0 and answer key confirmed */}
+              {hw.answer_key_id && questions.length > 0 && pendingSubs.length > 0 && (
+                <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+                  <button
+                    onClick={onGradeAll}
+                    style={{
+                      width: '100%', background: C.teal, border: 'none', borderRadius: 9, padding: '11px 0',
+                      cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      boxShadow: '0 3px 10px rgba(13,115,119,0.25)', transition: 'opacity 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+                  >
+                    <Sparkles size={13} /> Grade All with AI ({pendingSubs.length})
+                  </button>
+                </div>
+              )}
+
+              {/* Pill tabs: Pending / Graded */}
+              {DEMO_SUBMISSIONS.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+                  {(['pending', 'graded'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setSubTab(t)}
+                      style={{
+                        flex: 1, padding: '7px 0', borderRadius: 20, border: 'none',
+                        background: subTab === t ? C.teal : C.g100,
+                        color: subTab === t ? C.white : C.g500,
+                        fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                        transition: 'background 0.15s, color 0.15s',
+                      }}
+                    >
+                      {t === 'pending' ? `Pending (${pendingSubs.length})` : `Graded (${gradedSubs.length})`}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Submission rows for active tab */}
+              {DEMO_SUBMISSIONS.length === 0 ? (
+                <div style={{ padding: '24px 16px', textAlign: 'center', color: C.g500, fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><Inbox size={24} color={C.g400} /></div>
+                  No submissions yet
+                </div>
+              ) : visibleSubs.length === 0 ? (
+                <div style={{ padding: '24px 16px', textAlign: 'center', color: C.g500, fontSize: 13 }}>
+                  {subTab === 'pending'
+                    ? '✓ All submissions graded'
+                    : 'No graded submissions yet'}
+                </div>
+              ) : (
+                visibleSubs.map((sub, i) => {
+                  const grade = sub.grade;
+                  return (
+                    <button
+                      key={sub.submissionId}
+                      onClick={sub.isGraded ? () => onViewSubmission({
+                        submissionId: sub.submissionId,
+                        studentName:  sub.name,
+                        submittedAt:  sub.submittedAt,
+                        grade:        sub.grade,
+                        verdicts:     sub.verdicts,
+                      }) : undefined}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 10,
+                        borderBottom: i < visibleSubs.length - 1 ? `1px solid ${C.g100}` : 'none',
+                        background: 'none', border: 'none', textAlign: 'left', fontFamily: 'inherit',
+                        cursor: sub.isGraded ? 'pointer' : 'default',
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => { if (sub.isGraded) e.currentTarget.style.background = C.g50; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                    >
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 16, background: C.teal50,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 13, fontWeight: 700, color: C.teal, flexShrink: 0,
+                      }}>
+                        {sub.name.charAt(0)}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{sub.name}</div>
+                        <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>
+                          {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {sub.isGraded ? ' · Graded' : ' · Awaiting grade'}
+                        </div>
+                      </div>
+                      {sub.isGraded ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{
+                            background: scoreBg(grade.percentage), color: scoreColor(grade.percentage),
+                            fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 6,
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {grade.score} / {grade.max_score}
+                          </div>
+                          <span style={{ fontSize: 14, color: C.g400 }}>›</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{
+                            background: C.amber50, color: C.amber700,
+                            fontSize: 11, fontWeight: 700, paddingInline: 7, paddingBlock: 4, borderRadius: 6,
+                          }}>
+                            Pending
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); onGradeAll(); }}
+                            style={{
+                              background: C.teal, border: 'none', borderRadius: 7,
+                              paddingInline: 9, paddingBlock: 4, cursor: 'pointer',
+                              color: C.white, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+                            }}
+                          >
+                            Grade
+                          </button>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          );
+        })()}
       </div>
       {hwToast && <Toast message={hwToast} onDone={() => setHwToast('')} />}
     </Screen>
