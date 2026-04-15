@@ -6722,3 +6722,123 @@ class TestHomeworkDrillDown:
         body = rv.get_json()
         assert "has_data" in body
         assert "student" in body
+
+
+# ── classes_by_school ──────────────────────────────────────────────────────────
+
+SCHOOL_ID   = "school-chiredzi-001"
+TEACHER_ID2 = "teacher-chiredzi-001"
+
+_TEACHER_AT_SCHOOL = {
+    "id": TEACHER_ID2,
+    "first_name": "Tatenda",
+    "surname": "Moyo",
+    "school_id": SCHOOL_ID,
+}
+
+_CLASS_AT_SCHOOL_1 = {
+    "id": "class-chiredzi-001",
+    "teacher_id": TEACHER_ID2,
+    "name": "Form 2A",
+    "education_level": "form_2",
+    "school_id": SCHOOL_ID,
+    "subject": "Mathematics",
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+_CLASS_AT_SCHOOL_2 = {
+    "id": "class-chiredzi-002",
+    "teacher_id": TEACHER_ID2,
+    "name": "Form 3B",
+    "education_level": "form_3",
+    "school_id": SCHOOL_ID,
+    "subject": "Science",
+    "created_at": "2026-01-02T00:00:00Z",
+}
+
+
+class TestClassesBySchool:
+    """Tests for GET /api/classes/school/<school_id> — student registration class list."""
+
+    @feature_test("classes_by_school_found")
+    def test_classes_by_school_returns_classes(self, client):
+        """Returns all classes for a school with teacher names attached."""
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "classes":
+                return [_CLASS_AT_SCHOOL_1, _CLASS_AT_SCHOOL_2]
+            return []
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "teachers" and doc_id == TEACHER_ID2:
+                return _TEACHER_AT_SCHOOL
+            return None
+
+        with patch("functions.classes.query", side_effect=fake_query), \
+             patch("functions.classes.get_doc", side_effect=fake_get_doc):
+            rv = client.get(f"/api/classes/school/{SCHOOL_ID}")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert isinstance(data, list)
+        assert len(data) == 2
+        names = {c["name"] for c in data}
+        assert names == {"Form 2A", "Form 3B"}
+        # Teacher name is attached
+        assert data[0]["teacher"]["first_name"] == "Tatenda"
+        assert data[0]["teacher"]["surname"] == "Moyo"
+        # Each class has required fields
+        for c in data:
+            assert "id" in c
+            assert "name" in c
+            assert "education_level" in c
+            assert "teacher" in c
+
+    @feature_test("classes_by_school_fallback_via_teacher")
+    def test_classes_by_school_fallback_when_no_school_id_on_class(self, client):
+        """Fallback: if classes have no school_id field, find via teacher lookup."""
+        # Old-style classes: no school_id field stored on them
+        old_class = {k: v for k, v in _CLASS_AT_SCHOOL_1.items() if k != "school_id"}
+
+        call_count = {"n": 0}
+
+        def fake_query(collection, filters=None, **kwargs):
+            filt = filters or []
+            if collection == "classes":
+                # First call: school_id == SCHOOL_ID → no results (old classes have no field)
+                if any(f[0] == "school_id" for f in filt):
+                    return []
+                # Second call: teacher_id == TEACHER_ID2 → return old class
+                if any(f[0] == "teacher_id" for f in filt):
+                    return [old_class]
+                return []
+            if collection == "teachers":
+                # Fallback teacher lookup
+                return [_TEACHER_AT_SCHOOL]
+            return []
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "teachers" and doc_id == TEACHER_ID2:
+                return _TEACHER_AT_SCHOOL
+            return None
+
+        with patch("functions.classes.query", side_effect=fake_query), \
+             patch("functions.classes.get_doc", side_effect=fake_get_doc):
+            rv = client.get(f"/api/classes/school/{SCHOOL_ID}")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Form 2A"
+
+    @feature_test("classes_by_school_not_found")
+    def test_classes_by_school_empty(self, client):
+        """Returns 200 with empty list when no classes exist for the school."""
+        def fake_query(collection, filters=None, **kwargs):
+            return []
+
+        with patch("functions.classes.query", side_effect=fake_query):
+            rv = client.get("/api/classes/school/nonexistent-school-999")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert data == []

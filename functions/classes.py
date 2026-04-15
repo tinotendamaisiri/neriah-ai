@@ -40,7 +40,12 @@ def create_class():
     if not name or not education_level:
         return jsonify({"error": "name and education_level are required"}), 400
 
-    cls = Class(teacher_id=teacher_id, name=name, education_level=education_level, curriculum=curriculum)
+    # Fetch teacher's school_id so the class can be found via /classes/school/<school_id>
+    teacher_doc = get_doc("teachers", teacher_id)
+    school_id = (teacher_doc or {}).get("school_id") or None
+
+    cls = Class(teacher_id=teacher_id, name=name, education_level=education_level,
+                curriculum=curriculum, school_id=school_id)
     upsert("classes", cls.id, cls.model_dump())
     return jsonify(cls.model_dump()), 201
 
@@ -90,16 +95,39 @@ def classes_by_school(school_id: str):
     if not school_id or not school_id.strip():
         return jsonify({"error": "school_id is required"}), 400
 
-    results = query("classes", [("school_id", "==", school_id.strip())], order_by="created_at")
+    sid = school_id.strip()
+    results = query("classes", [("school_id", "==", sid)], order_by="created_at")
+
     if not results:
-        logger.info("[classes] No classes found for school_id=%s", school_id)
+        # Fallback: find teachers at this school, then fetch their classes.
+        # This covers classes created before school_id was stamped on the class document.
+        teachers_at_school = query("teachers", [("school_id", "==", sid)])
+        for t in teachers_at_school:
+            teacher_classes = query("classes", [("teacher_id", "==", t["id"])], order_by="created_at")
+            results.extend(teacher_classes)
+
+    if not results:
+        logger.info("[classes] No classes found for school_id=%s", sid)
         return jsonify([]), 200
 
+    # Deduplicate (a class might appear twice if school_id field was already set)
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for c in results:
+        cid = c.get("id", "")
+        if cid not in seen:
+            seen.add(cid)
+            unique.append(c)
+    results = unique
+
     # Attach teacher name to each class so the mobile UI can display it
+    teacher_cache: dict[str, dict | None] = {}
     out = []
     for cls in results:
         teacher_id = cls.get("teacher_id", "")
-        teacher = get_doc("teachers", teacher_id) if teacher_id else None
+        if teacher_id not in teacher_cache:
+            teacher_cache[teacher_id] = get_doc("teachers", teacher_id) if teacher_id else None
+        teacher = teacher_cache[teacher_id]
         out.append({
             "id": cls["id"],
             "name": cls.get("name", ""),
