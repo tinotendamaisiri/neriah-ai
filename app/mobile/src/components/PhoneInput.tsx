@@ -25,7 +25,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Localization from 'expo-localization';
 import { COLORS } from '../constants/colors';
-import { COUNTRIES, Country, DEFAULT_COUNTRY_CODE } from '../constants/countries';
+import { COUNTRIES, Country, DEFAULT_COUNTRY_CODE, DEFAULT_DIGITS } from '../constants/countries';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,13 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
   const inputRef = useRef<TextInput>(null);
 
   const currentE164 = buildE164(country.dial, localNumber);
-  const showInlineError = touched && localNumber.length > 0 && !isValidE164(currentE164);
+  const expectedDigits = country.digits ?? DEFAULT_DIGITS;
+  const localDigits = localNumber.replace(/\D/g, '').replace(/^0/, '').length;
+  const showInlineError = touched && localDigits > 0 && localDigits < expectedDigits;
+  const counterColor = localDigits === 0 ? COLORS.gray500
+    : localDigits < expectedDigits ? '#F59E0B'
+    : localDigits === expectedDigits ? '#22C55E'
+    : COLORS.error;
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -152,19 +158,28 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
           onChangeText={handleLocalChange}
           onBlur={handleBlur}
           keyboardType="phone-pad"
-          placeholder="771 234 567"
+          placeholder={`${expectedDigits} digits`}
           placeholderTextColor={COLORS.gray200}
           autoCorrect={false}
           autoCapitalize="none"
           editable={!disabled}
-          maxLength={10}
+          maxLength={expectedDigits + 1}
           returnKeyType="done"
         />
       </View>
 
+      {/* Digit counter */}
+      <Text style={[styles.counter, { color: counterColor }]}>
+        {localDigits}/{expectedDigits} digits
+      </Text>
+
       {/* Inline validation error */}
       {showInlineError && (
-        <Text style={styles.inlineError}>Enter a valid phone number (7–10 digits).</Text>
+        <Text style={styles.inlineError}>
+          {localDigits < expectedDigits
+            ? `Too short — ${expectedDigits} digits required for ${country.name}`
+            : `Too long — max ${expectedDigits} digits for ${country.name}`}
+        </Text>
       )}
 
       {/* Country picker modal */}
@@ -329,8 +344,14 @@ const styles = StyleSheet.create({
     color: COLORS.gray500,
   },
 
-  inlineError: {
+  counter: {
     marginTop: 4,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+
+  inlineError: {
+    marginTop: 2,
     fontSize: 12,
     color: COLORS.error,
   },

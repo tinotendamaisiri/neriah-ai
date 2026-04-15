@@ -30,6 +30,28 @@ _IP_LIMIT = 10
 _WINDOW = 600  # 10 minutes in seconds
 
 
+import re as _re
+
+# ── Phone validation ─────────────────────────────────────────────────────────
+
+_PHONE_RE = _re.compile(r'^\+[1-9]\d{7,14}$')
+
+def _validate_phone(phone: str) -> tuple[bool, str]:
+    """Validate E.164 phone number. Returns (valid, error_message)."""
+    if not phone:
+        return False, "Phone number is required"
+    if not phone.startswith('+'):
+        return False, "Phone must include country code (e.g. +263771234567)"
+    if not _PHONE_RE.match(phone):
+        digits = _re.sub(r'\D', '', phone[1:])
+        if len(digits) < 8:
+            return False, "Phone number too short"
+        if len(digits) > 14:
+            return False, "Phone number too long"
+        return False, "Invalid phone number format"
+    return True, ""
+
+
 def _rl_headers(limit: int, remaining: int, reset_ts: float) -> dict:
     return {
         "X-RateLimit-Limit": str(limit),
@@ -143,6 +165,9 @@ def auth_register():
 
     if not phone or not name:
         return jsonify({"error": "phone and name are required"}), 400
+    phone_valid, phone_err = _validate_phone(phone)
+    if not phone_valid:
+        return jsonify({"error": phone_err}), 400
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
@@ -186,6 +211,9 @@ def auth_login():
 
     if not phone:
         return jsonify({"error": "phone is required"}), 400
+    phone_valid, phone_err = _validate_phone(phone)
+    if not phone_valid:
+        return jsonify({"error": phone_err}), 400
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
@@ -824,6 +852,9 @@ def auth_student_register():
 
     if not first_name or not surname or not phone:
         return jsonify({"error": "first_name, surname, and phone are required"}), 400
+    phone_valid, phone_err = _validate_phone(phone)
+    if not phone_valid:
+        return jsonify({"error": phone_err}), 400
     if not class_id and not class_join_code and not manual_class_name:
         return jsonify({"error": "class_id, class_join_code, or manual_class_name is required"}), 400
 

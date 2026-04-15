@@ -7311,3 +7311,56 @@ class TestStudentVerificationGates:
             rv = client.delete("/api/auth/student/target-student-001",
                 headers={"Authorization": f"Bearer {token}"})
         assert rv.status_code == 403
+
+
+# ── Phone validation ─────────────────────────────────────────────────────────
+
+class TestPhoneValidation:
+    """Tests for phone number validation on auth endpoints."""
+
+    @feature_test("phone_validation_applied_to_login")
+    def test_login_rejects_short_phone(self, client):
+        """POST /api/auth/login with too-short phone returns 400."""
+        rv = client.post("/api/auth/login", json={"phone": "+26377"})
+        assert rv.status_code == 400
+        assert "too short" in rv.get_json()["error"].lower()
+
+    @feature_test("phone_validation_applied_to_teacher_register")
+    def test_teacher_register_rejects_invalid_phone(self, client):
+        """POST /api/auth/register with invalid phone returns 400."""
+        rv = client.post("/api/auth/register", json={"phone": "+263", "name": "Test", "first_name": "T", "surname": "T"})
+        assert rv.status_code == 400
+        assert "phone" in rv.get_json()["error"].lower()
+
+    @feature_test("phone_validation_applied_to_student_register")
+    def test_student_register_rejects_invalid_phone(self, client):
+        """POST /api/auth/student/register with too-short phone returns 400."""
+        rv = client.post("/api/auth/student/register", json={
+            "first_name": "Test", "surname": "Student", "phone": "+263123",
+            "class_id": "test-cls"
+        })
+        assert rv.status_code == 400
+        assert "short" in rv.get_json()["error"].lower()
+
+    @feature_test("phone_validation_accepts_valid_zw_number")
+    def test_valid_zw_number_passes_validation(self):
+        """Zimbabwe number +263771234567 passes validation."""
+        from functions.auth import _validate_phone
+        valid, err = _validate_phone("+263771234567")
+        assert valid is True
+        assert err == ""
+
+    @feature_test("phone_validation_accepts_valid_us_number")
+    def test_valid_us_number_passes_validation(self):
+        """+12125550100 passes validation."""
+        from functions.auth import _validate_phone
+        valid, err = _validate_phone("+12125550100")
+        assert valid is True
+
+    @feature_test("phone_validation_rejects_no_plus")
+    def test_phone_without_plus_rejected(self):
+        """Phone without + prefix rejected."""
+        from functions.auth import _validate_phone
+        valid, err = _validate_phone("263771234567")
+        assert valid is False
+        assert "country code" in err.lower()
