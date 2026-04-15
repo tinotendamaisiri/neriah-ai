@@ -4,9 +4,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActionSheetIOS,
   ActivityIndicator,
-  Alert,
   Animated,
   FlatList,
   Image,
@@ -299,6 +297,7 @@ export default function TeacherAssistantScreen() {
     name: string;
     uri?: string;
   } | null>(null);
+  const [showAttachSheet, setShowAttachSheet] = useState(false);
 
   const flatRef   = useRef<FlatList<ChatMessage>>(null);
   const userId    = user?.id ?? 'unknown';
@@ -383,23 +382,8 @@ export default function TeacherAssistantScreen() {
   }, []);
 
   const openAttachPicker = useCallback(() => {
-    const options = ['Camera', 'Photo Library', 'PDF', 'Word Document', 'Cancel'];
-    const actions = [pickFromCamera, pickFromGallery, () => pickDocument('pdf'), () => pickDocument('word')];
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: 4, title: 'Attach a file' },
-        (idx) => { if (idx < 4) actions[idx](); },
-      );
-    } else {
-      Alert.alert('Attach a file', undefined, [
-        { text: 'Camera',        onPress: pickFromCamera },
-        { text: 'Photo Library', onPress: pickFromGallery },
-        { text: 'PDF',           onPress: () => pickDocument('pdf') },
-        { text: 'Word Document', onPress: () => pickDocument('word') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
-  }, [pickFromCamera, pickFromGallery, pickDocument]);
+    setShowAttachSheet(true);
+  }, []);
 
   // ── Send message ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (
@@ -778,6 +762,41 @@ export default function TeacherAssistantScreen() {
         </KeyboardAvoidingView>
       </SafeAreaView>
 
+      {/* Attach media bottom sheet */}
+      <Modal
+        visible={showAttachSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAttachSheet(false)}
+      >
+        <TouchableOpacity
+          style={s.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowAttachSheet(false)}
+        >
+          <View style={s.attachSheet} onStartShouldSetResponder={() => true}>
+            <Text style={s.attachSheetTitle}>Attach a file</Text>
+            {[
+              { icon: 'camera-outline',        label: 'Camera',        color: AI.teal, onPress: () => { setShowAttachSheet(false); pickFromCamera(); } },
+              { icon: 'image-outline',         label: 'Gallery',       color: AI.teal, onPress: () => { setShowAttachSheet(false); pickFromGallery(); } },
+              { icon: 'document-outline',      label: 'PDF',           color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('pdf'); } },
+              { icon: 'document-text-outline', label: 'Word',          color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('word'); } },
+              { icon: 'close-outline',         label: 'Cancel',        color: AI.sub,  onPress: () => setShowAttachSheet(false) },
+            ].map(({ icon, label, color, onPress }, idx, arr) => (
+              <TouchableOpacity
+                key={label}
+                style={[s.attachSheetRow, idx < arr.length - 1 && s.attachSheetRowBorder]}
+                onPress={onPress}
+                activeOpacity={0.7}
+              >
+                <Ionicons name={icon as any} size={22} color={color} />
+                <Text style={[s.attachSheetLabel, label === 'Cancel' && { color: AI.sub }]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Class picker modal */}
       <ClassPicker
         visible={showClassPicker}
@@ -935,6 +954,25 @@ const s = StyleSheet.create({
   classRowLevel: { fontSize: 12, color: AI.sub, marginTop: 2 },
   cancelBtn: { marginTop: 16, alignItems: 'center', paddingVertical: 14 },
   cancelTxt: { fontSize: 14, color: AI.sub },
+
+  // Attach media bottom sheet
+  attachSheet: {
+    backgroundColor: AI.card,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32,
+  },
+  attachSheetTitle: {
+    fontSize: 13, fontWeight: '600', color: AI.sub,
+    textAlign: 'center', marginBottom: 12, letterSpacing: 0.3,
+  },
+  attachSheetRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 16, gap: 14,
+  },
+  attachSheetRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
+  },
+  attachSheetLabel: { fontSize: 16, color: AI.text, fontWeight: '500' },
 
   // Toast
   toast: {
