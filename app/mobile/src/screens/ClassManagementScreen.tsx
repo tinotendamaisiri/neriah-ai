@@ -40,15 +40,50 @@ export default function ClassManagementScreen() {
   const load = useCallback(async (isRefresh = false) => {
     try {
       const res = await getStudentClasses();
-      setClasses(res.classes);
-      setActiveId(res.active_class_id);
-    } catch {
-      if (!isRefresh) setClasses([]);
+      console.log('[ClassManagement] response:', JSON.stringify(res));
+      if (res.classes.length > 0) {
+        setClasses(res.classes);
+        setActiveId(res.active_class_id);
+      } else if (user?.class_id) {
+        // Fallback: endpoint returned empty but user has class_id
+        console.log('[ClassManagement] fallback: fetching class_id directly:', user.class_id);
+        try {
+          const { getClassDetail } = await import('../services/api');
+          const cls = await getClassDetail(user.class_id);
+          setClasses([{
+            class_id: user.class_id,
+            name: cls.name || 'My Class',
+            subject: cls.subject || '',
+            education_level: cls.education_level || '',
+            teacher_name: '',
+            school_name: (cls as any).school_name || '',
+          }]);
+          setActiveId(user.class_id);
+        } catch { setClasses([]); }
+      }
+    } catch (err: any) {
+      console.log('[ClassManagement] error:', err?.response?.data ?? err?.message);
+      // Fallback on error: fetch the single class directly
+      if (user?.class_id) {
+        try {
+          const { getClassDetail } = await import('../services/api');
+          const cls = await getClassDetail(user.class_id);
+          setClasses([{
+            class_id: user.class_id,
+            name: cls.name || 'My Class',
+            subject: cls.subject || '',
+            education_level: cls.education_level || '',
+            teacher_name: '',
+            school_name: (cls as any).school_name || '',
+          }]);
+          setActiveId(user.class_id);
+        } catch { setClasses([]); }
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user?.class_id]);
 
   useEffect(() => { load(); }, []);
 
