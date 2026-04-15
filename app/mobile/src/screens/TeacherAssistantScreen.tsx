@@ -220,7 +220,7 @@ function TypingIndicator() {
   return (
     <View style={s.rowLeft}>
       <View style={s.avatar}>
-        <Ionicons name="sparkles" size={12} color={AI.userText} />
+        <Image source={require('../../assets/icon.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
       </View>
       <View style={s.bubbleLeft}>
         <View style={s.typingRow}>
@@ -506,7 +506,7 @@ export default function TeacherAssistantScreen() {
       <View style={isUser ? s.rowRight : s.rowLeft}>
         {!isUser && (
           <View style={s.avatar}>
-            <Ionicons name="sparkles" size={12} color={AI.userText} />
+            <Image source={require('../../assets/icon.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
           </View>
         )}
         <View style={{ maxWidth: '80%' }}>

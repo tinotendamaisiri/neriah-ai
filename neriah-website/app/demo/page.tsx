@@ -3548,7 +3548,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                 {msg.role === 'assistant' && (
                   <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
-                    <Sparkles size={12} color={C.white} />
+                    <img src="/icon.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
                   </div>
                 )}
                 <div style={{ background: msg.role === 'user' ? C.teal : C.white,
@@ -3620,7 +3620,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Sparkles size={12} color={C.white} />
+                <img src="/icon.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
               </div>
               <div style={{ background: C.white, border: `1px solid ${C.g200}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
                 {[0,1,2].map(i => (
@@ -5644,7 +5644,7 @@ function StudentTutorScreen({
             <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
               {!isUser && (
                 <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-                  <Bot size={13} color={C.white} />
+                  <img src="/icon.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
                 </div>
               )}
               <div style={{
@@ -5681,7 +5681,7 @@ function StudentTutorScreen({
         {typing && (
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
             <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-              <Bot size={13} color={C.white} />
+              <img src="/icon.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
             </div>
             <div style={{
               background: C.white, borderRadius: '14px 14px 14px 4px', padding: '10px 14px',
