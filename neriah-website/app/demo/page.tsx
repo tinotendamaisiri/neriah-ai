@@ -7129,34 +7129,36 @@ function PhoneFrame({ label, labelColor = C.teal, children, showAIStatus }: Phon
         background: C.white, boxShadow: '0 8px 40px rgba(13,115,119,0.10), 0 2px 8px rgba(0,0,0,0.07)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
       }}>
-        {/* Status bar */}
+        {/* Status bar — white with centered dark Dynamic Island pill */}
         <div style={{
-          height: 36, background: C.teal, flexShrink: 0,
-          display: 'flex', alignItems: 'center',
-          justifyContent: showAIStatus ? 'space-between' : 'center',
-          paddingInline: showAIStatus ? '12px' : 0,
+          height: 36, background: C.white, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          {/* Notch pill */}
-          <div style={{ width: 72, height: 9, borderRadius: 5, background: 'rgba(255,255,255,0.22)' }} />
-          {/* AI status indicator — web is always cloud */}
-          {showAIStatus && (
+          <div style={{ width: 72, height: 9, borderRadius: 5, background: C.darkBg }} />
+        </div>
+        {/* Cloud AI status — just below the notch, inside the screen content area */}
+        {showAIStatus && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+            paddingInline: 12, paddingBlock: 3, background: C.white, flexShrink: 0,
+          }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 4,
-              background: 'rgba(255,255,255,0.15)', borderRadius: 8,
+              background: C.tealLt, borderRadius: 8,
               paddingInline: 7, paddingBlock: 3,
             }}>
               <div style={{
                 width: 6, height: 6, borderRadius: 3,
-                background: C.blue400, /* blue-400 — visible on teal */
+                background: C.blue400,
                 boxShadow: '0 0 4px rgba(96,165,250,0.7)',
               }} />
               <span style={{
-                fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.92)',
+                fontSize: 11, fontWeight: 700, color: C.teal,
                 letterSpacing: '0.05em', whiteSpace: 'nowrap',
               }}>Cloud AI</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         {/* Screen area */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {children}
