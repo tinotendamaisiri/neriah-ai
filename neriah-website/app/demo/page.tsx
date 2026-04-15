@@ -8328,7 +8328,7 @@ function GradingResultsWebScreen({ onBack, onViewSubmission }: {
             {[{ v: avg, l: 'Average' }, { v: highest!, l: 'Highest' }, { v: lowest!, l: 'Lowest' }].map(x => (
               <div key={x.l} style={{ flex: 1, background: C.white, borderRadius: 12, padding: '10px 8px', textAlign: 'center' }}>
                 <div style={{ fontSize: 18, fontWeight: 800, color: sc(x.v) }}>{x.v}%</div>
-                <div style={{ fontSize: 10, color: C.g500 }}>{x.l}</div>
+                <div style={{ fontSize: 11, color: C.g500 }}>{x.l}</div>
               </div>
             ))}
           </div>
@@ -8477,7 +8477,7 @@ function CapturePagesWebScreen({ onBack, onDone }: {
             <div key={i} style={{ position: 'relative', width: 80, height: 100, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.g200}` }}>
               <img src={src} alt={`Page ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               <button onClick={() => setPages(p => p.filter((_, j) => j !== i))} style={{ position: 'absolute', top: 2, right: 2, width: 20, height: 20, borderRadius: 10, background: 'rgba(0,0,0,0.6)', border: 'none', color: C.white, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', textAlign: 'center', fontSize: 10, color: C.white, padding: 2 }}>Page {i + 1}</div>
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', textAlign: 'center', fontSize: 11, color: C.white, padding: 2 }}>Page {i + 1}</div>
             </div>
           ))}
         </div>
