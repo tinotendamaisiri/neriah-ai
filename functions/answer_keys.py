@@ -398,9 +398,14 @@ def create_answer_key():
             title = scheme.get("title") or title
         generated = True
 
-    # Allow creating with empty questions (teacher sets up marking scheme later)
-    if questions_raw is None:
-        questions_raw = []
+    # Reject if no questions were generated — don't store incomplete answer keys.
+    # The teacher must retry with a clearer image or paste the question text.
+    if not questions_raw:
+        logger.warning("[answer_keys] POST /answer-keys: no questions generated (title=%r)", title)
+        return jsonify({
+            "error": "Could not generate a marking scheme. "
+                     "Try a clearer image or paste the question text instead.",
+        }), 422
 
     # Fill empty question_text from question paper OCR — saves once, no Gemma call at read time.
     _fill_empty_question_texts(questions_raw, stored_qp_text)
@@ -923,6 +928,9 @@ def create_homework_with_scheme():
 
     # Hard-cap at 10 questions (matches the Gemma prompt instruction)
     questions_raw = questions_raw[:10]
+
+    # Fill empty question_text from OCR before saving
+    _fill_empty_question_texts(questions_raw, stored_qp_text)
 
     # Default due_date: server sets now + 24 h if teacher didn't specify one
     if not due_date:
