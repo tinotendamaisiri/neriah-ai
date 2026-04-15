@@ -1038,7 +1038,7 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
       >
         <span style={{ fontSize: 16 }}>{country.flag}</span>
         <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{country.dialCode}</span>
-        <span style={{ fontSize: 10, color: C.g500 }}>▾</span>
+        <span style={{ fontSize: 11, color: C.g500 }}>▾</span>
       </button>
 
       {/* Phone number input */}
