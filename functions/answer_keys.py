@@ -95,6 +95,65 @@ def _normalise_question(raw: dict, idx: int) -> dict:
     }
 
 
+def _extract_question_texts(qp_text: str) -> dict[int, str]:
+    """
+    Parse raw question paper text into a map of {question_number: question_text}.
+
+    Handles formats like:
+      1. What is ...        (dot after number)
+      1) What is ...        (paren after number)
+      Q1. What is ...       (Q prefix)
+      Question 1: What is   (word prefix)
+
+    Each question runs until the next numbered question or end of text.
+    """
+    import re
+    # Match "1." or "1)" or "Q1." or "Q1)" or "Question 1:" etc. at start of line
+    pattern = re.compile(
+        r'^(?:Q(?:uestion)?\s*)?(\d{1,3})\s*[.):\-]\s*',
+        re.MULTILINE | re.IGNORECASE,
+    )
+    matches = list(pattern.finditer(qp_text))
+    if not matches:
+        return {}
+
+    result: dict[int, str] = {}
+    for i, m in enumerate(matches):
+        qnum = int(m.group(1))
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(qp_text)
+        text = qp_text[start:end].strip()
+        # Trim trailing blank lines
+        text = re.sub(r'\n{2,}$', '', text)
+        if text:
+            result[qnum] = text
+    return result
+
+
+def _fill_empty_question_texts(questions: list[dict], qp_text: str | None) -> list[dict]:
+    """
+    Fill empty question_text fields by parsing the raw question paper text.
+    Only fills questions where question_text is empty — never overwrites.
+    Mutates and returns the same list.
+    """
+    if not qp_text:
+        return questions
+    has_empty = any(not q.get("question_text") for q in questions)
+    if not has_empty:
+        return questions
+
+    extracted = _extract_question_texts(qp_text)
+    if not extracted:
+        return questions
+
+    for q in questions:
+        if not q.get("question_text"):
+            qnum = q.get("question_number", 0)
+            if qnum in extracted:
+                q["question_text"] = extracted[qnum]
+    return questions
+
+
 def _extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     """Extract plain text from PDF, DOCX, or TXT. Returns empty string on failure."""
     try:
@@ -343,6 +402,9 @@ def create_answer_key():
     if questions_raw is None:
         questions_raw = []
 
+    # Fill empty question_text from question paper OCR — saves once, no Gemma call at read time.
+    _fill_empty_question_texts(questions_raw, stored_qp_text)
+
     total_marks = sum(q.get("marks", 0) for q in questions_raw)
     key = AnswerKey(
         class_id=class_id,
@@ -454,6 +516,11 @@ def update_answer_key(key_id: str):
     if not updates:
         return jsonify({"error": "No updatable fields"}), 400
 
+    # Fill empty question_text from question paper text before saving
+    if "questions" in updates:
+        qp = question_paper_text or key.get("question_paper_text") or ""
+        _fill_empty_question_texts(updates["questions"], qp)
+
     upsert("answer_keys", key_id, updates)
     return jsonify({**key, **updates}), 200
 
@@ -474,6 +541,16 @@ def answer_key_questions(key_id: str):
         return jsonify({"error": "Answer key not found"}), 404
 
     questions = key.get("questions") or []
+    qp_text = key.get("question_paper_text") or ""
+
+    # Lazy backfill: if question_text is empty but question_paper_text exists,
+    # parse and save so future reads are instant (no repeated parsing).
+    has_empty = any(not q.get("question_text") for q in questions)
+    if has_empty and qp_text:
+        _fill_empty_question_texts(questions, qp_text)
+        upsert("answer_keys", key_id, {"questions": questions})
+        logger.info("[answer_keys] backfilled question_text for key=%s", key_id)
+
     out = [
         {
             "question_number": q.get("question_number", i + 1),
@@ -483,9 +560,6 @@ def answer_key_questions(key_id: str):
         for i, q in enumerate(questions)
     ]
     result = {"questions": out}
-    # Include the raw question paper text if available — students can read the
-    # original questions even when per-question text is empty.
-    qp_text = key.get("question_paper_text") or ""
     if qp_text:
         result["question_paper_text"] = qp_text
     return jsonify(result), 200
