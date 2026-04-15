@@ -2870,7 +2870,12 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [typing, setTyping]         = useState(false);
   const [exporting, setExporting]   = useState<string | null>(null); // msg id being exported
   const [toast, setToast]           = useState('');
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [attachment, setAttachment] = useState<{ data: string; type: 'image' | 'pdf' | 'word'; name: string; previewUrl?: string } | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const wordInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -2881,19 +2886,51 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
     setTimeout(() => setToast(''), 3000);
   };
 
+  const readFileAsBase64 = (file: File): Promise<string> =>
+    new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res((reader.result as string).split(',')[1] ?? '');
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+
+  const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'pdf' | 'word') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    try {
+      const data = await readFileAsBase64(file);
+      const previewUrl = type === 'image' ? URL.createObjectURL(file) : undefined;
+      setAttachment({ data, type, name: file.name, previewUrl });
+    } catch {
+      showToast('Could not read the file. Try a different one.');
+    }
+    setShowAttachMenu(false);
+  };
+
   const send = async (text: string, forcedAction?: AIActionType) => {
-    if (!text.trim() || typing) return;
+    if ((!text.trim() && !attachment) || typing) return;
     setShowCurrDrop(false); setShowLvlDrop(false);
     const action: AIActionType = forcedAction ?? _detectAction(text);
-    const userMsg: AIChatMsg = { id: String(Date.now()), role: 'user', content: text.trim() };
+    const snap = attachment;
+    setAttachment(null);
+    const displayText = text.trim() || (snap ? `[${snap.name}]` : '');
+    const userMsg: AIChatMsg = { id: String(Date.now()), role: 'user', content: displayText };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setTyping(true);
     try {
+      const bodyObj: Record<string, unknown> = {
+        message: text.trim() || '(See attached file)',
+        action_type: action,
+        curriculum,
+        level: level === 'All Levels' ? '' : level,
+      };
+      if (snap) { bodyObj.file_data = snap.data; bodyObj.media_type = snap.type; }
       const res = await fetch(`${DEMO_API}/demo/teacher/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim(), action_type: action, curriculum, level: level === 'All Levels' ? '' : level }),
+        body: JSON.stringify(bodyObj),
       });
       const data = res.ok ? await res.json() : null;
       if (data && !data.error) {
@@ -2960,7 +2997,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', background: C.g50, position: 'relative' }}
-      onClick={() => { setShowCurrDrop(false); setShowLvlDrop(false); }}>
+      onClick={() => { setShowCurrDrop(false); setShowLvlDrop(false); setShowAttachMenu(false); }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -3153,15 +3190,64 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {/* Hidden file inputs */}
+      <input ref={imgInputRef}  type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'image')} />
+      <input ref={pdfInputRef}  type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'pdf')} />
+      <input ref={wordInputRef} type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: 'none' }} onChange={e => handleFileInput(e, 'word')} />
+
       {/* Input bar */}
-      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 10px', background: C.white }}
-        onClick={e => e.stopPropagation()}>
+      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 10px', background: C.white, position: 'relative' }}
+        onClick={e => { e.stopPropagation(); setShowAttachMenu(false); }}>
         <p style={{ margin: '0 0 6px', fontSize: 11, color: C.g500, textAlign: 'center' }}>
           Neriah can make mistakes. Verify important info.
         </p>
+        {/* Attachment preview chip */}
+        {attachment && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6,
+            background: C.primaryLight, borderRadius: 8, padding: '5px 8px',
+            marginBottom: 6 }}>
+            {attachment.type === 'image' && attachment.previewUrl ? (
+              <img src={attachment.previewUrl} alt="" style={{ width: 28, height: 28, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
+            ) : (
+              <span style={{ fontSize: 16 }}>{attachment.type === 'pdf' ? '📄' : '📝'}</span>
+            )}
+            <span style={{ flex: 1, fontSize: 12, color: C.teal, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {attachment.name}
+            </span>
+            <button onClick={() => setAttachment(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: C.g500, fontSize: 14 }}>✕</button>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8,
           background: C.g50, borderRadius: 24, border: `1px solid ${C.g200}`,
-          padding: '4px 6px 4px 14px' }}>
+          padding: '4px 6px 4px 4px' }}>
+          {/* Paperclip button */}
+          <div style={{ position: 'relative' }}>
+            <button onClick={e => { e.stopPropagation(); setShowAttachMenu(v => !v); }}
+              style={{ width: 34, height: 34, borderRadius: 17, flexShrink: 0,
+                background: 'none', border: 'none',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 16, color: attachment ? C.teal : C.g500 }}>📎</span>
+            </button>
+            {showAttachMenu && (
+              <div style={{ position: 'absolute', bottom: 42, left: 0, zIndex: 50,
+                background: C.white, border: `1px solid ${C.g200}`, borderRadius: 12,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 160, overflow: 'hidden' }}
+                onClick={e => e.stopPropagation()}>
+                {[
+                  { label: '🖼️  Photo Library', onClick: () => imgInputRef.current?.click() },
+                  { label: '📄  PDF Document',  onClick: () => pdfInputRef.current?.click() },
+                  { label: '📝  Word Document', onClick: () => wordInputRef.current?.click() },
+                ].map(opt => (
+                  <button key={opt.label} onClick={() => { opt.onClick(); setShowAttachMenu(false); }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left',
+                      padding: '10px 14px', background: 'none', border: 'none',
+                      cursor: 'pointer', fontSize: 13, color: C.text, fontFamily: 'inherit' }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -3172,10 +3258,10 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               color: C.text, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
               paddingTop: 6, paddingBottom: 6, maxHeight: 100 }}
           />
-          <button onClick={() => send(input)} disabled={!input.trim() || typing}
+          <button onClick={() => send(input)} disabled={(!input.trim() && !attachment) || typing}
             style={{ width: 34, height: 34, borderRadius: 17, flexShrink: 0,
-              background: input.trim() && !typing ? C.teal : C.g200,
-              border: 'none', cursor: input.trim() && !typing ? 'pointer' : 'default',
+              background: (input.trim() || attachment) && !typing ? C.teal : C.g200,
+              border: 'none', cursor: (input.trim() || attachment) && !typing ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'background 0.15s' }}>
             <span style={{ color: C.white, fontSize: 14, lineHeight: 1 }}>↑</span>
