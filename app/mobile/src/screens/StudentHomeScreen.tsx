@@ -128,16 +128,14 @@ export default function StudentHomeScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>Hello, {firstName}</Text>
-          <Text style={styles.subGreeting}>Here's your learning overview</Text>
+        <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
+          <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
+        </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.greeting}>Homework</Text>
+          <Text style={styles.subGreeting}>Hello, {firstName}</Text>
         </View>
-        <View style={styles.headerRight}>
-          <AIStatusDot />
-          <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
-            <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-          </TouchableOpacity>
-        </View>
+        <AIStatusDot />
       </View>
 
       {/* Assignments */}
@@ -252,12 +250,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerRight: {
-    alignItems: 'flex-end',
-    gap: 8,
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
-  greeting: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
-  subGreeting: { color: COLORS.teal100, fontSize: 13, marginTop: 2 },
+  greeting: { color: COLORS.white, fontSize: 20, fontWeight: '800' },
+  subGreeting: { color: COLORS.teal100, fontSize: 12, marginTop: 2 },
   avatar: {
     width: 46,
     height: 46,

@@ -5344,18 +5344,21 @@ function StudentHomeScreen({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
-      {/* Header */}
-      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>{firstName}</div>
-          <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Form 2A · Harare High School</div>
-        </div>
+      {/* Header: [avatar] — Homework — [Cloud AI dot] */}
+      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 16, paddingBottom: 14, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
         <div
           onClick={onSettings}
-          style={{ width: 40, height: 40, borderRadius: 20, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+          style={{ width: 38, height: 38, borderRadius: 19, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
         >
-          <span style={{ color: C.white, fontSize: 17, fontWeight: 700 }}>{firstName[0]}</span>
+          <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>{firstName[0]}</span>
+        </div>
+        <div style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Homework</div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 2 }}>Hello, {firstName}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <div style={{ width: 7, height: 7, borderRadius: 4, background: C.green400 }} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>Cloud AI</span>
         </div>
       </div>
 
