@@ -4046,10 +4046,13 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
                   <div style={{ fontSize: 11, color: C.g500 }}>students</div>
                 </div>
                 <div style={{ width: 1, height: 28, background: C.border }} />
-                <div style={{ textAlign: 'center', minWidth: 40 }}>
+                <button
+                  onClick={onHomeworkList}
+                  style={{ textAlign: 'center', minWidth: 40, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                >
                   <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>{demoHomeworks.length}</div>
-                  <div style={{ fontSize: 11, color: C.g500 }}>homework</div>
-                </div>
+                  <div style={{ fontSize: 11, color: C.g500, textDecoration: 'underline' }}>homework</div>
+                </button>
               </div>
             </div>
           </div>
@@ -4101,7 +4104,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
             {/* "+ X more" link — only when there are hidden homeworks */}
             {hiddenCount > 0 && (
               <button
-                onClick={onOpenHomework}
+                onClick={onHomeworkList}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer', display: 'flex',
                   alignItems: 'center', paddingBlock: 6, paddingInline: 4, fontFamily: 'inherit',
@@ -4227,6 +4230,171 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Homework List (all homeworks for a class)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type HomeworkListItem = {
+  id: string;
+  title: string;
+  subject: string;
+  education_level: string;
+  due_date?: string | null;
+  created_at: string;
+  submission_count: number;
+  graded_count: number;
+  pending_count: number;
+  status: 'graded' | 'pending';
+  ai_generated: boolean;
+};
+
+function HomeworkListWebScreen({ onBack, onOpenHomework, demoToken }: {
+  onBack: () => void;
+  onOpenHomework: () => void;
+  demoToken: string | null;
+}) {
+  const [homeworks, setHomeworks] = React.useState<HomeworkListItem[]>([]);
+  const [loading, setLoading]     = React.useState(true);
+  const [tab, setTab]             = React.useState<'all' | 'graded' | 'pending'>('all');
+
+  React.useEffect(() => {
+    demoFetch('/demo/homeworks?class_id=demo-class-1', {}, demoToken)
+      .then(r => r.json())
+      .then(data => {
+        setHomeworks(data.homeworks ?? []);
+      })
+      .catch(() => {
+        // Fallback to demo data if endpoint not yet deployed
+        setHomeworks([
+          { id: 'demo-homework-1', title: 'Maths Chapter 5 Test', subject: 'Mathematics', education_level: 'Form 2', due_date: null, created_at: '2026-04-12T07:00:00Z', submission_count: 2, graded_count: 2, pending_count: 0, status: 'graded', ai_generated: true },
+          { id: 'hw2', title: 'Chapter 6 Algebra Quiz', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-25T23:59:00Z', created_at: '2026-04-10T07:00:00Z', submission_count: 0, graded_count: 0, pending_count: 0, status: 'pending', ai_generated: false },
+          { id: 'hw3', title: 'Chapter 7 Geometry', subject: 'Mathematics', education_level: 'Form 2', due_date: '2026-04-18T23:59:00Z', created_at: '2026-04-08T07:00:00Z', submission_count: 1, graded_count: 0, pending_count: 1, status: 'pending', ai_generated: true },
+        ]);
+      })
+      .finally(() => setLoading(false));
+  }, [demoToken]);
+
+  const graded  = homeworks.filter(h => h.status === 'graded');
+  const pending = homeworks.filter(h => h.status === 'pending');
+  const visible = tab === 'graded' ? graded : tab === 'pending' ? pending : homeworks;
+
+  function fmtDue(iso: string | null | undefined): { label: string; overdue: boolean } {
+    if (!iso) return { label: '', overdue: false };
+    try {
+      const d = new Date(iso);
+      const overdue = d < new Date();
+      return {
+        label: overdue ? 'Overdue' : `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        overdue,
+      };
+    } catch { return { label: '', overdue: false }; }
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
+      {/* Header */}
+      <div style={{
+        background: C.white, paddingInline: 14, paddingTop: 14, paddingBottom: 12,
+        borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+      }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: C.teal, display: 'flex', alignItems: 'center' }}><ChevronLeft size={20} color={C.teal} /></button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Form 2A — Homework</div>
+          <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>All assignments</div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 32px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', paddingTop: 48, color: C.g500 }}>Loading…</div>
+        ) : (
+          <>
+            {/* Count cards */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+              {[
+                { label: 'Graded', count: graded.length, bg: C.gradedBg, color: C.green },
+                { label: 'Pending', count: pending.length, bg: C.amberFaint, color: C.amber500 },
+              ].map(card => (
+                <div key={card.label} style={{
+                  flex: 1, borderRadius: 10, padding: '14px 12px', background: card.bg, textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: card.color }}>{card.count}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: card.color, marginTop: 2 }}>{card.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Filter tabs */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {(['all', 'graded', 'pending'] as const).map(t => (
+                <button key={t} onClick={() => setTab(t)} style={{
+                  paddingInline: 14, paddingBlock: 6, borderRadius: 20, border: 'none',
+                  background: tab === t ? C.teal : C.g200, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12, fontWeight: 600,
+                  color: tab === t ? C.white : C.g500,
+                }}>
+                  {t === 'all' ? `All (${homeworks.length})` : t === 'graded' ? `Graded (${graded.length})` : `Pending (${pending.length})`}
+                </button>
+              ))}
+            </div>
+
+            {/* List */}
+            {visible.length === 0 ? (
+              <div style={{ textAlign: 'center', paddingTop: 40 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.g700, marginBottom: 4 }}>
+                  {tab === 'graded' ? 'No graded homework yet' : tab === 'pending' ? 'All homework graded!' : 'No homework assigned yet'}
+                </div>
+                <div style={{ fontSize: 12, color: C.g500 }}>
+                  {tab === 'pending' ? 'Great work — nothing pending.' : 'Tap Add Homework to get started.'}
+                </div>
+              </div>
+            ) : visible.map(hw => {
+              const due = fmtDue(hw.due_date);
+              return (
+                <button key={hw.id} onClick={onOpenHomework} style={{
+                  width: '100%', background: C.white, borderRadius: 10, marginBottom: 8, padding: '12px 14px',
+                  display: 'flex', alignItems: 'flex-start', gap: 10, border: 'none', cursor: 'pointer',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)', fontFamily: 'inherit', textAlign: 'left', position: 'relative',
+                  transition: 'box-shadow 0.12s',
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(13,115,119,0.14)')}
+                  onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)')}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.text }}>{hw.title}</span>
+                      <span style={{
+                        borderRadius: 6, paddingInline: 7, paddingBlock: 2,
+                        background: hw.status === 'graded' ? C.gradedBg : C.amberFaint,
+                        fontSize: 11, fontWeight: 700,
+                        color: hw.status === 'graded' ? C.green : C.amber500, flexShrink: 0,
+                      }}>
+                        {hw.status === 'graded' ? 'Graded' : 'Pending'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
+                      {hw.subject && <span style={{ fontSize: 11, color: C.teal, fontWeight: 600, background: C.teal50, borderRadius: 4, paddingInline: 5, paddingBlock: 1 }}>{hw.subject}</span>}
+                      {hw.education_level && <span style={{ fontSize: 11, color: C.teal, fontWeight: 600, background: C.teal50, borderRadius: 4, paddingInline: 5, paddingBlock: 1 }}>{hw.education_level}</span>}
+                    </div>
+                    {due.label && (
+                      <div style={{ fontSize: 11, color: due.overdue ? C.red : C.g500, fontWeight: due.overdue ? 600 : 400, marginBottom: 3 }}>{due.label}</div>
+                    )}
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      {hw.submission_count > 0 && <span style={{ fontSize: 11, color: C.teal, fontWeight: 600 }}>{hw.submission_count} submitted</span>}
+                      {hw.graded_count > 0 && <span style={{ fontSize: 11, color: C.g500 }}>{hw.graded_count} graded{hw.pending_count > 0 ? ` · ${hw.pending_count} pending` : ''}</span>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 18, color: C.g400, alignSelf: 'center' }}>›</span>
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );
@@ -7344,7 +7512,9 @@ export default function DemoPage() {
       case 'register':
         return <RegisterScreen onSignIn={() => go('phone')} onContinue={(p, ch) => { setOtpPhone(p); setOtpChannel(ch); go('otp'); }} />;
       case 'classes':
-        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onAssistant={() => go('t-assistant')} onNewClass={() => go('class-setup')} />;
+        return <ClassesScreen onAddHomework={() => go('add-homework')} onOpenHomework={() => go('homework-detail')} onHomeworkList={() => go('homework-list')} onSettings={() => go('t-settings')} onAnalytics={() => go('analytics')} onAssistant={() => go('t-assistant')} onNewClass={() => go('class-setup')} />;
+      case 'homework-list':
+        return <HomeworkListWebScreen onBack={() => go('classes')} onOpenHomework={() => go('homework-detail')} demoToken={demoToken} />;
       case 'class-setup':
         return (
           <ClassSetupScreen
@@ -7489,7 +7659,7 @@ export default function DemoPage() {
           case 'register':
             return <RegisterScreen onSignIn={() => sGo('phone')} onContinue={(p, ch) => { setSSOtpPhone(p); setSSOtpChannel(ch); sGo('otp'); }} />;
           case 'classes':
-            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onAssistant={() => sGo('t-assistant')} onNewClass={() => sGo('class-setup')} />;
+            return <ClassesScreen onAddHomework={() => sGo('add-homework')} onOpenHomework={() => sGo('homework-detail')} onHomeworkList={() => sGo('homework-list')} onSettings={() => sGo('t-settings')} onAnalytics={() => sGo('analytics')} onAssistant={() => sGo('t-assistant')} onNewClass={() => sGo('class-setup')} />;
           case 'class-setup':
             return <ClassSetupScreen onBack={() => sGo('classes')} onCreate={(cls) => { setSTeacherNewClass(cls); sGo('class-join-code'); }} />;
           case 'class-join-code':
@@ -7503,6 +7673,8 @@ export default function DemoPage() {
             return <ReviewSchemeScreen answerKeyId={schemeData?.answer_key_id ?? 'demo-key'} initialQuestions={schemeData?.questions ?? DEMO_QUESTIONS} onBack={() => sGo('add-homework')} onConfirm={() => sGo('homework-created')} demoToken={demoToken} />;
           case 'homework-created':
             return <HomeworkCreatedScreen answerKeyId={schemeData?.answer_key_id ?? 'demo-key'} onDone={() => sGo('classes')} demoToken={demoToken} />;
+          case 'homework-list':
+            return <HomeworkListWebScreen onBack={() => sGo('classes')} onOpenHomework={() => sGo('homework-detail')} demoToken={demoToken} />;
           case 'homework-detail':
             return (
               <HomeworkDetailScreen
@@ -7632,7 +7804,7 @@ export default function DemoPage() {
 
       {/* Step indicator */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, padding: '20px 24px 0' }}>
-        {(['welcome', 'register', 'otp', 'classes', 'add-homework', 'review-scheme', 'homework-created', 'homework-detail', 'grade-all'] as TScreen[]).map((s, i) => (
+        {(['welcome', 'register', 'otp', 'classes', 'add-homework', 'review-scheme', 'homework-created', 'homework-list', 'homework-detail', 'grade-all'] as TScreen[]).map((s, i) => (
           <div key={s} style={{
             width: screen === s ? 24 : 8, height: 8, borderRadius: 4,
             background: screen === s ? C.teal : C.g200,

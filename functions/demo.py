@@ -1681,6 +1681,92 @@ def demo_pin_change():
     return jsonify({"success": True}), 200
 
 
+# ── GET /api/demo/homeworks ──────────────────────────────────────────────────
+
+@demo_bp.get("/demo/homeworks")
+def demo_list_homeworks():
+    """
+    List all homework assignments for a class with submission/graded/pending counts.
+    Query params: class_id (optional, defaults to DEMO_CLASS_ID)
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    class_id = request.args.get("class_id", DEMO_CLASS_ID).strip() or DEMO_CLASS_ID
+
+    # Fetch all answer keys for the class
+    homeworks = query("answer_keys", [("class_id", "==", class_id)], order_by="created_at")
+
+    # Seed the demo homework if Firestore is empty
+    if not homeworks:
+        now = _now()
+        homeworks = [{
+            "id": DEMO_HW_ID, "class_id": class_id,
+            "teacher_id": DEMO_TEACHER_ID,
+            "title": "Maths Chapter 5 Test",
+            "education_level": "form_2", "subject": "Mathematics",
+            "questions": _DEMO_QUESTIONS,
+            "open_for_submission": True, "ai_generated": True,
+            "status": "active",
+            "created_at": now, "due_date": None,
+        }]
+
+    # Enrich with submission/graded/pending counts
+    all_subs = query("student_submissions", [("class_id", "==", class_id)])
+    sub_counts: dict = {}
+    for sub in all_subs:
+        ak_id = sub.get("answer_key_id", "")
+        if not ak_id:
+            continue
+        if ak_id not in sub_counts:
+            sub_counts[ak_id] = {"submission_count": 0, "graded_count": 0, "pending_count": 0}
+        sub_counts[ak_id]["submission_count"] += 1
+        status = sub.get("status", "")
+        if status in ("graded", "approved") or sub.get("approved"):
+            sub_counts[ak_id]["graded_count"] += 1
+        else:
+            sub_counts[ak_id]["pending_count"] += 1
+
+    now_iso = _now()
+    result = []
+    for hw in homeworks:
+        counts = sub_counts.get(hw["id"], {"submission_count": 0, "graded_count": 0, "pending_count": 0})
+        due = hw.get("due_date")
+        is_graded = (
+            counts["graded_count"] > 0
+            or (due and due < now_iso)
+        )
+        result.append({
+            "id": hw.get("id"),
+            "title": hw.get("title", ""),
+            "subject": hw.get("subject", ""),
+            "education_level": hw.get("education_level", ""),
+            "due_date": due,
+            "created_at": hw.get("created_at", now_iso),
+            "open_for_submission": hw.get("open_for_submission", False),
+            "total_marks": hw.get("total_marks", sum(q.get("marks", 0) for q in hw.get("questions", []))),
+            "questions_count": len(hw.get("questions", [])),
+            "ai_generated": hw.get("ai_generated", False),
+            "submission_count": counts["submission_count"],
+            "graded_count": counts["graded_count"],
+            "pending_count": counts["pending_count"],
+            "status": "graded" if is_graded else "pending",
+        })
+
+    # Sort newest first
+    result.sort(key=lambda h: h.get("created_at", ""), reverse=True)
+
+    graded_total = sum(1 for h in result if h["status"] == "graded")
+    pending_total = len(result) - graded_total
+
+    logger.info("[demo] list_homeworks class=%s → %d homeworks", class_id, len(result))
+    return jsonify({
+        "homeworks": result,
+        "graded_total": graded_total,
+        "pending_total": pending_total,
+    }), 200
+
+
 # ── GET /api/demo/homework/<hw_id> ───────────────────────────────────────────
 
 @demo_bp.get("/demo/homework/<hw_id>")

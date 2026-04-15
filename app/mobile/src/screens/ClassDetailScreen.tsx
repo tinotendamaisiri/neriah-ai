@@ -100,7 +100,7 @@ export default function ClassDetailScreen() {
               </View>
               <TouchableOpacity
                 style={styles.markedBtn}
-                onPress={() => navigation.navigate('GradingResults', {
+                onPress={() => navigation.navigate('HomeworkList', {
                   class_id,
                   class_name,
                 })}

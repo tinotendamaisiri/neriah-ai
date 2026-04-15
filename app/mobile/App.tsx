@@ -61,6 +61,7 @@ import ClassSetupScreen from './src/screens/ClassSetupScreen';
 import ClassDetailScreen from './src/screens/ClassDetailScreen';
 import TeacherInboxScreen from './src/screens/TeacherInboxScreen';
 import HomeworkDetailScreen from './src/screens/HomeworkDetailScreen';
+import HomeworkListScreen from './src/screens/HomeworkListScreen';
 import AddHomeworkScreen from './src/screens/AddHomeworkScreen';
 import HomeworkCreatedScreen from './src/screens/HomeworkCreatedScreen';
 import ReviewSchemeScreen from './src/screens/ReviewSchemeScreen';
@@ -214,6 +215,11 @@ function TeacherNavigator() {
       <TeacherStack.Screen
         name="SetPin"
         component={SetPinScreen}
+        options={{ headerShown: false }}
+      />
+      <TeacherStack.Screen
+        name="HomeworkList"
+        component={HomeworkListScreen}
         options={{ headerShown: false }}
       />
       <TeacherStack.Screen

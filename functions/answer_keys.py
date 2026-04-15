@@ -176,6 +176,26 @@ def list_answer_keys():
             upsert("answer_keys", key["id"], {"open_for_submission": False})
             key["open_for_submission"] = False
 
+    # Enrich each homework with submission/graded/pending counts in one batch query.
+    all_subs = query("student_submissions", [("class_id", "==", class_id)])
+    sub_counts: dict[str, dict] = {}
+    for sub in all_subs:
+        ak_id = sub.get("answer_key_id", "")
+        if not ak_id:
+            continue
+        if ak_id not in sub_counts:
+            sub_counts[ak_id] = {"submission_count": 0, "graded_count": 0, "pending_count": 0}
+        sub_counts[ak_id]["submission_count"] += 1
+        status = sub.get("status", "")
+        if status in ("graded", "approved") or sub.get("approved"):
+            sub_counts[ak_id]["graded_count"] += 1
+        else:
+            sub_counts[ak_id]["pending_count"] += 1
+
+    for key in results:
+        counts = sub_counts.get(key["id"], {"submission_count": 0, "graded_count": 0, "pending_count": 0})
+        key.update(counts)
+
     return jsonify(results), 200
 
 

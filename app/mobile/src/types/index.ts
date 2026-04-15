@@ -397,6 +397,7 @@ export type RootStackParamList = {
     qp_media_type?: string;
   };
   SetPin: undefined;
+  HomeworkList: { class_id: string; class_name: string };
   GradingResults: { answer_key_id?: string; class_id: string; class_name: string; answer_key_title?: string };
   GradingDetail: { mark_id: string; student_name: string; class_name: string; answer_key_title: string };
   Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;

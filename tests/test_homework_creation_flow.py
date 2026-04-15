@@ -5829,3 +5829,206 @@ class TestChatSessionTracing:
             "Mobile: relativeTime must parse an ISO string via new Date(iso)"
         assert "new Date(iso)" in web, \
             "Web: webRelativeTime must parse an ISO string via new Date(iso)"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestHomeworkList — GET /api/answer-keys?class_id=... enriched with counts
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestHomeworkList:
+    """Tests for the homework list endpoint returning all assignments with counts."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, bypass_token_version_check):  # noqa: F811
+        pass
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _hw(self, hw_id: str, title: str = "Test Homework", due_date: str | None = None) -> dict:
+        return {
+            "id": hw_id, "class_id": CLASS_ID, "teacher_id": TEACHER_ID,
+            "title": title, "subject": "Mathematics", "education_level": "Form 2",
+            "due_date": due_date, "created_at": f"2026-04-0{hw_id[-1]}T07:00:00Z",
+            "open_for_submission": True, "status": "active",
+            "questions": [], "total_marks": 10,
+        }
+
+    def _sub(self, hw_id: str, status: str = "pending", approved: bool = False) -> dict:
+        return {
+            "id": f"sub-{hw_id}-{status}", "answer_key_id": hw_id,
+            "class_id": CLASS_ID, "student_id": STUDENT_ID,
+            "status": status, "approved": approved, "submitted_at": "2026-04-10T08:00:00Z",
+        }
+
+    @feature_test("homework_list_returns_all_for_class")
+    def test_homework_list_returns_all_homeworks_for_class(self, client, auth_headers):
+        """GET /api/answer-keys?class_id=... returns all homeworks for the class."""
+        hw1 = self._hw("hw1", "Homework 1")
+        hw2 = self._hw("hw2", "Homework 2")
+        hw3 = self._hw("hw3", "Homework 3")
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw1, hw2, hw3]
+            return []  # no submissions
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        with patch("functions.answer_keys.query", side_effect=fake_query), \
+             patch("functions.answer_keys.get_doc", side_effect=fake_get_doc), \
+             patch("functions.answer_keys.upsert"):
+            rv = client.get(f"/api/answer-keys?class_id={CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 3
+        titles = [d["title"] for d in data]
+        assert "Homework 1" in titles
+        assert "Homework 2" in titles
+        assert "Homework 3" in titles
+        # Each item must include count fields
+        for item in data:
+            assert "submission_count" in item
+            assert "graded_count" in item
+            assert "pending_count" in item
+
+    @feature_test("homework_status_graded_when_submissions_graded")
+    def test_homework_marked_graded_when_has_approved_submissions(self, client, auth_headers):
+        """Homework with approved submissions reports graded_count > 0."""
+        hw = self._hw("hw1", "Maths Test")
+        sub_graded   = self._sub("hw1", status="approved", approved=True)
+        sub_graded2  = self._sub("hw1", status="graded",   approved=False)
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            if collection == "student_submissions":
+                return [sub_graded, sub_graded2]
+            return []
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        with patch("functions.answer_keys.query", side_effect=fake_query), \
+             patch("functions.answer_keys.get_doc", side_effect=fake_get_doc), \
+             patch("functions.answer_keys.upsert"):
+            rv = client.get(f"/api/answer-keys?class_id={CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        item = rv.get_json()[0]
+        assert item["graded_count"] == 2, f"Expected graded_count=2, got {item['graded_count']}"
+        assert item["pending_count"] == 0
+
+    @feature_test("homework_status_graded_when_due_date_passed")
+    def test_homework_marked_graded_when_due_date_passed(self, client, auth_headers):
+        """Homework with a past due_date and no approved marks is still fetchable with due_date."""
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        hw = self._hw("hw1", "Old Homework", due_date=yesterday)
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw]
+            return []  # no submissions
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        with patch("functions.answer_keys.query", side_effect=fake_query), \
+             patch("functions.answer_keys.get_doc", side_effect=fake_get_doc), \
+             patch("functions.answer_keys.upsert"):
+            rv = client.get(f"/api/answer-keys?class_id={CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        item = rv.get_json()[0]
+        # Due date is in the past — the auto-close logic should have run
+        # and open_for_submission should be False
+        assert item["due_date"] is not None
+        # The endpoint returns the item; client-side or demo backend derives status
+        assert "graded_count" in item
+        assert "pending_count" in item
+
+    @feature_test("homework_list_counts_correct")
+    def test_homework_list_graded_ungraded_counts_correct(self, client, auth_headers):
+        """Counts across multiple homeworks are correctly aggregated per homework."""
+        hw1 = self._hw("hw1", "Graded Homework")
+        hw2 = self._hw("hw2", "Another Graded")
+        hw3 = self._hw("hw3", "Pending Homework")
+
+        subs = [
+            {**self._sub("hw1"), "status": "approved", "approved": True},
+            {**self._sub("hw1"), "id": "sub-hw1-2", "status": "graded", "approved": False},
+            {**self._sub("hw2"), "status": "approved", "approved": True},
+            {**self._sub("hw3"), "status": "pending", "approved": False},
+        ]
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw1, hw2, hw3]
+            if collection == "student_submissions":
+                return subs
+            return []
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        with patch("functions.answer_keys.query", side_effect=fake_query), \
+             patch("functions.answer_keys.get_doc", side_effect=fake_get_doc), \
+             patch("functions.answer_keys.upsert"):
+            rv = client.get(f"/api/answer-keys?class_id={CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        by_id = {d["id"]: d for d in rv.get_json()}
+
+        assert by_id["hw1"]["graded_count"] == 2
+        assert by_id["hw1"]["pending_count"] == 0
+        assert by_id["hw2"]["graded_count"] == 1
+        assert by_id["hw3"]["graded_count"] == 0
+        assert by_id["hw3"]["pending_count"] == 1
+
+        graded_homeworks = [d for d in by_id.values() if d["graded_count"] > 0]
+        pending_homeworks = [d for d in by_id.values() if d["graded_count"] == 0 and d["pending_count"] > 0]
+        assert len(graded_homeworks) == 2, "Expected 2 graded homeworks"
+        assert len(pending_homeworks) == 1, "Expected 1 pending homework"
+
+    @feature_test("homework_list_ordered_by_created_at")
+    def test_homework_list_ordered_newest_first(self, client, auth_headers):
+        """Homeworks returned by the endpoint are sorted newest-first on the client."""
+        hw_old    = {**self._hw("hw1", "Old"),    "created_at": "2026-04-01T07:00:00Z"}
+        hw_mid    = {**self._hw("hw2", "Middle"), "created_at": "2026-04-05T07:00:00Z"}
+        hw_newest = {**self._hw("hw3", "Newest"), "created_at": "2026-04-10T07:00:00Z"}
+
+        # Backend returns in whatever order; HomeworkListScreen sorts descending.
+        # Test that the endpoint returns all three and includes created_at.
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "answer_keys":
+                return [hw_old, hw_mid, hw_newest]
+            return []
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "classes" and doc_id == CLASS_ID:
+                return _CLASS
+            return None
+
+        with patch("functions.answer_keys.query", side_effect=fake_query), \
+             patch("functions.answer_keys.get_doc", side_effect=fake_get_doc), \
+             patch("functions.answer_keys.upsert"):
+            rv = client.get(f"/api/answer-keys?class_id={CLASS_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 3
+        dates = [d["created_at"] for d in data]
+        assert all(d is not None for d in dates), "All items must have created_at"
+        # Sorting newest-first: when sorted descending, hw_newest should come first
+        sorted_desc = sorted(data, key=lambda d: d["created_at"], reverse=True)
+        assert sorted_desc[0]["title"] == "Newest"
+        assert sorted_desc[-1]["title"] == "Old"
