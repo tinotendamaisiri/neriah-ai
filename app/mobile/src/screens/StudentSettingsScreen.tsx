@@ -59,8 +59,9 @@ export default function StudentSettingsScreen() {
     });
   }, [isFocused]);
 
-  // ── Class name fetch ───────────────────────────────────────────────────────
+  // ── Class + school fetch ────────────────────────────────────────────────────
   const [classDisplay, setClassDisplay] = useState('');
+  const [schoolName, setSchoolName] = useState('');
   useEffect(() => {
     if (!user?.class_id) return;
     (async () => {
@@ -70,8 +71,12 @@ export default function StudentSettingsScreen() {
         const parts = [cls.name];
         if (cls.subject) parts.push(cls.subject);
         setClassDisplay(parts.join(' — '));
+        // School from class's school_name or teacher lookup
+        if (cls.school_name) {
+          setSchoolName(cls.school_name);
+        }
       } catch {
-        setClassDisplay(user.class_name ?? user.class_id ?? '—');
+        setClassDisplay((user as any).class_name ?? user.class_id ?? '—');
       }
     })();
   }, [user?.class_id]);
@@ -121,14 +126,19 @@ export default function StudentSettingsScreen() {
   };
 
   const handleJoin = async () => {
-    if (!classInfo) return;
+    if (!joinCode || joinCode.length < 4) { setJoinError('Enter a valid join code.'); return; }
     setJoining(true);
     try {
-      await joinClass(joinCode);
-      Alert.alert('Joined!', `You've joined ${classInfo.name}. Restart the app to see your assignments.`);
-      setJoinModal(false);
-    } catch (err: any) { setJoinError(err?.message ?? 'Could not join class.'); }
-    finally { setJoining(false); }
+      const { joinClassByCode } = await import('../services/api');
+      const res = await joinClassByCode(joinCode);
+      const display = [res.class_name, res.subject].filter(Boolean).join(' — ');
+      setClassDisplay(display || res.class_name);
+      Alert.alert('Joined!', res.message || `Joined ${res.class_name} successfully!`);
+      setJoinModal(false); setJoinCode(''); setClassInfo(null); setJoinError('');
+    } catch (err: any) {
+      const msg = err?.message ?? err?.error ?? 'Could not join class.';
+      setJoinError(msg);
+    } finally { setJoining(false); }
   };
 
   // ── OTP for PIN change/remove ─────────────────────────────────────────────
@@ -235,12 +245,15 @@ export default function StudentSettingsScreen() {
       <View style={s.section}>
         <Text style={s.sectionTitle}>Account</Text>
         <View style={s.card}>
-          <Row label="School" value={user?.school ?? '—'} />
+          <Row label="School" value={schoolName || (user as any)?.school_name || '—'} />
           <Row label="Class" value={classDisplay || '—'} />
           <View style={s.divider} />
 
           <TouchableOpacity style={s.settingsRow} onPress={() => setJoinModal(true)}>
-            <Text style={s.settingsRowLabel}>{user?.class_id ? 'Change Class' : 'Join Class'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="add-circle-outline" size={18} color={COLORS.teal500} />
+              <Text style={s.settingsRowLabel}>Join Another Class</Text>
+            </View>
             <Text style={s.chevron}>›</Text>
           </TouchableOpacity>
 
@@ -258,7 +271,7 @@ export default function StudentSettingsScreen() {
               </TouchableOpacity>
             </>
           ) : (
-            <TouchableOpacity style={s.settingsRow} onPress={() => Alert.alert('Set PIN', 'PIN setup will be available in a future update.')}>
+            <TouchableOpacity style={s.settingsRow} onPress={() => (navigation as any).navigate('SetPin')}>
               <Text style={s.settingsRowLabel}>Set PIN</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -287,8 +300,8 @@ export default function StudentSettingsScreen() {
 
           <View style={s.modelRow}>
             <View style={{ flex: 1 }}>
-              <Text style={s.modelName}>{modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'Gemma 4 E2B'}</Text>
-              <Text style={s.modelSize}>{modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '2.5 GB'} · AI Tutor</Text>
+              <Text style={s.modelName}>Neriah AI</Text>
+              <Text style={s.modelSize}>Powered by {modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'Gemma 4 E2B'} · {modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '2.5 GB'}</Text>
             </View>
             <View style={[s.modelBadge, modelStatus === 'done' ? s.badgeDone : modelStatus === 'error' ? s.badgeError : s.badgeIdle]}>
               <Text style={[s.modelBadgeText, { color: modelStatus === 'done' ? COLORS.success : modelStatus === 'error' ? COLORS.error : COLORS.gray500 }]}>
@@ -368,7 +381,7 @@ export default function StudentSettingsScreen() {
         <View style={m.overlay}>
           <View style={m.sheet}>
             <View style={m.header}>
-              <Text style={m.title}>Join a class</Text>
+              <Text style={m.title}>Join Another Class</Text>
               <TouchableOpacity onPress={() => { setJoinModal(false); setJoinCode(''); setClassInfo(null); setJoinError(''); }}><Text style={m.close}>✕</Text></TouchableOpacity>
             </View>
             <View style={m.body}>

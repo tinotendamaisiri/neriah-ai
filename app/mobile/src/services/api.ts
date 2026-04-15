@@ -536,6 +536,14 @@ export const updateStudentProfile = async (data: {
   return res.data;
 };
 
+/** Join a class by join code. */
+export const joinClassByCode = async (join_code: string): Promise<{
+  success: boolean; class_id: string; class_name: string; subject: string; message: string;
+}> => {
+  const res = await client.post('/auth/student/join-class', { join_code: join_code.toUpperCase() });
+  return res.data;
+};
+
 /** Delete student account. */
 export const deleteStudentAccount = async (studentId: string): Promise<void> => {
   await client.delete(`/auth/student/${studentId}`);

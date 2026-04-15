@@ -8106,6 +8106,9 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
   const initials = `${firstName[0] ?? ''}${surname[0] ?? ''}`.toUpperCase() || 'S';
 
   const [nameModal, setNameModal] = useState(false);
+  const [joinModal, setJoinModal] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinToast, setJoinToast] = useState('');
   const [editFirst, setEditFirst] = useState(firstName);
   const [editSurname, setEditSurname] = useState(surname);
   const [nameSaved, setNameSaved] = useState(false);
@@ -8158,6 +8161,13 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
             <span style={{ fontSize: 14, color: C.g500 }}>Class</span>
             <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Form 2A — Mathematics</span>
           </div>
+          <div style={rowS} onClick={() => setJoinModal(true)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Plus size={16} color={C.teal} />
+              <span style={rowLbl}>Join Another Class</span>
+            </div>
+            <span style={{ fontSize: 18, color: C.teal }}>›</span>
+          </div>
           {pinActive ? (
             <>
               <div style={rowS} onClick={() => setPinModal('change')}>
@@ -8202,8 +8212,8 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.g900 }}>Gemma 4 E2B</div>
-                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>2.5 GB · AI Tutor</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.g900 }}>Neriah AI</div>
+                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E2B · 2.5 GB</div>
               </div>
               <div style={{ background: C.g100, borderRadius: 6, padding: '4px 10px' }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Mobile only</span>
@@ -8268,7 +8278,31 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
         </div>
       )}
 
-      {/* PIN modal */}
+      {/* Join Another Class modal */}
+      {joinModal && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
+          <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join Another Class</span>
+              <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Enter the join code your teacher gave you</div>
+            <input
+              value={joinCode}
+              onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              maxLength={6}
+              placeholder="e.g. NR2A01"
+              style={{ ...inpS, textTransform: 'uppercase', letterSpacing: '0.15em', textAlign: 'center', fontWeight: 700, fontSize: 20, border: `2px solid ${C.teal}`, marginBottom: 14 }}
+            />
+            <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast('Joined Form 3B — Science successfully!'); }} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Join Class</button>
+            <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 13, fontFamily: 'inherit' }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student PIN modal */}
       {pinModal && (
         <PinModal
           mode={pinModal}
@@ -8277,7 +8311,7 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
         />
       )}
 
-      {/* Toast */}
+      {/* Student Toast */}
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
     </div>
   );

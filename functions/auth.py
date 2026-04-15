@@ -932,6 +932,55 @@ def auth_student_delete(student_id: str):
     return jsonify({"deleted": True}), 200
 
 
+@auth_bp.post("/auth/student/join-class")
+def auth_student_join_class():
+    """
+    Authenticated — join a class by join code.
+
+    Body: { join_code: str }
+    Adds the class to the student's class_ids list. Sets it as the primary class_id.
+    """
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    join_code = (body.get("join_code") or "").strip().upper()
+    if not join_code:
+        return jsonify({"error": "join_code is required"}), 400
+
+    cls = query_single("classes", [("join_code", "==", join_code)])
+    if not cls:
+        return jsonify({"error": "Class not found. Check the code with your teacher."}), 404
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    existing_ids: list[str] = student.get("class_ids", [])
+    # Backfill: if student has a single class_id but no class_ids list yet
+    if not existing_ids and student.get("class_id"):
+        existing_ids = [student["class_id"]]
+
+    if cls["id"] in existing_ids:
+        return jsonify({"error": f"You are already enrolled in {cls.get('name', 'this class')}."}), 409
+
+    new_ids = list(set(existing_ids + [cls["id"]]))
+    upsert("students", student_id, {"class_ids": new_ids, "class_id": cls["id"]})
+
+    # Bump student count on the class
+    upsert("classes", cls["id"], {"student_count": cls.get("student_count", 0) + 1})
+
+    logger.info("[auth] student/%s joined class %s (%s)", student_id, cls["id"], cls.get("name"))
+    return jsonify({
+        "success": True,
+        "class_id": cls["id"],
+        "class_name": cls.get("name", ""),
+        "subject": cls.get("subject", ""),
+        "message": f"Joined {cls.get('name', 'class')} successfully!",
+    }), 200
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 _SCHOOL_ID_MAP = {

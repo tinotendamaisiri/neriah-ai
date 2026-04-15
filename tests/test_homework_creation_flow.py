@@ -6930,3 +6930,109 @@ class TestStudentProfileUpdate:
                 headers=student_headers)
 
         assert rv.status_code == 403
+
+
+# ── Student join class ───────────────────────────────────────────────────────
+
+STUDENT_JOIN_ID = "student-join-001"
+CLASS_JOIN_ID = "class-join-001"
+CLASS_JOIN_CODE = "NR3B01"
+
+_JOIN_CLASS = {
+    "id": CLASS_JOIN_ID,
+    "name": "Form 3B",
+    "subject": "Science",
+    "join_code": CLASS_JOIN_CODE,
+    "student_count": 5,
+    "teacher_id": TEACHER_ID,
+}
+
+_JOIN_STUDENT = {
+    "id": STUDENT_JOIN_ID,
+    "first_name": "Chipo",
+    "surname": "Dube",
+    "class_id": "class-old-001",
+    "class_ids": ["class-old-001"],
+}
+
+
+class TestStudentJoinClass:
+    """Tests for POST /api/auth/student/join-class."""
+
+    @pytest.fixture(scope="class")
+    def student_headers(self):
+        from shared.auth import create_jwt
+        token = create_jwt(STUDENT_JOIN_ID, "student", 1)
+        return {"Authorization": f"Bearer {token}"}
+
+    @feature_test("student_join_class_success")
+    def test_student_join_class_with_valid_code(self, client, student_headers):
+        """POST /api/auth/student/join-class adds the class to student's class_ids."""
+        saved = {}
+
+        def fake_query_single(collection, filters):
+            if collection == "classes":
+                return _JOIN_CLASS
+            return None
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_JOIN_ID:
+                return _JOIN_STUDENT.copy()
+            return None
+
+        def fake_upsert(collection, doc_id, data):
+            saved[f"{collection}/{doc_id}"] = data
+            return data
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth.get_doc", side_effect=fake_get_doc), \
+             patch("functions.auth.upsert", side_effect=fake_upsert):
+            rv = client.post("/api/auth/student/join-class",
+                json={"join_code": CLASS_JOIN_CODE},
+                headers=student_headers)
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert body["success"] is True
+        assert body["class_name"] == "Form 3B"
+        # Student's class_ids was updated
+        student_update = saved.get(f"students/{STUDENT_JOIN_ID}", {})
+        assert CLASS_JOIN_ID in student_update.get("class_ids", [])
+
+    @feature_test("student_join_class_not_found")
+    def test_student_join_class_invalid_code(self, client, student_headers):
+        """POST with non-existent join_code returns 404."""
+        def fake_query_single(collection, filters):
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single):
+            rv = client.post("/api/auth/student/join-class",
+                json={"join_code": "XXXXXX"},
+                headers=student_headers)
+
+        assert rv.status_code == 404
+        assert "not found" in rv.get_json()["error"].lower()
+
+    @feature_test("student_join_class_already_enrolled")
+    def test_student_join_class_already_enrolled(self, client, student_headers):
+        """POST with join_code of class student is already in returns 409."""
+        already_enrolled = {**_JOIN_STUDENT, "class_ids": [CLASS_JOIN_ID]}
+
+        def fake_query_single(collection, filters):
+            if collection == "classes":
+                return _JOIN_CLASS
+            return None
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_JOIN_ID:
+                return already_enrolled
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth.get_doc", side_effect=fake_get_doc):
+            rv = client.post("/api/auth/student/join-class",
+                json={"join_code": CLASS_JOIN_CODE},
+                headers=student_headers)
+
+        assert rv.status_code == 409
+        assert "already enrolled" in rv.get_json()["error"].lower()
