@@ -9,7 +9,7 @@ import {
   HelpCircle, Star, Inbox,
   Bot, Hand, X, AlertTriangle, XCircle, MailX,
   Users, BookOpen, Sparkles, Cloud, Zap,
-  MessageCircle, MessageSquare, ChevronLeft, Menu, Plus, Trash2,
+  MessageCircle, MessageSquare, ChevronLeft, Menu, Plus, Trash2, Eye,
 } from 'lucide-react';
 
 import {
@@ -43,6 +43,8 @@ const C = {
   green50:      '#E6F4EA',
   green400:     '#22C55E',
   greenLt:      '#F0FDF4',
+  green100:     '#E8F5E9',
+  green700:     '#388E3C',
   yellow400:    '#EAB308',
   red:          '#E74C3C',
   red200:       '#FCA5A5',
@@ -5312,9 +5314,33 @@ function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void 
 
 // ── S2: Home ──────────────────────────────────────────────────────────────────
 function StudentHomeScreen({
-  studentName, submissionsOpen, onSubmit, onResults, onTutor, onSettings,
-}: { studentName: string; submissionsOpen: boolean; onSubmit: () => void; onResults: () => void; onTutor: () => void; onSettings: () => void }) {
+  studentName, submissionsOpen, onSubmit, onResults, onTutor, onSettings, demoToken,
+}: { studentName: string; submissionsOpen: boolean; onSubmit: () => void; onResults: () => void; onTutor: () => void; onSettings: () => void; demoToken: string | null }) {
   const firstName = studentName.split(' ')[0];
+  const [assignments, setAssignments] = React.useState<{ id: string; title: string; subject?: string; total_marks?: number; open_for_submission?: boolean; has_pending_submission?: boolean; education_level?: string }[]>([]);
+  const [loadingHw, setLoadingHw] = React.useState(true);
+
+  React.useEffect(() => {
+    (async () => {
+      const data = await demoFetch('/demo/assignments?class_id=demo-class-1&status=all', {}, demoToken);
+      if (Array.isArray(data) && data.length > 0) {
+        setAssignments(data);
+      } else {
+        // Fallback: show the hardcoded demo assignment controlled by submissionsOpen
+        setAssignments([{
+          id: 'demo-hw-1',
+          title: 'Chapter 5 Maths Test',
+          subject: 'Mathematics',
+          total_marks: 20,
+          open_for_submission: submissionsOpen,
+          has_pending_submission: false,
+          education_level: 'form_2',
+        }]);
+      }
+      setLoadingHw(false);
+    })();
+  }, [demoToken, submissionsOpen]);
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
       {/* Header */}
@@ -5326,46 +5352,65 @@ function StudentHomeScreen({
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 70 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', marginBottom: 10, textTransform: 'uppercase' }}>
-          My Homework
+          My Assignments
         </div>
 
-        {/* Homework card */}
-        <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-          <div style={{ padding: '13px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
-              <div style={{ flex: 1, paddingRight: 8 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>Chapter 5 Maths Test</div>
-                <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>Mathematics · Form 2</div>
-              </div>
-              <div style={{
-                background: submissionsOpen ? C.greenLt : C.redLt,
-                color: submissionsOpen ? C.green : C.red,
-                fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 20,
-                flexShrink: 0, whiteSpace: 'nowrap', transition: 'background 0.3s, color 0.3s',
-              }}>
-                {submissionsOpen ? '● Open' : '● Closed'}
-              </div>
-            </div>
-
-            {submissionsOpen ? (
-              <button
-                onClick={onSubmit}
-                style={{
-                  width: '100%', background: C.amber, border: 'none', borderRadius: 8, padding: '10px 0',
-                  cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  boxShadow: '0 2px 8px rgba(245,166,35,0.30)',
-                }}
-              >
-                <Upload size={14} /><span>Submit Work</span>
-              </button>
-            ) : (
-              <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic', paddingTop: 2 }}>
-                Submissions closed by your teacher.
-              </div>
-            )}
+        {loadingHw ? (
+          <div style={{ textAlign: 'center', padding: 20, color: C.g500, fontSize: 12 }}>Loading...</div>
+        ) : assignments.length === 0 ? (
+          <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 28, textAlign: 'center' }}>
+            <FileText size={32} color={C.g300} style={{ marginBottom: 10 }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>No assignments yet</div>
+            <div style={{ fontSize: 12, color: C.g500 }}>Your teacher has not assigned any homework yet.</div>
           </div>
-        </div>
+        ) : (
+          assignments.map(a => {
+            const isOpen = a.open_for_submission !== false;
+            const isSubmitted = a.has_pending_submission === true;
+            return (
+              <div key={a.id} style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                <div style={{ padding: '13px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div style={{ flex: 1, paddingRight: 8 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{a.title}</div>
+                      <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>{a.subject ?? ''}{a.total_marks ? ` · ${a.total_marks} marks` : ''}</div>
+                    </div>
+                    <div style={{
+                      background: isSubmitted ? C.green100 : isOpen ? C.greenLt : C.redLt,
+                      color: isSubmitted ? C.green700 : isOpen ? C.green : C.red,
+                      fontSize: 11, fontWeight: 700, paddingInline: 8, paddingBlock: 4, borderRadius: 20,
+                      flexShrink: 0, whiteSpace: 'nowrap',
+                    }}>
+                      {isSubmitted ? '● Submitted' : isOpen ? '● Open' : '● Closed'}
+                    </div>
+                  </div>
+
+                  {isSubmitted ? (
+                    <div style={{ fontSize: 12, color: C.green700, fontStyle: 'italic', paddingTop: 2 }}>
+                      Your work has been submitted.
+                    </div>
+                  ) : isOpen ? (
+                    <button
+                      onClick={onSubmit}
+                      style={{
+                        width: '100%', background: C.amber, border: 'none', borderRadius: 8, padding: '10px 0',
+                        cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        boxShadow: '0 2px 8px rgba(245,166,35,0.30)',
+                      }}
+                    >
+                      <Upload size={14} /><span>Submit Work</span>
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic', paddingTop: 2 }}>
+                      Submissions closed by your teacher.
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
 
         <button
           onClick={onResults}
@@ -5373,7 +5418,7 @@ function StudentHomeScreen({
             width: '100%', border: `1.5px solid ${C.amber}`, borderRadius: 10, padding: '11px 0', background: 'none',
             cursor: 'pointer', color: C.amber700, fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            marginBottom: 12,
+            marginBottom: 12, marginTop: 6,
           }}
         >
           <BarChart2 size={14} /><span>View My Results</span>
@@ -5442,6 +5487,17 @@ function StudentSubmitScreen({
   const [fileQualityWarnings, setFileQualityWarnings] = useState<string[]>([]);
   const [fileEnhanced, setFileEnhanced] = useState(false);
   const [fileWarningDismissed, setFileWarningDismissed] = useState(false);
+  const [showQuestionsModal, setShowQuestionsModal] = useState(false);
+  const [questionsData, setQuestionsData] = useState<{ question_number: number; question_text: string; marks: number }[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showQuestionsModal || questionsData.length > 0) return;
+    setQuestionsLoading(true);
+    demoFetch(`/answer-keys/${DEMO_HOMEWORK.answer_key_id}/questions`, {}, demoToken)
+      .then(data => { if (Array.isArray(data)) setQuestionsData(data); })
+      .finally(() => setQuestionsLoading(false));
+  }, [showQuestionsModal]);
 
   const galleryRef = useRef<HTMLInputElement>(null);
   const pdfRef     = useRef<HTMLInputElement>(null);
@@ -5512,7 +5568,19 @@ function StudentSubmitScreen({
       <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
         <div style={{ marginBottom: 14 }}><BackButton label="Back" onClick={onBack} /></div>
 
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 }}>Submit Work</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Submit Work</div>
+          <button
+            onClick={() => setShowQuestionsModal(true)}
+            style={{
+              background: 'none', border: `1.5px solid ${C.teal}`, borderRadius: 8,
+              padding: '5px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+              fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: C.teal,
+            }}
+          >
+            <Eye size={13} /><span>View Assignment</span>
+          </button>
+        </div>
         <div style={{ fontSize: 13, color: C.g500, marginBottom: 20, lineHeight: 1.5 }}>Chapter 5 Maths Test · Mathematics</div>
 
         {!file && (
@@ -5637,6 +5705,58 @@ function StudentSubmitScreen({
         }}
         onClose={() => setCameraOpen(false)}
       />
+
+      {/* View Assignment questions modal */}
+      {showQuestionsModal && (
+        <div style={{
+          position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50,
+        }}>
+          <div style={{
+            background: C.white, borderRadius: '20px 20px 0 0', width: '100%',
+            maxHeight: '80%', display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '16px 18px', borderBottom: `1px solid ${C.border}`,
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Assignment Questions</div>
+              <button
+                onClick={() => setShowQuestionsModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500, padding: 2 }}
+              >✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 18px 24px' }}>
+              {questionsLoading ? (
+                <div style={{ textAlign: 'center', padding: 30, color: C.g500, fontSize: 13 }}>Loading questions...</div>
+              ) : questionsData.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 30 }}>
+                  <FileText size={36} color={C.g300} />
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 10 }}>No question paper available</div>
+                  <div style={{ fontSize: 12, color: C.g500, marginTop: 4 }}>Contact your teacher for the assignment details.</div>
+                </div>
+              ) : (
+                questionsData.map(q => (
+                  <div key={q.question_number} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0',
+                    borderBottom: `1px solid ${C.g100}`,
+                  }}>
+                    <div style={{
+                      width: 26, height: 26, borderRadius: 13, background: C.teal50,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      fontSize: 12, fontWeight: 700, color: C.teal,
+                    }}>{q.question_number}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{q.question_text}</div>
+                      <div style={{ fontSize: 11, color: C.g500, marginTop: 3 }}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Screen>
   );
 }
@@ -8230,7 +8350,7 @@ export default function DemoPage() {
       case 's-register':
         return <StudentRegisterScreen onJoined={(name) => { setStudentName(name); setSScreen('s-home'); }} />;
       case 's-home':
-        return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} />;
+        return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} demoToken={demoToken} />;
       case 's-settings':
         return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} onResults={() => setSScreen('s-results')} studentName={studentName} />;
       case 's-submit':

@@ -2,7 +2,7 @@
 // Multi-page image capture for student submissions.
 // Allows capturing multiple pages; each page becomes one image in the submission.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,17 @@ import {
   ScrollView,
   Image,
   Alert,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import InAppCamera from '../components/InAppCamera';
+import { getAnswerKeyQuestions } from '../services/api';
+
+type QuestionItem = { question_number: number; question_text: string; marks: number };
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentCamera'>;
 
@@ -24,6 +29,9 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
   const { answer_key_id, answer_key_title, class_id } = route.params;
   const [images, setImages] = useState<string[]>([]);
   const [cameraVisible, setCameraVisible] = useState(false);
+  const [showQuestions, setShowQuestions] = useState(false);
+  const [questions, setQuestions] = useState<QuestionItem[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
 
   const captureImage = () => {
     setCameraVisible(true);
@@ -58,6 +66,20 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
     });
   };
 
+  const openQuestions = async () => {
+    setShowQuestions(true);
+    if (questions.length > 0) return;
+    setQuestionsLoading(true);
+    try {
+      const data = await getAnswerKeyQuestions(answer_key_id);
+      setQuestions(data);
+    } catch {
+      // silently fail — modal shows "not available" state
+    } finally {
+      setQuestionsLoading(false);
+    }
+  };
+
   return (
     <>
       <InAppCamera
@@ -67,11 +89,55 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
         quality={0.85}
         warningMessage="Your submission photo is unclear. Please retake or choose a clearer image — your teacher needs to read your answers."
       />
+
+      {/* View Assignment modal */}
+      <Modal visible={showQuestions} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{answer_key_title}</Text>
+              <TouchableOpacity onPress={() => setShowQuestions(false)} style={styles.modalClose}>
+                <Ionicons name="close" size={22} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalScroll} contentContainerStyle={{ paddingBottom: 20 }}>
+              {questionsLoading ? (
+                <ActivityIndicator size="large" color={COLORS.teal500} style={{ marginTop: 30 }} />
+              ) : questions.length === 0 ? (
+                <View style={styles.modalEmpty}>
+                  <Ionicons name="document-text-outline" size={40} color={COLORS.gray200} />
+                  <Text style={styles.modalEmptyText}>No question paper available.</Text>
+                  <Text style={styles.modalEmptyHint}>Contact your teacher for the assignment details.</Text>
+                </View>
+              ) : (
+                questions.map(q => (
+                  <View key={q.question_number} style={styles.questionCard}>
+                    <View style={styles.questionNumBadge}>
+                      <Text style={styles.questionNumText}>{q.question_number}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.questionText}>{q.question_text}</Text>
+                      <Text style={styles.questionMarks}>{q.marks} mark{q.marks !== 1 ? 's' : ''}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.container}>
       {/* Assignment context */}
       <View style={styles.header}>
-        <Text style={styles.assignmentLabel}>Assignment</Text>
-        <Text style={styles.assignmentTitle}>{answer_key_title}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.assignmentLabel}>Assignment</Text>
+          <Text style={styles.assignmentTitle}>{answer_key_title}</Text>
+        </View>
+        <TouchableOpacity style={styles.viewBtn} onPress={openQuestions}>
+          <Ionicons name="eye-outline" size={14} color={COLORS.white} />
+          <Text style={styles.viewBtnText}>View</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Page counter */}
@@ -107,18 +173,6 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
           ))}
         </ScrollView>
       )}
-
-      {/* Frame guide */}
-      <View style={styles.frameGuide}>
-        <View style={styles.frameInner}>
-          {/* Corner brackets */}
-          <View style={[styles.corner, styles.cornerTL]} />
-          <View style={[styles.corner, styles.cornerTR]} />
-          <View style={[styles.corner, styles.cornerBL]} />
-          <View style={[styles.corner, styles.cornerBR]} />
-          <Text style={styles.frameHint}>Align page within this area</Text>
-        </View>
-      </View>
 
       {/* Tip */}
       <View style={styles.tip}>
@@ -158,9 +212,22 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.teal500,
     paddingHorizontal: 20,
     paddingVertical: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   assignmentLabel: { color: COLORS.teal100, fontSize: 12, fontWeight: '600', textTransform: 'uppercase' },
   assignmentTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700', marginTop: 2 },
+  viewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.6)',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  viewBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '600' },
   pageCount: {
     textAlign: 'center',
     color: COLORS.gray500,
@@ -200,65 +267,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   thumbnailRemoveText: { color: COLORS.white, fontSize: 11 },
-  frameGuide: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    height: 160,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  frameInner: {
-    width: '88%',
-    height: 140,
-    borderWidth: 1,
-    borderColor: COLORS.gray200,
-    borderRadius: 8,
-    backgroundColor: COLORS.gray50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  corner: {
-    position: 'absolute',
-    width: 20,
-    height: 20,
-  },
-  cornerTL: {
-    top: -1,
-    left: -1,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: COLORS.teal500,
-    borderTopLeftRadius: 6,
-  },
-  cornerTR: {
-    top: -1,
-    right: -1,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderColor: COLORS.teal500,
-    borderTopRightRadius: 6,
-  },
-  cornerBL: {
-    bottom: -1,
-    left: -1,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: COLORS.teal500,
-    borderBottomLeftRadius: 6,
-  },
-  cornerBR: {
-    bottom: -1,
-    right: -1,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderColor: COLORS.teal500,
-    borderBottomRightRadius: 6,
-  },
-  frameHint: {
-    color: COLORS.gray500,
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
   tip: {
     margin: 16,
     marginTop: 8,
@@ -288,4 +296,51 @@ const styles = StyleSheet.create({
     borderColor: COLORS.teal500,
   },
   doneBtnText: { color: COLORS.teal500, fontSize: 16, fontWeight: '700' },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 30,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, flex: 1 },
+  modalClose: { padding: 4 },
+  modalScroll: { paddingHorizontal: 18 },
+  modalEmpty: { alignItems: 'center', paddingVertical: 40, gap: 8 },
+  modalEmptyText: { fontSize: 15, fontWeight: '600', color: COLORS.text },
+  modalEmptyHint: { fontSize: 13, color: COLORS.gray500, textAlign: 'center' },
+  questionCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.gray50,
+  },
+  questionNumBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.teal50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  questionNumText: { fontSize: 13, fontWeight: '700', color: COLORS.teal500 },
+  questionText: { fontSize: 14, color: COLORS.text, lineHeight: 20 },
+  questionMarks: { fontSize: 12, color: COLORS.gray500, marginTop: 4 },
 });

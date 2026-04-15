@@ -524,12 +524,20 @@ export const studentRegister = async (data: {
 
 // ── Student data ──────────────────────────────────────────────────────────────
 
-/** Open assignments for this student's class (open_for_submission = true). */
+/** All assignments for this student's class. */
 export const getAssignments = async (class_id: string): Promise<Assignment[]> => {
   const res: AxiosResponse<Assignment[]> = await client.get('/assignments', {
-    params: { class_id, status: 'open' },
+    params: { class_id, status: 'all' },
   });
   return res.data;
+};
+
+/** Fetch question list for an answer key (student view — no answers included). */
+export const getAnswerKeyQuestions = async (
+  answer_key_id: string,
+): Promise<Array<{ question_number: number; question_text: string; marks: number }>> => {
+  const res = await client.get(`/answer-keys/${answer_key_id}/questions`);
+  return Array.isArray(res.data) ? res.data : [];
 };
 
 /** Approved marks visible to this student. Pass limit to get recent N. */

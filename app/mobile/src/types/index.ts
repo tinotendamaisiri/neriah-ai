@@ -219,6 +219,8 @@ export interface Assignment {
   total_marks?: number;
   education_level?: string;
   created_at?: string;
+  due_date?: string;
+  open_for_submission?: boolean;
   has_pending_submission?: boolean;
 }
 
@@ -403,6 +405,7 @@ export type RootStackParamList = {
   Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;
   TeacherClassAnalytics: { class_id: string; class_name: string };
   TeacherStudentAnalytics: { student_id: string; student_name: string; class_id: string; class_name: string };
+  HomeworkAnalytics: { homework_id: string; homework_title: string; class_id: string; class_name: string };
   EditProfile: undefined;
   TermsOfService: { initialTab?: 'terms' | 'privacy' } | undefined;
   UserAgreement: undefined;

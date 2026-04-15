@@ -5,15 +5,23 @@ import { NewsletterSchema } from '@/lib/validators/contact'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { sendNewsletterConfirmation } from '@/lib/email/resend'
 
-const ratelimit = new Ratelimit({
-  redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(3, '1 h'),
-  analytics: true,
-})
+export const dynamic = 'force-dynamic'
+
+let ratelimit: Ratelimit
+function getRatelimit() {
+  if (!ratelimit) {
+    ratelimit = new Ratelimit({
+      redis: Redis.fromEnv(),
+      limiter: Ratelimit.slidingWindow(3, '1 h'),
+      analytics: true,
+    })
+  }
+  return ratelimit
+}
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1'
-  const { success } = await ratelimit.limit(ip)
+  const { success } = await getRatelimit().limit(ip)
   if (!success) {
     return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
   }

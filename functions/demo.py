@@ -2175,6 +2175,60 @@ def demo_homework_submissions(hw_id: str):
     return jsonify({"submissions": subs}), 200
 
 
+# ── GET /api/demo/assignments ─────────────────────────────────────────────────
+
+@demo_bp.get("/demo/assignments")
+def demo_assignments():
+    """
+    Demo version of the student assignments endpoint.
+    Returns the single demo answer key as an open assignment.
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    class_id = request.args.get("class_id", DEMO_CLASS_ID).strip()
+    logger.debug("[demo] GET /demo/assignments class_id=%s", class_id)
+
+    # Return demo answer keys for the class from Firestore
+    keys = query("answer_keys", [("class_id", "==", class_id)], order_by="created_at")
+
+    status = request.args.get("status", "open").strip().lower()
+    out = []
+    for k in keys:
+        if status == "open" and not k.get("open_for_submission", False):
+            continue
+        if k.get("status") in ("draft", "pending_setup"):
+            continue
+        out.append({
+            "id": k["id"],
+            "title": k.get("title", "Untitled"),
+            "subject": k.get("subject"),
+            "total_marks": k.get("total_marks", 0),
+            "education_level": k.get("education_level"),
+            "due_date": k.get("due_date"),
+            "open_for_submission": bool(k.get("open_for_submission", False)),
+            "created_at": k.get("created_at", ""),
+            "has_pending_submission": False,
+        })
+
+    # Fallback: if no keys in Firestore, return a canned demo assignment
+    if not out:
+        out.append({
+            "id": DEMO_HW_ID,
+            "title": "Maths Exercise 1",
+            "subject": "Mathematics",
+            "total_marks": 20,
+            "education_level": "form_2",
+            "due_date": None,
+            "open_for_submission": True,
+            "created_at": "2026-04-01T10:00:00+00:00",
+            "has_pending_submission": False,
+        })
+
+    out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return jsonify(out), 200
+
+
 # ── POST /api/demo/submissions/student ───────────────────────────────────────
 
 @demo_bp.post("/demo/submissions/student")
@@ -2308,6 +2362,77 @@ def demo_student_lookup():
         "school_name": "Greendale Primary School",
         "join_code": code,
     }), 200
+
+
+# ── POST /api/demo/auth/student/register ──────────────────────────────────────
+
+@demo_bp.post("/demo/auth/student/register")
+def demo_student_register():
+    """
+    Demo version of student self-registration.
+
+    Body: { first_name, surname, phone, class_id?, class_join_code?, manual_class_name? }
+    Returns: { verification_id, channel, message }
+
+    In demo mode any 6-digit OTP is accepted via /demo/auth/verify-otp.
+    The Student document is created in Firestore after OTP verify completes
+    (same as the production path — pending_data is stored in the OTP doc).
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    body = request.get_json(silent=True) or {}
+    first_name = (body.get("first_name") or "").strip()
+    surname = (body.get("surname") or "").strip()
+    phone = (body.get("phone") or "").strip()
+    class_id = (body.get("class_id") or "").strip() or None
+    class_join_code = ((body.get("class_join_code") or "").strip().upper()) or None
+    manual_class_name = (body.get("manual_class_name") or "").strip() or None
+
+    logger.debug(
+        "[demo] student/register first_name=%r surname=%r phone=%r class_id=%r",
+        first_name, surname, phone, class_id,
+    )
+
+    if not first_name or not surname or not phone:
+        return jsonify({"error": "first_name, surname, and phone are required"}), 400
+
+    # Resolve join code → class_id (accept the hardcoded demo code)
+    if class_join_code and not class_id:
+        from shared.firestore_client import query_single as _query_single
+        cls = _query_single("classes", [("join_code", "==", class_join_code)])
+        if cls:
+            class_id = cls["id"]
+        elif class_join_code in ("NR2A01", "DEMO"):
+            class_id = DEMO_CLASS_ID
+
+    # Default to demo class when neither class_id nor manual name supplied
+    if not class_id and not manual_class_name:
+        class_id = DEMO_CLASS_ID
+
+    from shared.firestore_client import upsert as _upsert, get_doc as _get_doc
+    from shared.auth import generate_otp, hash_otp
+
+    otp = generate_otp()
+    pending_data = {
+        "role": "student",
+        "first_name": first_name,
+        "surname": surname,
+        "phone": phone,
+        "class_id": class_id,
+        "manual_class_name": manual_class_name,
+    }
+    import hashlib
+    _upsert("otp_verifications", phone, {
+        "phone": phone,
+        "otp_hash": hashlib.sha256(otp.encode()).hexdigest(),
+        "method": "demo",
+        "attempts": 0,
+        "pending_data": pending_data,
+    })
+
+    logger.info("[demo] student/register OTP stored (demo mode) for phone=%s", phone)
+    return jsonify({"message": "OTP sent", "channel": "demo", "verification_id": phone}), 201
 
 
 # ── GET /api/demo/classes/school/<school_id> ──────────────────────────────────

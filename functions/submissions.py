@@ -245,3 +245,69 @@ def override_submission(sub_id: str):
         "score": new_score,
         "percentage": percentage,
     }), 200
+
+
+# ── GET /api/assignments ─────────────────────────────────────────────────────
+
+@submissions_bp.get("/assignments")
+def student_assignments():
+    """
+    Student-facing — return open assignments (answer keys) for the student's class.
+
+    Query params:
+      class_id — required (from the student profile)
+      status   — "open" (default) filters to open_for_submission == True,
+                 "all" returns everything
+
+    Returns: flat JSON array of assignment objects.
+    """
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+    class_id = request.args.get("class_id", "").strip()
+
+    if not class_id:
+        # Fall back to the student's own class_id from Firestore
+        student_doc = get_doc("students", student_id)
+        if student_doc:
+            class_id = student_doc.get("class_id", "")
+    if not class_id or class_id == "pending":
+        return jsonify([]), 200
+
+    status = request.args.get("status", "open").strip().lower()
+    logger.debug("[assignments] student=%s class_id=%s status=%s", student_id, class_id, status)
+
+    keys = query("answer_keys", [("class_id", "==", class_id)], order_by="created_at")
+
+    # Check which answer keys this student has already submitted to
+    student_subs = query("student_submissions", [
+        ("student_id", "==", student_id),
+        ("class_id", "==", class_id),
+    ])
+    submitted_key_ids = {s.get("answer_key_id") for s in student_subs}
+
+    out = []
+    for k in keys:
+        # Filter by open_for_submission unless status=all
+        if status == "open" and not k.get("open_for_submission", False):
+            continue
+        # Skip draft/pending_setup keys — students shouldn't see them
+        if k.get("status") in ("draft", "pending_setup"):
+            continue
+
+        out.append({
+            "id": k["id"],
+            "title": k.get("title", "Untitled"),
+            "subject": k.get("subject"),
+            "total_marks": k.get("total_marks", 0),
+            "education_level": k.get("education_level"),
+            "due_date": k.get("due_date"),
+            "open_for_submission": bool(k.get("open_for_submission", False)),
+            "created_at": k.get("created_at", ""),
+            "has_pending_submission": k["id"] in submitted_key_ids,
+        })
+
+    # Most recent first
+    out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    logger.info("[assignments] returning %d assignments for class_id=%s", len(out), class_id)
+    return jsonify(out), 200

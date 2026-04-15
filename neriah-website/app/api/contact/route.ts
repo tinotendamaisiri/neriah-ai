@@ -5,31 +5,37 @@ import { ContactSchema } from '@/lib/validators/contact'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { sendContactNotification, sendContactConfirmation } from '@/lib/email/resend'
 
-const redis = Redis.fromEnv()
+export const dynamic = 'force-dynamic'
 
-// Tier 1: 5 requests per 2 minutes (normal use)
-const shortLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(5, '2 m'),
-  prefix: 'contact_short',
-  analytics: true,
-})
+// Lazy-initialised so Redis.fromEnv() runs at request time, not build time.
+let shortLimit: Ratelimit
+let mediumLimit: Ratelimit
+let longLimit: Ratelimit
 
-// Tier 2: 10 requests per 15 minutes (moderate use)
-const mediumLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(10, '15 m'),
-  prefix: 'contact_medium',
-  analytics: true,
-})
-
-// Tier 3: 20 requests per hour (heavy use — likely abuse)
-const longLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(20, '1 h'),
-  prefix: 'contact_long',
-  analytics: true,
-})
+function getRateLimiters() {
+  if (!shortLimit) {
+    const redis = Redis.fromEnv()
+    shortLimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(5, '2 m'),
+      prefix: 'contact_short',
+      analytics: true,
+    })
+    mediumLimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(10, '15 m'),
+      prefix: 'contact_medium',
+      analytics: true,
+    })
+    longLimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(20, '1 h'),
+      prefix: 'contact_long',
+      analytics: true,
+    })
+  }
+  return { shortLimit, mediumLimit, longLimit }
+}
 
 export async function POST(req: NextRequest) {
   // CORS — only accept from neriah.ai
@@ -41,10 +47,11 @@ export async function POST(req: NextRequest) {
 
   // Tiered rate limiting by IP — check all three in parallel
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1'
+  const { shortLimit: sl, mediumLimit: ml, longLimit: ll } = getRateLimiters()
   const [short, medium, long] = await Promise.all([
-    shortLimit.limit(ip),
-    mediumLimit.limit(ip),
-    longLimit.limit(ip),
+    sl.limit(ip),
+    ml.limit(ip),
+    ll.limit(ip),
   ])
 
   if (!long.success) {

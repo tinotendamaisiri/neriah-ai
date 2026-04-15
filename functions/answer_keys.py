@@ -458,6 +458,33 @@ def update_answer_key(key_id: str):
     return jsonify({**key, **updates}), 200
 
 
+@answer_keys_bp.get("/answer-keys/<key_id>/questions")
+def answer_key_questions(key_id: str):
+    """
+    Student-safe — return question texts and marks for an answer key.
+    Does NOT return answers or marking_notes.
+    Accessible by both teachers and students.
+    """
+    _, err = require_role(request, "teacher", "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    key = get_doc("answer_keys", key_id)
+    if not key:
+        return jsonify({"error": "Answer key not found"}), 404
+
+    questions = key.get("questions") or []
+    out = [
+        {
+            "question_number": q.get("question_number", i + 1),
+            "question_text": q.get("question_text", ""),
+            "marks": q.get("marks", 0),
+        }
+        for i, q in enumerate(questions)
+    ]
+    return jsonify(out), 200
+
+
 @answer_keys_bp.post("/answer-keys/<key_id>/close")
 def close_answer_key(key_id: str):
     """

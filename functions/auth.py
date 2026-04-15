@@ -18,7 +18,7 @@ from shared.auth import (
 )
 from shared.config import is_demo
 from shared.firestore_client import delete_doc, get_doc, query, query_single, upsert
-from shared.models import Teacher
+from shared.models import Student, Teacher
 from shared.sms_client import send_otp as _dispatch_otp
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,9 @@ def auth_login():
             resp.headers[k] = v
         return resp
 
-    if not query_single("teachers", [("phone", "==", phone)]):
+    teacher = query_single("teachers", [("phone", "==", phone)])
+    student = None if teacher else query_single("students", [("phone", "==", phone)])
+    if not teacher and not student:
         return jsonify({"error": "Phone not registered"}), 404
 
     otp, rl_headers = _store_otp(phone)
@@ -240,7 +242,18 @@ def auth_verify():
         pending_data = otp_doc.get("pending_data")
         delete_doc("otp_verifications", phone)
 
-        if pending_data:
+        if pending_data and pending_data.get("role") == "student":
+            student = Student(
+                first_name=pending_data["first_name"],
+                surname=pending_data["surname"],
+                phone=pending_data["phone"],
+                class_id=pending_data.get("class_id") or "pending",
+            )
+            upsert("students", student.id, student.model_dump())
+            token = create_jwt(student.id, "student", 0)
+            logger.info("[demo] Auto-verified OTP (student) for %s", phone)
+            return jsonify({"token": token, "user": _safe(student.model_dump())}), 200
+        elif pending_data:
             teacher = Teacher(
                 phone=pending_data["phone"],
                 name=pending_data["name"],
@@ -252,12 +265,19 @@ def auth_verify():
             teacher_doc = teacher.model_dump()
         else:
             teacher_doc = query_single("teachers", [("phone", "==", phone)])
-            if not teacher_doc:
-                return jsonify({"error": "Account not found"}), 404
+            if teacher_doc:
+                token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
+                logger.info("[demo] Auto-verified OTP (teacher) for %s", phone)
+                return jsonify({"token": token, "user": _safe(teacher_doc)}), 200
 
-        token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
-        logger.info("[demo] Auto-verified OTP for %s", phone)
-        return jsonify({"token": token, "user": _safe(teacher_doc)}), 200
+            student_doc = query_single("students", [("phone", "==", phone)])
+            if student_doc:
+                token = create_jwt(student_doc["id"], "student", student_doc.get("token_version", 0))
+                logger.info("[demo] Auto-verified OTP (student login) for %s", phone)
+                return jsonify({"token": token, "user": _safe(student_doc)}), 200
+
+            return jsonify({"error": "Account not found"}), 404
+
     # ── End demo bypass ───────────────────────────────────────────────────────
 
     otp_doc = get_doc("otp_verifications", phone)
@@ -323,8 +343,22 @@ def auth_verify():
     pending_data = otp_doc.get("pending_data")
     delete_doc("otp_verifications", phone)
 
-    if pending_data:
-        # Registration flow: create teacher now that OTP is confirmed
+    if pending_data and pending_data.get("role") == "student":
+        # Student registration flow
+        student = Student(
+            first_name=pending_data["first_name"],
+            surname=pending_data["surname"],
+            phone=pending_data["phone"],
+            class_id=pending_data.get("class_id") or "pending",
+        )
+        upsert("students", student.id, student.model_dump())
+        token = create_jwt(student.id, "student", 0)
+        resp = make_response(jsonify({"token": token, "user": _safe(student.model_dump())}), 200)
+        for k, v in _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - attempts, reset_ts).items():
+            resp.headers[k] = v
+        return resp
+    elif pending_data:
+        # Teacher registration flow: create teacher now that OTP is confirmed
         teacher = Teacher(
             phone=pending_data["phone"],
             name=pending_data["name"],
@@ -335,10 +369,24 @@ def auth_verify():
         upsert("teachers", teacher.id, teacher.model_dump())
         teacher_doc = teacher.model_dump()
     else:
-        # Login flow: teacher must already exist
+        # Login flow: check teachers first, then students
         teacher_doc = query_single("teachers", [("phone", "==", phone)])
-        if not teacher_doc:
-            return jsonify({"error": "Account not found"}), 404
+        if teacher_doc:
+            token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
+            resp = make_response(jsonify({"token": token, "user": _safe(teacher_doc)}), 200)
+            for k, v in _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - attempts, reset_ts).items():
+                resp.headers[k] = v
+            return resp
+
+        student_doc = query_single("students", [("phone", "==", phone)])
+        if student_doc:
+            token = create_jwt(student_doc["id"], "student", student_doc.get("token_version", 0))
+            resp = make_response(jsonify({"token": token, "user": _safe(student_doc)}), 200)
+            for k, v in _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - attempts, reset_ts).items():
+                resp.headers[k] = v
+            return resp
+
+        return jsonify({"error": "Account not found"}), 404
 
     token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
     resp = make_response(jsonify({"token": token, "user": _safe(teacher_doc)}), 200)
@@ -384,16 +432,21 @@ def auth_resend_otp():
 
 @auth_bp.get("/auth/me")
 def auth_me():
-    # require_role validates token_version against Firestore to enforce revocation.
-    user_id, err = require_role(request, "teacher")
+    # Try teacher first, then student — require_role validates token_version.
+    user_id, err = require_role(request, "teacher", "student")
     if err:
         return jsonify({"error": err}), 401
 
+    # Check teachers first, then students
     doc = get_doc("teachers", user_id)
-    if not doc:
-        return jsonify({"error": "Not found"}), 404
+    if doc:
+        return jsonify(_safe(doc)), 200
 
-    return jsonify(_safe(doc)), 200
+    doc = get_doc("students", user_id)
+    if doc:
+        return jsonify(_safe(doc)), 200
+
+    return jsonify({"error": "Not found"}), 404
 
 
 # ─── Profile update ───────────────────────────────────────────────────────────
@@ -741,6 +794,88 @@ def auth_student_lookup():
         "school_name": school_name,
         "join_code": code,
     }), 200
+
+
+# ─── Student registration ─────────────────────────────────────────────────────
+
+@auth_bp.post("/auth/student/register")
+def auth_student_register():
+    """
+    Public — register a new student account.
+
+    Body: { first_name, surname, phone, class_id?, class_join_code?, manual_class_name? }
+    Returns: { verification_id, channel, message }
+
+    After OTP verification via POST /auth/verify, a Student document is created
+    in Firestore and a JWT is issued.
+    """
+    body = request.get_json(silent=True) or {}
+    first_name = (body.get("first_name") or "").strip()
+    surname = (body.get("surname") or "").strip()
+    phone = (body.get("phone") or "").strip()
+    class_id = (body.get("class_id") or "").strip() or None
+    class_join_code = ((body.get("class_join_code") or "").strip().upper()) or None
+    manual_class_name = (body.get("manual_class_name") or "").strip() or None
+
+    logger.debug(
+        "[auth] student/register first_name=%r surname=%r phone=%r class_id=%r join_code=%r",
+        first_name, surname, phone, class_id, class_join_code,
+    )
+
+    if not first_name or not surname or not phone:
+        return jsonify({"error": "first_name, surname, and phone are required"}), 400
+    if not class_id and not class_join_code and not manual_class_name:
+        return jsonify({"error": "class_id, class_join_code, or manual_class_name is required"}), 400
+
+    # Resolve join code → class_id if not already provided
+    if class_join_code and not class_id:
+        cls = query_single("classes", [("join_code", "==", class_join_code)])
+        if cls:
+            class_id = cls["id"]
+            logger.info("[auth] student/register resolved join_code=%s to class_id=%s", class_join_code, class_id)
+
+    # Reject duplicate phone (student already exists)
+    if query_single("students", [("phone", "==", phone)]):
+        return jsonify({"error": "Phone already registered"}), 409
+
+    # IP rate limit
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ip_blocked, ip_headers = _check_ip_rate_limit(ip)
+    if ip_blocked:
+        resp = make_response(
+            jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}),
+            429,
+        )
+        for k, v in ip_headers.items():
+            resp.headers[k] = v
+        return resp
+
+    otp, rl_headers = _store_otp(phone, pending_data={
+        "role": "student",
+        "first_name": first_name,
+        "surname": surname,
+        "phone": phone,
+        "class_id": class_id,
+        "manual_class_name": manual_class_name,
+    })
+    if otp is None:
+        resp = make_response(
+            jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}),
+            429,
+        )
+        for k, v in rl_headers.items():
+            resp.headers[k] = v
+        return resp
+
+    channel = _send_otp(phone, otp)
+    logger.info("[auth] student/register OTP sent via %s for phone=%s", channel, phone)
+    resp = make_response(
+        jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}),
+        201,
+    )
+    for k, v in rl_headers.items():
+        resp.headers[k] = v
+    return resp
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

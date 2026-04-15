@@ -43,6 +43,8 @@ export default function StudentHomeScreen() {
 
   const load = useCallback(async (isRefresh = false) => {
     if (!user) return;
+    console.log('[StudentHome] student class_id:', user?.class_id);
+    console.log('[StudentHome] fetching assignments for class:', user?.class_id);
 
     const [assignmentsResult, marksResult] = await Promise.allSettled([
       user.class_id ? getAssignments(user.class_id) : Promise.resolve([]),
@@ -50,11 +52,15 @@ export default function StudentHomeScreen() {
     ]);
 
     if (assignmentsResult.status === 'fulfilled') {
+      console.log('[StudentHome] assignments response:', JSON.stringify(assignmentsResult.value));
       setAssignments(assignmentsResult.value);
       if (ASSIGN_CACHE) AsyncStorage.setItem(ASSIGN_CACHE, JSON.stringify(assignmentsResult.value)).catch(() => {});
-    } else if (ASSIGN_CACHE) {
-      const cached = await AsyncStorage.getItem(ASSIGN_CACHE).catch(() => null);
-      if (cached) setAssignments(JSON.parse(cached));
+    } else {
+      console.log('[StudentHome] assignments error:', assignmentsResult.status === 'rejected' ? assignmentsResult.reason?.message : 'unknown');
+      if (ASSIGN_CACHE) {
+        const cached = await AsyncStorage.getItem(ASSIGN_CACHE).catch(() => null);
+        if (cached) setAssignments(JSON.parse(cached));
+      }
     }
 
     if (marksResult.status === 'fulfilled') {
@@ -137,26 +143,47 @@ export default function StudentHomeScreen() {
         </View>
       </View>
 
-      {/* Open assignments */}
-      <Text style={styles.sectionTitle}>Open Assignments</Text>
+      {/* Assignments */}
+      <Text style={styles.sectionTitle}>My Assignments</Text>
       {assignments.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyText}>No open assignments right now.</Text>
+          <Ionicons name="document-text-outline" size={36} color={COLORS.gray300} style={{ marginBottom: 10 }} />
+          <Text style={styles.emptyTitle}>No assignments yet</Text>
+          <Text style={styles.emptyText}>Your teacher has not assigned any homework yet.</Text>
         </View>
       ) : (
-        assignments.map(a => (
-          <TouchableOpacity key={a.id} style={styles.assignmentCard} onPress={() => goToCamera(a)}>
-            <View style={styles.assignmentInfo}>
-              <Text style={styles.assignmentTitle}>{a.title ?? a.subject}</Text>
-              {a.subject && a.title && (
-                <Text style={styles.assignmentSub}>{a.subject}</Text>
+        assignments.map(a => {
+          const isOpen = a.open_for_submission !== false;
+          const isSubmitted = a.has_pending_submission === true;
+          return (
+            <TouchableOpacity
+              key={a.id}
+              style={styles.assignmentCard}
+              onPress={() => isOpen && !isSubmitted ? goToCamera(a) : undefined}
+              activeOpacity={isOpen && !isSubmitted ? 0.7 : 1}
+            >
+              <View style={styles.assignmentInfo}>
+                <Text style={styles.assignmentTitle}>{a.title ?? a.subject}</Text>
+                {a.subject && a.title && (
+                  <Text style={styles.assignmentSub}>{a.subject}{a.total_marks ? ` · ${a.total_marks} marks` : ''}</Text>
+                )}
+              </View>
+              {isSubmitted ? (
+                <View style={styles.submittedChip}>
+                  <Text style={styles.submittedChipText}>Submitted</Text>
+                </View>
+              ) : isOpen ? (
+                <View style={styles.submitChip}>
+                  <Text style={styles.submitChipText}>Submit →</Text>
+                </View>
+              ) : (
+                <View style={styles.closedChip}>
+                  <Text style={styles.closedChipText}>Closed</Text>
+                </View>
               )}
-            </View>
-            <View style={styles.submitChip}>
-              <Text style={styles.submitChipText}>Submit →</Text>
-            </View>
-          </TouchableOpacity>
-        ))
+            </TouchableOpacity>
+          );
+        })
       )}
 
       {/* Recent feedback */}
@@ -265,12 +292,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     backgroundColor: COLORS.white,
     borderRadius: 12,
-    padding: 20,
+    padding: 28,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  emptyText: { color: COLORS.textLight, fontSize: 14 },
+  emptyTitle: { color: COLORS.text, fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  emptyText: { color: COLORS.textLight, fontSize: 13, textAlign: 'center' },
   assignmentCard: {
     marginHorizontal: 20,
     marginBottom: 10,
@@ -292,6 +320,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   submitChipText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
+  closedChip: {
+    backgroundColor: COLORS.gray100,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  closedChipText: { color: COLORS.gray500, fontSize: 13, fontWeight: '600' },
+  submittedChip: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  submittedChipText: { color: '#388E3C', fontSize: 13, fontWeight: '700' },
   markCard: {
     marginHorizontal: 20,
     marginBottom: 10,
