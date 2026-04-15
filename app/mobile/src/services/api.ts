@@ -777,6 +777,8 @@ export const teacherAssistantChat = async (params: {
   class_id?:        string;
   chat_history?:    AssistantChatMessage[];
   conversation_id?: string;
+  file_data?:       string;
+  media_type?:      'image' | 'pdf' | 'word';
 }): Promise<AssistantResponse> => {
   const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params);
   return res.data;

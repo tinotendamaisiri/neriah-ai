@@ -22,6 +22,8 @@ Export:
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
 import re
@@ -255,17 +257,62 @@ def _class_performance_data(class_id: str) -> str:
         return "Performance data unavailable."
 
 
-def _call_model(system: str, history: list[dict], message: str) -> str:
+def _call_model(
+    system: str,
+    history: list[dict],
+    message: str,
+    image_bytes: bytes | None = None,
+) -> str:
     """Route to Vertex AI or Ollama. Never raises."""
     try:
         if settings.INFERENCE_BACKEND == "vertex":
             from shared.gemma_client import _vertex_chat  # noqa: PLC0415
-            return _vertex_chat(system, history, message, None)
+            return _vertex_chat(system, history, message, image_bytes)
         from shared.gemma_client import _ollama_chat  # noqa: PLC0415
-        return _ollama_chat(system, history, message, None, complexity="teacher")
+        return _ollama_chat(system, history, message, image_bytes, complexity="teacher")
     except Exception:
         logger.exception("teacher_assistant: model call failed")
         return ""
+
+
+def _extract_file_text(file_data: str, media_type: str) -> tuple[bytes | None, str]:
+    """
+    Decode a base64-encoded file attachment.
+    Returns (image_bytes, extracted_text).
+    - For images: returns (bytes, "")
+    - For PDF/Word: returns (None, extracted_text)
+    - On error: returns (None, "")
+    """
+    try:
+        raw = base64.b64decode(file_data)
+    except Exception:
+        logger.warning("teacher_assistant: could not decode file_data")
+        return None, ""
+
+    if media_type == "image":
+        return raw, ""
+
+    if media_type == "pdf":
+        try:
+            import pdfplumber  # noqa: PLC0415
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                pages = [p.extract_text() or "" for p in pdf.pages[:20]]
+            return None, "\n\n".join(p for p in pages if p).strip()
+        except Exception:
+            logger.warning("teacher_assistant: PDF text extraction failed")
+            return None, ""
+
+    if media_type == "word":
+        try:
+            import docx  # noqa: PLC0415
+            doc = docx.Document(io.BytesIO(raw))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            return None, text.strip()
+        except Exception:
+            logger.warning("teacher_assistant: Word text extraction failed")
+            return None, ""
+
+    return None, ""
 
 
 # ── POST /api/teacher/assistant ───────────────────────────────────────────────
@@ -289,9 +336,13 @@ def teacher_assistant():
     level        = (body.get("level") or "").strip()
     class_id     = (body.get("class_id") or "").strip() or None
     chat_history: list[dict] = body.get("chat_history") or []
+    file_data    = (body.get("file_data") or "").strip()
+    media_type   = (body.get("media_type") or "").strip().lower()
 
-    if not message:
+    if not message and not file_data:
         return jsonify({"error": "message is required"}), 400
+    if not message:
+        message = "(See attached file)"
 
     if action_type not in _ACTION_TYPES:
         return jsonify({"error": f"Unknown action_type. Valid: {sorted(_ACTION_TYPES)}"}), 400
@@ -353,13 +404,24 @@ def teacher_assistant():
         perf_data = _class_performance_data(class_id)
         system += f"\n\nCLASS PERFORMANCE DATA:\n{perf_data}"
 
+    # ── File attachment handling ───────────────────────────────────────────────
+    image_bytes: bytes | None = None
+    if file_data and media_type in ("image", "pdf", "word"):
+        image_bytes, file_text = _extract_file_text(file_data, media_type)
+        if file_text:
+            message = f"{message}\n\n[Attached {media_type.upper()} content:]\n{file_text}"
+        if image_bytes:
+            system += f"\n\nThe teacher has attached an image. Analyse its content as part of your response."
+        elif media_type in ("pdf", "word"):
+            system += f"\n\nThe teacher has attached a {media_type.upper()} document. Its text content is included in the message."
+
     # ── Action-specific instruction appended to user message ─────────────────
     action_instruction = _ACTION_PROMPTS[action_type]
     augmented_message  = f"{action_instruction}\n\n{message}"
 
     # ── Call model ────────────────────────────────────────────────────────────
     _t0 = time.time()
-    raw_response = _call_model(system, chat_history, augmented_message)
+    raw_response = _call_model(system, chat_history, augmented_message, image_bytes)
     _latency_ms  = int((time.time() - _t0) * 1000)
 
     # ── Parse structured outputs ──────────────────────────────────────────────

@@ -686,10 +686,12 @@ def demo_teacher_assistant():
     if _guard():
         return jsonify({"error": "Not available in production"}), 403
 
-    body = request.get_json(silent=True) or {}
+    body        = request.get_json(silent=True) or {}
     action_type = (body.get("action_type") or "chat").strip().lower()
     curriculum  = body.get("curriculum") or "ZIMSEC"
     level       = body.get("level") or "Form 2"
+    file_data   = (body.get("file_data") or "").strip()
+    media_type  = (body.get("media_type") or "").strip().lower()
 
     canned = _DEMO_ASSISTANT_RESPONSES.get(action_type, _DEMO_ASSISTANT_RESPONSES["chat"])
     resp = dict(canned)
@@ -697,8 +699,18 @@ def demo_teacher_assistant():
     resp["curriculum"]      = curriculum
     resp["level"]           = level
 
-    logger.info("[demo/teacher/assistant] action_type=%s curriculum=%s level=%s",
-                action_type, curriculum, level)
+    # When a file is attached, prepend a short note to the canned text response
+    if file_data and media_type in ("image", "pdf", "word"):
+        file_label = {"image": "image", "pdf": "PDF document", "word": "Word document"}.get(media_type, "file")
+        if "response" in resp:
+            resp["response"] = (
+                f"I can see the {file_label} you've shared. "
+                f"In the live version of Neriah, I'd analyse its content and tailor my response. "
+                f"For now, here's what I'd typically suggest:\n\n{resp['response']}"
+            )
+
+    logger.info("[demo/teacher/assistant] action_type=%s curriculum=%s level=%s file=%s",
+                action_type, curriculum, level, media_type or "none")
     return jsonify(resp), 200
 
 

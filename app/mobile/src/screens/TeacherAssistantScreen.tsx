@@ -4,9 +4,12 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -21,6 +24,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -287,6 +293,12 @@ export default function TeacherAssistantScreen() {
   const [exporting, setExporting]         = useState(false);
   const [toastMsg, setToastMsg]           = useState('');
   const [toastVisible, setToastVisible]   = useState(false);
+  const [attachment, setAttachment]       = useState<{
+    data: string;
+    type: 'image' | 'pdf' | 'word';
+    name: string;
+    uri?: string;
+  } | null>(null);
 
   const flatRef   = useRef<FlatList<ChatMessage>>(null);
   const userId    = user?.id ?? 'unknown';
@@ -336,19 +348,76 @@ export default function TeacherAssistantScreen() {
     setTimeout(() => setToastVisible(false), 3000);
   };
 
+  // ── Attachment picker ─────────────────────────────────────────────────────
+  const pickFromCamera = useCallback(async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { showToast('Camera permission is required.'); return; }
+    const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8 });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    setAttachment({ data: asset.base64 ?? '', type: 'image', name: 'Photo', uri: asset.uri });
+  }, []);
+
+  const pickFromGallery = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { showToast('Gallery permission is required.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.8, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    setAttachment({ data: asset.base64 ?? '', type: 'image', name: asset.fileName ?? 'Image', uri: asset.uri });
+  }, []);
+
+  const pickDocument = useCallback(async (docType: 'pdf' | 'word') => {
+    const mimeTypes = docType === 'pdf'
+      ? ['application/pdf']
+      : ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    const result = await DocumentPicker.getDocumentAsync({ type: mimeTypes, copyToCacheDirectory: true });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    try {
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+      setAttachment({ data: base64, type: docType, name: asset.name ?? `Document.${docType}` });
+    } catch {
+      showToast('Could not read the document. Try a different file.');
+    }
+  }, []);
+
+  const openAttachPicker = useCallback(() => {
+    const options = ['Camera', 'Photo Library', 'PDF', 'Word Document', 'Cancel'];
+    const actions = [pickFromCamera, pickFromGallery, () => pickDocument('pdf'), () => pickDocument('word')];
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: 4, title: 'Attach a file' },
+        (idx) => { if (idx < 4) actions[idx](); },
+      );
+    } else {
+      Alert.alert('Attach a file', undefined, [
+        { text: 'Camera',        onPress: pickFromCamera },
+        { text: 'Photo Library', onPress: pickFromGallery },
+        { text: 'PDF',           onPress: () => pickDocument('pdf') },
+        { text: 'Word Document', onPress: () => pickDocument('word') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  }, [pickFromCamera, pickFromGallery, pickDocument]);
+
   // ── Send message ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (
     text: string,
     forcedActionType?: AssistantActionType,
     classId?: string,
   ) => {
-    if (!text.trim() || typing) return;
+    if ((!text.trim() && !attachment) || typing) return;
     closeDrops();
+
+    const displayText = text.trim() || (attachment ? `[${attachment.name}]` : '');
+    const snap = attachment;
+    setAttachment(null);
 
     const userMsg: ChatMessage = {
       id: String(Date.now()),
       role: 'user',
-      content: text.trim(),
+      content: displayText,
       timestamp: Date.now(),
     };
     const updatedWithUser = [...messages, userMsg];
@@ -364,13 +433,14 @@ export default function TeacherAssistantScreen() {
 
     try {
       const res: AssistantResponse = await teacherAssistantChat({
-        message:          text.trim(),
+        message:          text.trim() || '(See attached file)',
         action_type:      forcedActionType,
         curriculum,
         level:            level === ALL_LEVELS ? undefined : level,
         class_id:         classId,
         chat_history:     apiHistory,
         conversation_id:  conversationId,
+        ...(snap ? { file_data: snap.data, media_type: snap.type } : {}),
       });
 
       if (res.conversation_id && !conversationId) {
@@ -655,9 +725,26 @@ export default function TeacherAssistantScreen() {
           {/* ── Input bar ── */}
           <View style={s.inputArea}>
             <Text style={s.caption}>Neriah can make mistakes. Verify important info.</Text>
+            {/* Attachment preview chip */}
+            {attachment && (
+              <View style={s.attachChip}>
+                {attachment.type === 'image' && attachment.uri ? (
+                  <Image source={{ uri: attachment.uri }} style={s.attachThumb} />
+                ) : (
+                  <Ionicons
+                    name={attachment.type === 'pdf' ? 'document-text-outline' : 'document-outline'}
+                    size={16} color={AI.teal}
+                  />
+                )}
+                <Text style={s.attachChipText} numberOfLines={1}>{attachment.name}</Text>
+                <TouchableOpacity onPress={() => setAttachment(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={AI.sub} />
+                </TouchableOpacity>
+              </View>
+            )}
             <View style={s.inputRow}>
-              <TouchableOpacity style={s.attachBtn}>
-                <Ionicons name="attach-outline" size={20} color={AI.teal} />
+              <TouchableOpacity style={s.attachBtn} onPress={openAttachPicker}>
+                <Ionicons name="attach-outline" size={20} color={attachment ? AI.teal : AI.sub} />
               </TouchableOpacity>
               <TextInput
                 style={s.input}
@@ -669,7 +756,7 @@ export default function TeacherAssistantScreen() {
                 maxLength={2000}
               />
               <TouchableOpacity
-                style={[s.sendBtn, (!input.trim() || typing) && s.sendDisabled]}
+                style={[s.sendBtn, ((!input.trim() && !attachment) || typing) && s.sendDisabled]}
                 onPress={() => {
                   // Detect action type from input keywords
                   const q = input.toLowerCase();
@@ -682,7 +769,7 @@ export default function TeacherAssistantScreen() {
                   else if (q.includes('teaching') || q.includes('method')) action = 'teaching_methods';
                   sendMessage(input, action);
                 }}
-                disabled={!input.trim() || typing}
+                disabled={(!input.trim() && !attachment) || typing}
               >
                 <Ionicons name="arrow-up" size={18} color={AI.userText} />
               </TouchableOpacity>
@@ -824,6 +911,14 @@ const s = StyleSheet.create({
   sendBtn:      { width: 38, height: 38, borderRadius: 19, backgroundColor: AI.teal, alignItems: 'center', justifyContent: 'center' },
   sendDisabled: { backgroundColor: AI.border },
   caption:      { fontSize: 11, color: AI.sub, textAlign: 'center', marginBottom: 6 },
+  attachChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: AI.chip, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 6,
+    marginBottom: 6, gap: 6,
+  },
+  attachThumb: { width: 28, height: 28, borderRadius: 4 },
+  attachChipText: { flex: 1, fontSize: 12, color: AI.teal },
 
   // Class picker modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

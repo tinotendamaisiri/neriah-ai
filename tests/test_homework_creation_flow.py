@@ -3445,7 +3445,7 @@ class TestTeacherAssistant:
         ]
         captured: dict = {}
 
-        def _capture_model(system, history, message):
+        def _capture_model(system, history, message, image_bytes=None):
             captured["history"] = history
             return "Here is an example: a=3, b=4, c=5."
 
@@ -3486,7 +3486,7 @@ class TestTeacherAssistant:
         """
         captured: dict = {}
 
-        def _capture_model(system, history, message):
+        def _capture_model(system, history, message, image_bytes=None):
             captured["system"] = system
             return "Lesson plan ready."
 
@@ -3701,7 +3701,7 @@ class TestNeriahIdentityAndRAG:
         RAG_SENTINEL = "<<ZIMSEC-FORM2-MATHEMATICS-SYLLABUS-RAG>>"
         captured_system: list[str] = []
 
-        def capturing_call_model(system, message, action_type, **kwargs):
+        def capturing_call_model(system, history, message, image_bytes=None):
             captured_system.append(system)
             return "Great lesson plan!"
 
@@ -3796,3 +3796,214 @@ class TestNeriahIdentityAndRAG:
             f"RAG sentinel not found in generate_scheme_from_text prompt.\n"
             f"Prompt: {prompt_text[:500]!r}"
         )
+
+
+# ── File attachment tests ─────────────────────────────────────────────────────
+
+class TestFileAttachments:
+    """POST /api/teacher/assistant — file attachment handling (image, PDF, Word)."""
+
+    def _post_with_attach(self, client, ta_auth_headers, body: dict):
+        return client.post(
+            "/api/teacher/assistant",
+            headers=ta_auth_headers,
+            json=body,
+        )
+
+    @feature_test("file_attach_image")
+    def test_teacher_assistant_handles_image_attachment(self, client, ta_auth_headers):
+        """
+        Integration — when file_data + media_type='image' are sent,
+        _call_model is invoked with image_bytes set (not None).
+        """
+        import base64
+        # 1×1 white PNG (minimal valid image)
+        PNG_1X1 = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00"
+            b"\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18"
+            b"\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        img_b64 = base64.b64encode(PNG_1X1).decode()
+
+        captured_image: list = []
+
+        def capturing_call_model(system, history, message, image_bytes=None):
+            captured_image.append(image_bytes)
+            return "I can see the image you have attached."
+
+        patches = _ta_patches()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=capturing_call_model)
+            )
+            resp = self._post_with_attach(client, ta_auth_headers, {
+                "message":    "Can you analyse this image?",
+                "action_type": "chat",
+                "curriculum": "ZIMSEC",
+                "level":      "Form 2",
+                "file_data":  img_b64,
+                "media_type": "image",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_image, "_call_model was not invoked"
+        assert captured_image[0] is not None, "image_bytes was None — image not passed to model"
+        assert captured_image[0] == PNG_1X1, "image_bytes content does not match uploaded image"
+
+    @feature_test("file_attach_pdf")
+    def test_teacher_assistant_handles_pdf_attachment(self, client, ta_auth_headers):
+        """
+        Integration — when file_data + media_type='pdf' are sent,
+        the extracted PDF text is appended to the message passed to _call_model.
+        """
+        import base64
+
+        FAKE_PDF_B64 = base64.b64encode(b"%PDF-1.4 fake").decode()
+        PDF_EXTRACTED_TEXT = "Question 1: Solve 2x + 5 = 11\nAnswer: x = 3"
+
+        captured_message: list[str] = []
+
+        def capturing_call_model(system, history, message, image_bytes=None):
+            captured_message.append(message)
+            return "I have reviewed the PDF. The answer to Question 1 is x = 3."
+
+        # Mock pdfplumber so we don't need a real PDF
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = PDF_EXTRACTED_TEXT
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+
+        patches = _ta_patches()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=capturing_call_model)
+            )
+            stack.enter_context(
+                patch("pdfplumber.open", return_value=mock_pdf)
+            )
+            resp = self._post_with_attach(client, ta_auth_headers, {
+                "message":    "Please review this exam paper",
+                "action_type": "chat",
+                "curriculum": "ZIMSEC",
+                "level":      "Form 4",
+                "file_data":  FAKE_PDF_B64,
+                "media_type": "pdf",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_message, "_call_model was not invoked"
+        assert PDF_EXTRACTED_TEXT in captured_message[0], (
+            f"PDF extracted text not found in message passed to model.\n"
+            f"Message: {captured_message[0][:500]!r}"
+        )
+
+    @feature_test("file_attach_word")
+    def test_teacher_assistant_handles_word_attachment(self, client, ta_auth_headers):
+        """
+        Integration — when file_data + media_type='word' are sent,
+        the extracted Word document text is appended to the message passed to _call_model.
+        """
+        import base64
+
+        FAKE_DOCX_B64 = base64.b64encode(b"PK fake docx").decode()
+        WORD_EXTRACTED_TEXT = "Learning Objectives:\n1. Understand photosynthesis\n2. Label a leaf diagram"
+
+        captured_message: list[str] = []
+
+        def capturing_call_model(system, history, message, image_bytes=None):
+            captured_message.append(message)
+            return "I have reviewed your lesson plan document."
+
+        # Mock python-docx
+        mock_para1 = MagicMock()
+        mock_para1.text = "Learning Objectives:"
+        mock_para2 = MagicMock()
+        mock_para2.text = "1. Understand photosynthesis"
+        mock_para3 = MagicMock()
+        mock_para3.text = "2. Label a leaf diagram"
+        mock_doc = MagicMock()
+        mock_doc.paragraphs = [mock_para1, mock_para2, mock_para3]
+
+        patches = _ta_patches()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=capturing_call_model)
+            )
+            stack.enter_context(
+                patch("docx.Document", return_value=mock_doc)
+            )
+            resp = self._post_with_attach(client, ta_auth_headers, {
+                "message":    "Can you review my lesson plan?",
+                "action_type": "chat",
+                "curriculum": "Cambridge",
+                "level":      "Year 9 (Lower Secondary)",
+                "file_data":  FAKE_DOCX_B64,
+                "media_type": "word",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_message, "_call_model was not invoked"
+        assert "Understand photosynthesis" in captured_message[0], (
+            f"Word extracted text not found in message passed to model.\n"
+            f"Message: {captured_message[0][:500]!r}"
+        )
+
+    @feature_test("file_attach_text_combined")
+    def test_teacher_assistant_file_plus_text_message(self, client, ta_auth_headers):
+        """
+        Integration — when both a text message and a PDF attachment are sent,
+        the final message passed to _call_model contains both the original text
+        and the extracted PDF content.
+        """
+        import base64
+
+        FAKE_PDF_B64 = base64.b64encode(b"%PDF-1.4 fake").decode()
+        PDF_TEXT = "Student Name: Tendai Moyo\nScore: 14/20"
+        USER_TEXT = "Please review this student's work"
+
+        captured_message: list[str] = []
+
+        def capturing_call_model(system, history, message, image_bytes=None):
+            captured_message.append(message)
+            return "I have reviewed Tendai Moyo's work."
+
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = PDF_TEXT
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+
+        patches = _ta_patches()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(
+                patch("functions.teacher_assistant._call_model", side_effect=capturing_call_model)
+            )
+            stack.enter_context(
+                patch("pdfplumber.open", return_value=mock_pdf)
+            )
+            resp = self._post_with_attach(client, ta_auth_headers, {
+                "message":    USER_TEXT,
+                "action_type": "chat",
+                "curriculum": "ZIMSEC",
+                "level":      "Form 3",
+                "file_data":  FAKE_PDF_B64,
+                "media_type": "pdf",
+            })
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_message, "_call_model was not invoked"
+        final_msg = captured_message[0]
+        assert USER_TEXT in final_msg, "Original user text not found in combined message"
+        assert PDF_TEXT in final_msg, "PDF extracted text not found in combined message"
