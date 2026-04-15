@@ -562,40 +562,6 @@ _DEMO_ASSISTANT_QUIZ = {
     "total_marks": 5,
 }
 
-_DEMO_ASSISTANT_PERFORMANCE = {
-    "summary": "Form 2A is performing well overall with a class average of 74%. "
-               "Most students are confident with arithmetic but struggle with algebraic manipulation.",
-    "top_students": ["Tendai Moyo (92%)", "Chido Ndlovu (88%)", "Farai Gumbo (85%)"],
-    "struggling_students": ["Blessing Chivanda (38%)", "Rutendo Makoni (44%)"],
-    "weak_topics": ["Quadratic equations", "Simultaneous equations", "Probability"],
-    "recommendations": [
-        "Dedicate 10 minutes at the start of each lesson to quadratic equation drill.",
-        "Pair top performers with struggling students for peer learning.",
-        "Use real-life examples (market prices, sports scores) for probability.",
-        "Assign Blessing and Rutendo to the after-school support group.",
-    ],
-}
-
-DEMO_CLASS_CONTEXT = {
-    "has_data": True,
-    "classes": [
-        {
-            "name":                "Form 2A",
-            "subject":             "Mathematics",
-            "education_level":     "Form 2",
-            "student_count":       3,
-            "homework_count":      2,
-            "average_score":       72.5,
-            "submission_rate":     "2/3",
-            "top_students":        ["Tendai Moyo (89%)", "Rudo Chikwanda (78%)"],
-            "struggling_students": ["Farai Dube (51%)"],
-            "weak_topics":         ["quadratic equations", "fractions"],
-        },
-    ],
-    "total_students":  3,
-    "overall_average": 72.5,
-}
-
 _DEMO_ASSISTANT_RESPONSES: dict = {
     "chat": {
         "action_type": "chat",
@@ -644,10 +610,6 @@ _DEMO_ASSISTANT_RESPONSES: dict = {
                 },
             ],
         },
-    },
-    "class_performance": {
-        "action_type": "class_performance",
-        "structured": _DEMO_ASSISTANT_PERFORMANCE,
     },
     "teaching_methods": {
         "action_type": "teaching_methods",
@@ -700,8 +662,10 @@ _DEMO_ASSISTANT_RESPONSES: dict = {
 @demo_bp.post("/demo/teacher/assistant")
 def demo_teacher_assistant():
     """
-    Pre-canned teacher AI assistant responses for the web demo.
-    Returns structured or text responses per action_type without calling Gemma.
+    Teacher AI assistant for the web demo.
+    Returns pre-canned structured responses for most action types, but pulls
+    class context from real demo Firestore data — no hardcoded class context.
+    For class_performance: returns real Firestore stats (or no-data guidance).
     """
     if _guard():
         return jsonify({"error": "Not available in production"}), 403
@@ -729,12 +693,71 @@ def demo_teacher_assistant():
             "conversation_id": f"demo-conv-{uuid.uuid4().hex[:8]}",
         }), 200
 
+    # ── Fetch real class context from demo Firestore ──────────────────────────
+    from functions.teacher_assistant import get_teacher_context_data  # noqa: PLC0415
+    needs_marks  = action_type == "class_performance"
+    teacher_ctx  = get_teacher_context_data(
+        DEMO_TEACHER_ID,
+        include_marks=needs_marks,
+    )
+    logger.info(
+        "[demo/teacher/assistant] action_type=%s has_data=%s include_marks=%s",
+        action_type, teacher_ctx.get("has_data"), needs_marks,
+    )
+
+    # ── class_performance: build response entirely from Firestore data ────────
+    if action_type == "class_performance":
+        if teacher_ctx.get("has_data"):
+            # Construct the structured performance response from real data
+            classes = teacher_ctx.get("classes", [])
+            first   = classes[0] if classes else {}
+            structured = {
+                "summary": (
+                    f"{first.get('name', 'Your class')} has an overall average of "
+                    f"{first.get('average_score', 0)}%. "
+                    f"Submission rate: {first.get('submission_rate', 'N/A')}."
+                ),
+                "top_students":        first.get("top_students", []),
+                "struggling_students": first.get("struggling_students", []),
+                "weak_topics":         first.get("weak_topics", []),
+                "recommendations": [
+                    f"Focus revision sessions on: {', '.join(first.get('weak_topics', ['key topics']))}.",
+                    "Pair top performers with struggling students for peer learning.",
+                    "Use entry tasks at the start of each lesson to activate prior knowledge.",
+                ],
+            }
+        else:
+            # Demo Firestore has no marks yet — return honest no-data response
+            structured = {
+                "summary": (
+                    "No graded submissions found yet. "
+                    "Once students submit work and you grade it, Neriah will show real insights here."
+                ),
+                "top_students":        [],
+                "struggling_students": [],
+                "weak_topics":         [],
+                "recommendations":     [
+                    "Assign a homework task to your class.",
+                    "Ask students to submit their work via the Neriah app.",
+                    "Grade their submissions to unlock performance analytics.",
+                ],
+            }
+        return jsonify({
+            "action_type":     "class_performance",
+            "structured":      structured,
+            "conversation_id": f"demo-conv-{uuid.uuid4().hex[:8]}",
+            "curriculum":      curriculum,
+            "level":           level,
+            "context_injected": teacher_ctx,
+        }), 200
+
+    # ── All other action types: pre-canned structured response + real context ──
     canned = _DEMO_ASSISTANT_RESPONSES.get(action_type, _DEMO_ASSISTANT_RESPONSES["chat"])
     resp = dict(canned)
-    resp["conversation_id"] = f"demo-conv-{uuid.uuid4().hex[:8]}"
-    resp["curriculum"]      = curriculum
-    resp["level"]           = level
-    resp["context_injected"] = DEMO_CLASS_CONTEXT
+    resp["conversation_id"]  = f"demo-conv-{uuid.uuid4().hex[:8]}"
+    resp["curriculum"]       = curriculum
+    resp["level"]            = level
+    resp["context_injected"] = teacher_ctx   # real Firestore data, not hardcoded
 
     # When a file is attached, prepend a short note to the canned text response
     if file_data and media_type in ("image", "pdf", "word"):

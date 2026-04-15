@@ -33,9 +33,11 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from shared.auth import require_role
 from shared.config import settings
-from shared.firestore_client import get_doc, query, upsert
+from shared.firestore_client import get_db, get_doc, upsert
 from shared.guardrails import (
     check_rate_limit as guardrails_rate_limit,
     log_ai_interaction,
@@ -228,50 +230,6 @@ def _rag_context(query_text: str, user_ctx: dict) -> str:
         return ""
 
 
-def _class_performance_data(class_id: str) -> str:
-    """Build a short performance summary string from Firestore for injection into prompt."""
-    try:
-        marks = query(
-            "marks",
-            [("class_id", "==", class_id), ("approved", "==", True)],
-            order_by="timestamp",
-            direction="DESCENDING",
-        )
-        if not marks:
-            return "No graded submissions found for this class."
-
-        scores = [m.get("percentage", 0.0) for m in marks if m.get("percentage") is not None]
-        avg = round(sum(scores) / len(scores), 1) if scores else 0.0
-
-        # Collect student-level averages
-        by_student: dict[str, list[float]] = {}
-        by_student_name: dict[str, str] = {}
-        for m in marks:
-            sid = m.get("student_id", "?")
-            by_student.setdefault(sid, []).append(m.get("percentage", 0.0))
-            if sid not in by_student_name:
-                by_student_name[sid] = m.get("student_name") or sid
-
-        student_avgs = {
-            sid: round(sum(ps) / len(ps), 1)
-            for sid, ps in by_student.items() if ps
-        }
-        sorted_students = sorted(student_avgs.items(), key=lambda x: x[1], reverse=True)
-        top = [by_student_name.get(s, s) for s, _ in sorted_students[:3]]
-        struggling = [by_student_name.get(s, s) for s, _ in sorted_students[-3:] if _ < 50]
-
-        lines = [
-            f"Class average: {avg}%",
-            f"Total submissions: {len(marks)}",
-            f"Top students: {', '.join(top) or 'N/A'}",
-            f"Students below 50%: {', '.join(struggling) or 'None'}",
-        ]
-        return "\n".join(lines)
-    except Exception:
-        logger.warning("teacher_assistant: class performance data unavailable")
-        return "Performance data unavailable."
-
-
 def _extract_weak_topics(marks: list[dict], top_n: int = 5) -> list[str]:
     """
     Scan verdict data on mark documents to find the most commonly-missed topics.
@@ -302,7 +260,8 @@ def get_teacher_context_data(
     include_marks: bool = False,
 ) -> dict:
     """
-    Fetch structured class and student data from Firestore for a teacher.
+    Fetch structured class and student data directly from Firestore for a teacher.
+    Uses streaming queries — no hardcoded or pre-canned data.
 
     Returns:
       {
@@ -315,51 +274,75 @@ def get_teacher_context_data(
             "student_count": int,
             "homework_count": int,
             "average_score": float | None,      # only when include_marks=True
-            "submission_rate": str | None,       # e.g. "28/32", only when include_marks=True
-            "top_students": list[str],           # "Name (pct%)", only when include_marks=True
-            "struggling_students": list[str],    # "Name (pct%)", only when include_marks=True
-            "weak_topics": list[str],            # only when include_marks=True
+            "submission_rate": str,             # e.g. "28/32", only when include_marks=True
+            "top_students": list[str],          # "Name (pct%)", only when include_marks=True
+            "struggling_students": list[str],   # "Name (pct%)", only when include_marks=True
+            "weak_topics": list[str],           # only when include_marks=True
+            "has_marks": bool,
           }
         ],
+        "total_classes": int,
         "total_students": int,
-        "overall_average": float | None,         # only when include_marks=True
+        "overall_average": float | None,        # only when include_marks=True
       }
 
     Returns {"has_data": False, "message": "No class data yet"} when teacher has no classes.
     """
     try:
-        # ── Fetch classes ─────────────────────────────────────────────────────
-        cls_filters: list = [("teacher_id", "==", teacher_id)]
+        db = get_db()
+
+        # ── 1. Fetch all classes for this teacher ─────────────────────────────
+        cls_ref = db.collection("classes").where(
+            filter=FieldFilter("teacher_id", "==", teacher_id)
+        )
+        classes_raw = []
+        for doc in cls_ref.stream():
+            data = doc.to_dict()
+            data.setdefault("id", doc.id)
+            classes_raw.append(data)
+
+        # Narrow to a specific class when class_id is supplied
         if class_id:
-            cls_filters.append(("id", "==", class_id))
-        classes_raw = query("classes", cls_filters) or []
+            classes_raw = [c for c in classes_raw if c.get("id") == class_id]
 
         if not classes_raw:
             return {
                 "has_data": False,
-                "message": "No class data yet",
-                "classes": [],
+                "message":  "No classes found for this teacher",
+                "classes":  [],
                 "total_students": 0,
             }
 
         class_summaries: list[dict] = []
-        total_students = 0
-        all_averages: list[float] = []
+        total_students  = 0
+        all_averages:    list[float] = []
 
         for cls in classes_raw:
-            cid = cls.get("id") or cls.get("class_id", "")
+            cid = cls.get("id", "")
             if not cid:
                 continue
 
-            # ── Students ──────────────────────────────────────────────────────
-            students_raw = query("students", [("class_id", "==", cid)]) or []
-            student_count = len(students_raw)
+            # ── 2. Fetch students ─────────────────────────────────────────────
+            students: list[dict] = []
+            for doc in db.collection("students").where(
+                filter=FieldFilter("class_id", "==", cid)
+            ).stream():
+                s = doc.to_dict()
+                s.setdefault("id", doc.id)
+                students.append(s)
+            student_count  = len(students)
             total_students += student_count
 
-            # ── Homework (answer_keys) ────────────────────────────────────────
-            hw_raw = query("answer_keys", [("class_id", "==", cid)]) or []
-            homework_count = len(hw_raw)
-            subject = (hw_raw[0].get("subject") if hw_raw else None) or cls.get("subject") or ""
+            # ── 3. Fetch homeworks (answer_keys) ──────────────────────────────
+            hw_docs: list[dict] = []
+            for doc in db.collection("answer_keys").where(
+                filter=FieldFilter("class_id", "==", cid)
+            ).stream():
+                h = doc.to_dict()
+                h.setdefault("id", doc.id)
+                hw_docs.append(h)
+            homework_count = len(hw_docs)
+            subject = (hw_docs[0].get("subject") if hw_docs else None) or cls.get("subject") or ""
 
             summary: dict = {
                 "name":            cls.get("name") or cid,
@@ -369,72 +352,80 @@ def get_teacher_context_data(
                 "homework_count":  homework_count,
             }
 
-            # ── Performance marks (optional) ──────────────────────────────────
+            # ── 4. Fetch marks and compute stats (optional) ───────────────────
             if include_marks:
-                marks = query(
-                    "marks",
-                    [("class_id", "==", cid), ("approved", "==", True)],
-                    order_by="timestamp",
-                    direction="DESCENDING",
-                ) or []
+                marks: list[dict] = []
+                for doc in db.collection("marks").where(
+                    filter=FieldFilter("class_id", "==", cid)
+                ).where(
+                    filter=FieldFilter("approved", "==", True)
+                ).stream():
+                    marks.append(doc.to_dict())
 
                 if marks:
-                    scores = [m.get("percentage", 0.0) for m in marks if m.get("percentage") is not None]
+                    scores = [
+                        m.get("percentage", 0.0)
+                        for m in marks if m.get("percentage") is not None
+                    ]
                     avg = round(sum(scores) / len(scores), 1) if scores else None
 
-                    # Student-level aggregation
-                    by_sid: dict[str, list[float]] = {}
-                    by_name: dict[str, str] = {}
-                    for m in marks:
-                        sid = m.get("student_id", "?")
-                        by_sid.setdefault(sid, []).append(m.get("percentage", 0.0))
-                        if sid not in by_name:
-                            by_name[sid] = m.get("student_name") or sid
-                    student_avgs = {
-                        sid: round(sum(ps) / len(ps), 1)
-                        for sid, ps in by_sid.items() if ps
+                    # ── Per-student averages ───────────────────────────────────
+                    student_scores:  dict[str, list[float]] = {}
+                    student_name_map: dict[str, str] = {
+                        s["id"]: f"{s.get('first_name', '')} {s.get('surname', '')}".strip()
+                        for s in students
                     }
-                    sorted_students = sorted(student_avgs.items(), key=lambda x: x[1], reverse=True)
+                    for m in marks:
+                        sid = m.get("student_id")
+                        if sid:
+                            student_scores.setdefault(sid, []).append(m.get("percentage", 0.0))
 
-                    submitted_count = len(set(m.get("student_id") for m in marks))
-                    submission_rate = f"{submitted_count}/{student_count}"
+                    student_avgs = {
+                        sid: round(sum(sc) / len(sc), 1)
+                        for sid, sc in student_scores.items() if sc
+                    }
+                    sorted_studs = sorted(student_avgs.items(), key=lambda x: x[1], reverse=True)
+                    submitted_ids = set(m.get("student_id") for m in marks if m.get("student_id"))
 
                     top = [
-                        f"{by_name.get(s, s)} ({pct}%)"
-                        for s, pct in sorted_students[:3]
+                        f"{student_name_map.get(s, m.get('student_name', s))} ({pct}%)"
+                        for s, pct in sorted_studs[:3]
                     ]
                     struggling = [
-                        f"{by_name.get(s, s)} ({pct}%)"
-                        for s, pct in sorted_students[-3:]
+                        f"{student_name_map.get(s, m.get('student_name', s))} ({pct}%)"
+                        for s, pct in sorted_studs[-3:]
                         if pct < 50
                     ]
-                    weak_topics = _extract_weak_topics(marks)
 
                     summary.update({
-                        "average_score":        avg,
-                        "submission_rate":      submission_rate,
-                        "top_students":         top,
-                        "struggling_students":  struggling,
-                        "weak_topics":          weak_topics,
+                        "average_score":       avg,
+                        "submission_rate":     f"{len(submitted_ids)}/{student_count}",
+                        "top_students":        top,
+                        "struggling_students": struggling,
+                        "weak_topics":         _extract_weak_topics(marks),
+                        "has_marks":           True,
                     })
                     if avg is not None:
                         all_averages.append(avg)
                 else:
                     summary.update({
-                        "average_score":        None,
-                        "submission_rate":      f"0/{student_count}",
-                        "top_students":         [],
-                        "struggling_students":  [],
-                        "weak_topics":          [],
+                        "average_score":       None,
+                        "submission_rate":     f"0/{student_count}",
+                        "top_students":        [],
+                        "struggling_students": [],
+                        "weak_topics":         [],
+                        "has_marks":           False,
                     })
 
             class_summaries.append(summary)
 
-        overall_avg = round(sum(all_averages) / len(all_averages), 1) if all_averages else None
+        has_any_marks   = any(c.get("has_marks", False) for c in class_summaries)
+        overall_avg     = round(sum(all_averages) / len(all_averages), 1) if all_averages else None
 
         result: dict = {
-            "has_data":       True,
-            "classes":        class_summaries,
+            "has_data":      has_any_marks if include_marks else bool(class_summaries),
+            "classes":       class_summaries,
+            "total_classes": len(class_summaries),
             "total_students": total_students,
         }
         if include_marks:

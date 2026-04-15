@@ -4756,12 +4756,35 @@ class TestTeacherAssistantContextInjection:
             return self._MARKS
         return []
 
+    # Firestore context returned by get_teacher_context_data mock
+    _CTX_WITH_DATA = {
+        "has_data": True,
+        "classes": [{
+            "name": "Form 2B", "subject": "Mathematics", "education_level": "Form 2",
+            "student_count": 3, "homework_count": 2,
+            "average_score": 67.0, "submission_rate": "3/3",
+            "top_students": ["Tendai Moyo (89%)", "Chido Ndlovu (78%)"],
+            "struggling_students": ["Farai Dube (34%)"],
+            "weak_topics": ["quadratic equations"],
+            "has_marks": True,
+        }],
+        "total_classes": 1,
+        "total_students": 3,
+        "overall_average": 67.0,
+    }
+    _CTX_NO_DATA = {
+        "has_data": False,
+        "message": "No classes found for this teacher",
+        "classes": [],
+        "total_students": 0,
+    }
+
     # ── Test 1: fetches real class data ───────────────────────────────────────
 
     @feature_test("teacher_assistant_pulls_class_data")
     def test_teacher_assistant_fetches_real_class_data(self, client, auth_headers):
         """
-        Mock Firestore with 1 class and 3 students with marks.
+        Mock get_teacher_context_data returning 1 class with marks.
         POST /api/teacher/assistant with message="How is my class performing?"
         Assert system prompt includes class name and student data (rich JSON path).
         """
@@ -4778,7 +4801,7 @@ class TestTeacherAssistantContextInjection:
             })
 
         with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
-             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
+             patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_WITH_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
              patch("functions.teacher_assistant.get_user_context", return_value={"curriculum": "ZIMSEC", "education_level": "Form 2"}), \
@@ -4803,13 +4826,10 @@ class TestTeacherAssistantContextInjection:
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert captured_system, "Model was never called — no system prompt captured"
         system_used = captured_system[0]
-        # System prompt must contain the class section header
         assert "TEACHER'S CLASS DATA" in system_used, \
             "System prompt must contain TEACHER'S CLASS DATA section"
-        # Because this is a performance query, rich JSON must be injected
         assert "Form 2B" in system_used, \
             "System prompt must mention the teacher's class name from Firestore"
-        # Student data (from marks) should be referenced
         assert "Tendai Moyo" in system_used or "89" in system_used, \
             "System prompt must include student names or scores from Firestore marks"
 
@@ -4818,7 +4838,7 @@ class TestTeacherAssistantContextInjection:
     @feature_test("teacher_assistant_no_data_graceful")
     def test_teacher_assistant_handles_no_data(self, client, auth_headers):
         """
-        Mock Firestore returning empty classes.
+        Mock get_teacher_context_data returning no classes.
         POST /api/teacher/assistant with "How are my students doing?"
         Assert response tells teacher there is no data yet and suggests next steps.
         """
@@ -4829,7 +4849,7 @@ class TestTeacherAssistantContextInjection:
             return "Happy to help once your class is set up!"
 
         with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
-             patch("functions.teacher_assistant.query", return_value=[]), \
+             patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_NO_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
              patch("functions.teacher_assistant.get_user_context", return_value={}), \
@@ -4851,7 +4871,6 @@ class TestTeacherAssistantContextInjection:
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert captured_system, "Model was never called"
         system_used = captured_system[0]
-        # System prompt must tell the model there is no data + suggest next steps
         assert "TEACHER'S CLASS DATA" in system_used, \
             "TEACHER'S CLASS DATA section must always be present"
         assert (
@@ -4866,7 +4885,7 @@ class TestTeacherAssistantContextInjection:
     @feature_test("teacher_assistant_context_always_injected")
     def test_class_context_injected_for_all_messages(self, client, auth_headers):
         """
-        Mock Firestore with class data.
+        Mock get_teacher_context_data with class data.
         POST /api/teacher/assistant with action_type='chat' (non-performance).
         Assert Gemma prompt includes teacher's class name and education level.
         """
@@ -4877,7 +4896,7 @@ class TestTeacherAssistantContextInjection:
             return "Great teaching idea!"
 
         with patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
-             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
+             patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_WITH_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
              patch("functions.teacher_assistant.get_user_context", return_value={}), \
@@ -4900,7 +4919,6 @@ class TestTeacherAssistantContextInjection:
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert systems_seen, "Model was never called"
         system_used = systems_seen[0]
-        # Class name must appear even for non-performance action types
         assert "TEACHER'S CLASS DATA" in system_used, \
             "Class context must be injected for non-performance action types too"
         assert "Form 2B" in system_used, \
@@ -4976,3 +4994,165 @@ class TestTeacherAssistantContextInjection:
         assert include_marks_calls, "get_teacher_context_data was never called"
         assert include_marks_calls[0] is True, \
             "Performance query must call get_teacher_context_data with include_marks=True"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUITE — No hardcoded data; real Firestore streaming
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTeacherAssistantNoHardcodedData:
+    """
+    Verify that all hardcoded demo class data has been removed and that
+    get_teacher_context_data uses real Firestore streaming queries.
+    """
+
+    # ── Test 1: no hardcoded data in source files ─────────────────────────────
+
+    @feature_test("teacher_assistant_no_hardcoded_data")
+    def test_no_hardcoded_class_data_in_codebase(self):
+        """
+        Read functions/teacher_assistant.py and functions/demo.py.
+        Assert DEMO_CLASS_CONTEXT does not exist anywhere.
+        Assert hardcoded averages like '72.5' are gone.
+        Assert hardcoded class names like '"Form 2A"' are not in the assistant code.
+        """
+        import os
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ta_path   = os.path.join(base, "functions", "teacher_assistant.py")
+        demo_path = os.path.join(base, "functions", "demo.py")
+
+        with open(ta_path) as f:
+            ta_src = f.read()
+        with open(demo_path) as f:
+            demo_src = f.read()
+
+        combined = ta_src + demo_src
+
+        assert "DEMO_CLASS_CONTEXT" not in combined, \
+            "DEMO_CLASS_CONTEXT must be completely removed from both files"
+        assert "_DEMO_ASSISTANT_PERFORMANCE" not in combined, \
+            "_DEMO_ASSISTANT_PERFORMANCE hardcoded dict must be removed"
+        # The hardcoded average '72.5' that was in DEMO_CLASS_CONTEXT must be gone
+        assert '"overall_average": 72.5' not in combined and "'overall_average': 72.5" not in combined, \
+            "Hardcoded overall_average 72.5 must not appear in source files"
+
+    # ── Test 2: get_teacher_context_data reads real Firestore ─────────────────
+
+    @feature_test("teacher_assistant_reads_firestore_classes")
+    def test_teacher_context_reads_firestore(self):
+        """
+        Mock Firestore with 2 real classes and marks.
+        Call get_teacher_context_data(teacher_id) directly.
+        Assert classes list has 2 items with student_count from the mock query.
+        """
+        from functions.teacher_assistant import get_teacher_context_data
+
+        # Two classes, each with students and marks
+        class_a_doc = MagicMock()
+        class_a_doc.id = "class-a"
+        class_a_doc.to_dict.return_value = {
+            "teacher_id": TEACHER_ID, "name": "Form 2A", "education_level": "Form 2"
+        }
+        class_b_doc = MagicMock()
+        class_b_doc.id = "class-b"
+        class_b_doc.to_dict.return_value = {
+            "teacher_id": TEACHER_ID, "name": "Form 3B", "education_level": "Form 3"
+        }
+
+        def make_student_doc(sid, first, surname, class_id):
+            d = MagicMock()
+            d.id = sid
+            d.to_dict.return_value = {"class_id": class_id, "first_name": first, "surname": surname}
+            return d
+
+        def make_hw_doc(hwid, class_id):
+            d = MagicMock()
+            d.id = hwid
+            d.to_dict.return_value = {"class_id": class_id, "subject": "Mathematics"}
+            return d
+
+        # Set up mock Firestore db
+        mock_db = MagicMock()
+
+        # Track call order so students/homeworks/marks can return per-class data
+        students_call_count = [0]
+        hw_call_count       = [0]
+
+        def collection_side_effect(name):
+            col = MagicMock()
+            if name == "classes":
+                q = MagicMock()
+                q.where.return_value = q
+                q.stream.return_value = [class_a_doc, class_b_doc]
+                col.where.return_value = q
+            elif name == "students":
+                def students_where(filter):
+                    q = MagicMock()
+                    n = students_call_count[0]
+                    students_call_count[0] += 1
+                    if n == 0:
+                        q.stream.return_value = [
+                            make_student_doc("s1", "Tendai", "Moyo",   "class-a"),
+                            make_student_doc("s2", "Chido",  "Ndlovu", "class-a"),
+                        ]
+                    else:
+                        q.stream.return_value = [
+                            make_student_doc("s3", "Farai", "Dube", "class-b"),
+                        ]
+                    return q
+                col.where.side_effect = students_where
+            elif name == "answer_keys":
+                def hw_where(filter):
+                    q = MagicMock()
+                    n = hw_call_count[0]
+                    hw_call_count[0] += 1
+                    q.stream.return_value = [make_hw_doc(f"hw{n}", "class-a" if n == 0 else "class-b")]
+                    return q
+                col.where.side_effect = hw_where
+            else:
+                q = MagicMock()
+                q.where.return_value = q
+                q.stream.return_value = []
+                col.where.return_value = q
+            return col
+
+        mock_db.collection.side_effect = collection_side_effect
+
+        with patch("functions.teacher_assistant.get_db", return_value=mock_db):
+            result = get_teacher_context_data(TEACHER_ID)
+
+        assert result["has_data"] is True, "has_data must be True when classes exist"
+        assert len(result["classes"]) == 2, \
+            f"Expected 2 classes from Firestore, got {len(result['classes'])}"
+        assert result["total_students"] == 3, \
+            "total_students must be sum of all students from Firestore queries"
+        names = {c["name"] for c in result["classes"]}
+        assert "Form 2A" in names and "Form 3B" in names, \
+            "Class names must come from Firestore documents, not hardcoded values"
+
+    # ── Test 3: empty Firestore returns has_data=False gracefully ─────────────
+
+    @feature_test("teacher_assistant_empty_firestore_graceful")
+    def test_teacher_context_returns_no_data_when_firestore_empty(self):
+        """
+        Mock Firestore returning empty classes collection.
+        Call get_teacher_context_data(teacher_id).
+        Assert has_data=False and message field is present.
+        """
+        from functions.teacher_assistant import get_teacher_context_data
+
+        mock_db = MagicMock()
+        empty_query = MagicMock()
+        empty_query.stream.return_value = []
+        empty_query.where.return_value = empty_query
+        mock_db.collection.return_value.where.return_value = empty_query
+
+        with patch("functions.teacher_assistant.get_db", return_value=mock_db):
+            result = get_teacher_context_data(TEACHER_ID)
+
+        assert result["has_data"] is False, \
+            "has_data must be False when Firestore returns no classes"
+        assert "message" in result, \
+            "Result must include a message field explaining there is no data"
+        assert result["classes"] == [], \
+            "classes list must be empty when Firestore is empty"
