@@ -2562,6 +2562,61 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
   const [saving,          setSaving]         = useState(false);
   const [error,           setError]          = useState('');
 
+  // ── Bulk student import state ─────────────────────────────────────────────
+  type ExtractedStudent = { first_name: string; surname: string; include: boolean };
+  const [bulkCameraOpen,    setBulkCameraOpen]    = useState(false);
+  const [bulkExtracting,    setBulkExtracting]    = useState(false);
+  const [extractedStudents, setExtractedStudents] = useState<ExtractedStudent[]>([]);
+  const [confirmOpen,       setConfirmOpen]       = useState(false);
+  const [confirmedStudents, setConfirmedStudents] = useState<{ first_name: string; surname: string }[]>([]);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
+
+  async function _runExtraction(base64: string, mediaType: 'image' | 'pdf') {
+    setBulkExtracting(true);
+    try {
+      const res = await demoFetch('/demo/teacher/assistant', {
+        method: 'POST',
+        body: JSON.stringify({ action_type: 'extract_students', file_data: base64, media_type: mediaType }),
+      });
+      const students = ((res as { students?: { first_name: string; surname: string }[] })?.students ?? []);
+      if (students.length > 0) {
+        setExtractedStudents(students.map(s => ({ ...s, include: true })));
+        setConfirmOpen(true);
+      }
+    } catch { /* ignore */ } finally {
+      setBulkExtracting(false);
+    }
+  }
+
+  function handleBulkCameraCapture(base64: string, _mimeType: string) {
+    setBulkCameraOpen(false);
+    _runExtraction(base64, 'image');
+  }
+
+  function handleBulkFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const mediaType: 'image' | 'pdf' = file.type.includes('pdf') ? 'pdf' : 'image';
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64  = dataUrl.split(',')[1];
+      _runExtraction(base64, mediaType);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
+  function toggleStudent(i: number) {
+    setExtractedStudents(prev => prev.map((s, idx) => idx === i ? { ...s, include: !s.include } : s));
+  }
+
+  function handleConfirmStudents() {
+    const confirmed = extractedStudents.filter(s => s.include).map(s => ({ first_name: s.first_name, surname: s.surname }));
+    setConfirmedStudents(confirmed);
+    setConfirmOpen(false);
+  }
+
   async function handleCreate() {
     if (!name.trim())           { setError('Class name is required.');      return; }
     if (!educationLevel.trim()) { setError('Education level is required.'); return; }
@@ -2578,22 +2633,30 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
           teacher_id: 'demo-teacher-1',
         }),
       });
-      if (res) {
-        onCreate(res as DemoClass);
-      } else {
-        // Offline fallback — construct local class
-        onCreate({
-          id:              `local-${Date.now()}`,
-          name:            name.trim(),
-          subject:         subject.trim(),
-          education_level: educationLevel,
-          description:     description.trim(),
-          join_code:       Math.random().toString(36).slice(2, 8).toUpperCase(),
-          student_count:   0,
-          homework_count:  0,
-          created_at:      new Date().toISOString(),
+      const cls: DemoClass = res
+        ? (res as DemoClass)
+        : {
+            id:              `local-${Date.now()}`,
+            name:            name.trim(),
+            subject:         subject.trim(),
+            education_level: educationLevel,
+            description:     description.trim(),
+            join_code:       Math.random().toString(36).slice(2, 8).toUpperCase(),
+            student_count:   0,
+            homework_count:  0,
+            created_at:      new Date().toISOString(),
+          };
+
+      // Batch-create confirmed students
+      if (confirmedStudents.length > 0) {
+        await demoFetch('/demo/students/batch', {
+          method: 'POST',
+          body: JSON.stringify({ class_id: cls.id, students: confirmedStudents }),
         });
+        cls.student_count = confirmedStudents.length;
       }
+
+      onCreate(cls);
     } finally {
       setSaving(false);
     }
@@ -2672,6 +2735,89 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
           />
         </div>
 
+        {/* ── OR IMPORT CLASS REGISTER ─────────────────────────────────────── */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1, height: 1, background: C.border }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+              or import class register
+            </span>
+            <div style={{ flex: 1, height: 1, background: C.border }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            {/* Camera button */}
+            <button
+              type="button"
+              onClick={() => setBulkCameraOpen(true)}
+              disabled={bulkExtracting}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                padding: '11px 8px', background: C.tealLt, border: `1.5px solid ${C.teal100}`,
+                borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 600, color: C.teal, opacity: bulkExtracting ? 0.6 : 1,
+              }}
+            >
+              <Camera size={15} />
+              Take Photo
+            </button>
+
+            {/* Upload button */}
+            <button
+              type="button"
+              onClick={() => bulkFileRef.current?.click()}
+              disabled={bulkExtracting}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                padding: '11px 8px', background: C.tealLt, border: `1.5px solid ${C.teal100}`,
+                borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 600, color: C.teal, opacity: bulkExtracting ? 0.6 : 1,
+              }}
+            >
+              <FileText size={15} />
+              Upload PDF / Image
+            </button>
+            <input
+              ref={bulkFileRef}
+              type="file"
+              accept=".pdf,image/*"
+              style={{ display: 'none' }}
+              onChange={handleBulkFile}
+            />
+          </div>
+
+          {bulkExtracting && (
+            <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 13, color: C.g500 }}>
+              Extracting student names…
+            </div>
+          )}
+
+          {/* Confirmed students preview */}
+          {confirmedStudents.length > 0 && !confirmOpen && (
+            <div style={{
+              marginTop: 10, background: C.tealLt, border: `1px solid ${C.teal100}`,
+              borderRadius: 10, padding: '10px 12px',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.teal, marginBottom: 6 }}>
+                {confirmedStudents.length} students ready to add
+              </div>
+              {confirmedStudents.slice(0, 3).map((s, i) => (
+                <div key={i} style={{ fontSize: 12, color: C.tealDk }}>{s.first_name} {s.surname}</div>
+              ))}
+              {confirmedStudents.length > 3 && (
+                <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>+{confirmedStudents.length - 3} more</div>
+              )}
+              <button
+                type="button"
+                onClick={() => setConfirmedStudents([])}
+                style={{ marginTop: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: C.red, padding: 0, fontFamily: 'inherit' }}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
         {error && (
           <div style={{ background: C.redLt, border: `1px solid ${C.red200}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: C.red700 }}>
             {error}
@@ -2695,6 +2841,90 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
           {saving ? 'Creating…' : 'Create Class'}
         </button>
       </div>
+
+      {/* ── WebCameraModal for bulk import ─────────────────────────────────── */}
+      <WebCameraModal
+        open={bulkCameraOpen}
+        onCapture={handleBulkCameraCapture}
+        onClose={() => setBulkCameraOpen(false)}
+      />
+
+      {/* ── Student confirmation modal ──────────────────────────────────────── */}
+      {confirmOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: C.white, borderRadius: '16px 16px 0 0',
+            width: '100%', maxWidth: 420, maxHeight: '70vh',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            boxShadow: '0 -4px 24px rgba(0,0,0,0.15)',
+          }}>
+            {/* Modal header */}
+            <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>
+                {extractedStudents.length} Students Found
+              </div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>
+                Uncheck any students to exclude them
+              </div>
+            </div>
+
+            {/* Student list */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+              {extractedStudents.map((s, i) => (
+                <label
+                  key={i}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 16px', cursor: 'pointer',
+                    borderBottom: i < extractedStudents.length - 1 ? `1px solid ${C.g100}` : 'none',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={s.include}
+                    onChange={() => toggleStudent(i)}
+                    style={{ width: 16, height: 16, accentColor: C.teal, flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 14, color: s.include ? C.text : C.g400, flex: 1 }}>
+                    {s.first_name} {s.surname}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 10, flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                style={{
+                  flex: 1, padding: '12px 0', background: 'none',
+                  border: `1.5px solid ${C.border}`, borderRadius: 10,
+                  fontSize: 14, fontWeight: 600, color: C.g700,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Skip
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmStudents}
+                style={{
+                  flex: 2, padding: '12px 0', background: C.teal,
+                  border: 'none', borderRadius: 10,
+                  fontSize: 14, fontWeight: 700, color: C.white,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Add {extractedStudents.filter(s => s.include).length} Students
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Screen>
   );
 }
@@ -3851,22 +4081,24 @@ function HomeworkDetailScreen({
             </div>
           </div>
 
-          {/* Grade All button */}
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
-            <button
-              onClick={onGradeAll}
-              style={{
-                width: '100%', background: C.teal, border: 'none', borderRadius: 9, padding: '11px 0',
-                cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                boxShadow: '0 3px 10px rgba(13,115,119,0.25)', transition: 'opacity 0.15s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-              onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-            >
-              <Sparkles size={13} /> Grade All with AI
-            </button>
-          </div>
+          {/* Grade All button — only shown when an answer key with questions is confirmed */}
+          {hw.answer_key_id && questions.length > 0 && (
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+              <button
+                onClick={onGradeAll}
+                style={{
+                  width: '100%', background: C.teal, border: 'none', borderRadius: 9, padding: '11px 0',
+                  cursor: 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  boxShadow: '0 3px 10px rgba(13,115,119,0.25)', transition: 'opacity 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+              >
+                <Sparkles size={13} /> Grade All with AI
+              </button>
+            </div>
+          )}
 
           {/* Submissions list — sorted earliest first */}
           {DEMO_SUBMISSIONS.length === 0 ? (
@@ -4640,7 +4872,23 @@ function StudentSubmissionSuccessScreen({
 function StudentResultsScreen({
   onBack, gradingComplete, onViewFeedback,
 }: { onBack: () => void; gradingComplete: boolean; onViewFeedback: () => void }) {
-  const [tab, setTab] = useState<'pending' | 'graded'>('pending');
+  const [tab, setTab]         = useState<'pending' | 'graded'>('pending');
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+
+  // Simulate async results fetch with a 10-second timeout guard.
+  // In the demo the data is pre-canned, so isLoading resolves quickly.
+  // The timeout ensures we never show an infinite spinner.
+  useEffect(() => {
+    setIsLoading(true);
+    setLoadError(false);
+    const resolveTimer = setTimeout(() => setIsLoading(false), 600);
+    const timeoutTimer = setTimeout(() => {
+      setIsLoading(false);
+      setLoadError(true);
+    }, 10_000);
+    return () => { clearTimeout(resolveTimer); clearTimeout(timeoutTimer); };
+  }, []);
 
   useEffect(() => { if (gradingComplete) setTab('graded'); }, [gradingComplete]);
 
@@ -4689,8 +4937,20 @@ function StudentResultsScreen({
           <div style={{ textAlign: 'center', color: C.g400, fontSize: 13, padding: '32px 0' }}>No pending submissions</div>
         )}
 
-        {/* Graded: empty until teacher grades */}
-        {tab === 'graded' && !gradingComplete && (
+        {/* Graded: loading / error / empty / result */}
+        {tab === 'graded' && !gradingComplete && isLoading && (
+          <div style={{ textAlign: 'center', padding: '40px 0 24px', color: C.g400, fontSize: 13 }}>
+            Loading results…
+          </div>
+        )}
+        {tab === 'graded' && !gradingComplete && !isLoading && loadError && (
+          <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><AlertTriangle size={28} color={C.g400} /></div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>Could not load results</div>
+            <div style={{ fontSize: 12, color: C.g500, lineHeight: 1.5 }}>Pull to refresh or check your connection.</div>
+          </div>
+        )}
+        {tab === 'graded' && !gradingComplete && !isLoading && !loadError && (
           <div style={{ textAlign: 'center', padding: '40px 0 24px' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><ClipboardList size={28} color={C.g500} /></div>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.g700, marginBottom: 6 }}>No results yet</div>
@@ -5196,11 +5456,25 @@ function AnalyticsScreen({
 }) {
   const [analytics, setAnalytics] = useState<DemoClassAnalytics>(DEMO_CLASS_ANALYTICS);
 
-  // Try to fetch live data; fall back to pre-canned
+  // Try to fetch live data; fall back to pre-canned.
+  // AbortController cancels in-flight request on unmount or demoToken change,
+  // preventing state updates on stale responses.
   useEffect(() => {
-    demoFetch(`/demo/analytics/class/${DEMO_CLASS_ANALYTICS.class_id}`, {}, demoToken)
-      .then(data => { if (data && Array.isArray(data.students)) setAnalytics(data as DemoClassAnalytics); })
-      .catch(() => {});
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      demoFetch(
+        `/demo/analytics/class/${DEMO_CLASS_ANALYTICS.class_id}`,
+        { signal: controller.signal },
+        demoToken,
+      )
+        .then(data => {
+          if (!controller.signal.aborted && data && Array.isArray((data as DemoClassAnalytics).students)) {
+            setAnalytics(data as DemoClassAnalytics);
+          }
+        })
+        .catch(() => {}); // absorb abort and network errors silently
+    }, 150); // 150 ms debounce — avoids redundant calls on rapid mount/unmount
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [demoToken]);
 
   const highestScore = Math.max(...analytics.students.map(s => s.latest_score));
