@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import {
-  Camera, ImageIcon, File, FileText, Pencil,
+  Camera, ImageIcon, File, FileText, Pencil, Paperclip, ArrowUp,
   Home, BarChart2, Settings, Upload, Download,
   GraduationCap, Briefcase, ClipboardList,
   HelpCircle, Star, Inbox,
@@ -3208,13 +3208,18 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             marginBottom: 6 }}>
             {attachment.type === 'image' && attachment.previewUrl ? (
               <img src={attachment.previewUrl} alt="" style={{ width: 28, height: 28, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
+            ) : attachment.type === 'pdf' ? (
+              <FileText size={16} color={C.teal} style={{ flexShrink: 0 }} />
             ) : (
-              <span style={{ fontSize: 16 }}>{attachment.type === 'pdf' ? '📄' : '📝'}</span>
+              <File size={16} color={C.teal} style={{ flexShrink: 0 }} />
             )}
             <span style={{ flex: 1, fontSize: 12, color: C.teal, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {attachment.name}
             </span>
-            <button onClick={() => setAttachment(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: C.g500, fontSize: 14 }}>✕</button>
+            <button onClick={() => setAttachment(null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' }}>
+              <X size={14} color={C.g500} />
+            </button>
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8,
@@ -3226,22 +3231,25 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               style={{ width: 34, height: 34, borderRadius: 17, flexShrink: 0,
                 background: 'none', border: 'none',
                 cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 16, color: attachment ? C.teal : C.g500 }}>📎</span>
+              <Paperclip size={18} color={attachment ? C.teal : C.g500} />
             </button>
             {showAttachMenu && (
               <div style={{ position: 'absolute', bottom: 42, left: 0, zIndex: 50,
                 background: C.white, border: `1px solid ${C.g200}`, borderRadius: 12,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 160, overflow: 'hidden' }}
+                boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 172, overflow: 'hidden' }}
                 onClick={e => e.stopPropagation()}>
                 {[
-                  { label: '🖼️  Photo Library', onClick: () => imgInputRef.current?.click() },
-                  { label: '📄  PDF Document',  onClick: () => pdfInputRef.current?.click() },
-                  { label: '📝  Word Document', onClick: () => wordInputRef.current?.click() },
+                  { icon: <ImageIcon size={18} color={C.teal} />, label: 'Gallery',       onClick: () => imgInputRef.current?.click() },
+                  { icon: <FileText  size={18} color={C.teal} />, label: 'PDF Document',  onClick: () => pdfInputRef.current?.click() },
+                  { icon: <File      size={18} color={C.teal} />, label: 'Word Document', onClick: () => wordInputRef.current?.click() },
                 ].map(opt => (
                   <button key={opt.label} onClick={() => { opt.onClick(); setShowAttachMenu(false); }}
-                    style={{ display: 'block', width: '100%', textAlign: 'left',
-                      padding: '10px 14px', background: 'none', border: 'none',
-                      cursor: 'pointer', fontSize: 13, color: C.text, fontFamily: 'inherit' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                      padding: '12px 14px', background: 'none', border: 'none',
+                      cursor: 'pointer', fontSize: 13, color: C.text, fontFamily: 'inherit' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = C.primaryLight)}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
+                    {opt.icon}
                     {opt.label}
                   </button>
                 ))}
@@ -3264,7 +3272,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               border: 'none', cursor: (input.trim() || attachment) && !typing ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'background 0.15s' }}>
-            <span style={{ color: C.white, fontSize: 14, lineHeight: 1 }}>↑</span>
+            <ArrowUp size={16} color={C.white} />
           </button>
         </div>
       </div>
