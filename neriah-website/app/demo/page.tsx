@@ -522,10 +522,16 @@ const COMMON_SUBJECTS = [
   'Fashion and Fabrics', 'Technical Graphics', 'Building Studies',
 ];
 
+// ── Shared: scrollbar-hiding CSS ──────────────────────────────────────────────
+const SCROLLBAR_HIDE_CSS = `
+.neriah-screen::-webkit-scrollbar { display: none; }
+.neriah-screen { scrollbar-width: none; -ms-overflow-style: none; }
+`;
+
 // ── Shared: screen scroll wrapper ─────────────────────────────────────────────
 function Screen({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{
+    <div className="neriah-screen" style={{
       flex: 1,
       overflowY: 'auto',
       overflowX: 'hidden',
@@ -535,6 +541,7 @@ function Screen({ children, style }: { children: React.ReactNode; style?: React.
       flexDirection: 'column',
       ...style,
     }}>
+      <style>{SCROLLBAR_HIDE_CSS}</style>
       {children}
     </div>
   );
@@ -986,40 +993,30 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
   return (
     <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 60, marginBottom: 0 }}>
-        <div style={{
-          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 0,
-          background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Image
-            src="/images/logo/logo-dark-brackground.png"
-            alt="Neriah"
-            width={80} height={80}
-            style={{ objectFit: 'contain', width: '100%', height: '100%' }}
-          />
-        </div>
-        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, textAlign: 'center', marginTop: 24 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 36, marginBottom: 0 }}>
+        <BookOpen size={72} color={C.teal} />
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center', marginTop: 14 }}>
           Welcome to Neriah
         </div>
       </div>
 
       {/* Role cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 48 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 28 }}>
         {/* Teacher */}
         <button
           onClick={onTeacher}
           style={{
-            background: C.teal, border: 'none', borderRadius: 16, padding: '24px 20px',
+            background: C.teal, border: 'none', borderRadius: 16, padding: '18px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: 8, minHeight: 130, justifyContent: 'center',
+            gap: 6, minHeight: 108, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(13,115,119,0.30)', transition: 'opacity 0.15s',
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <Briefcase size={48} color={C.white} />
-          <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
-          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <Briefcase size={38} color={C.white} />
+          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I'm a Teacher</span>
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Mark exercise books with AI
           </span>
         </button>
@@ -1027,24 +1024,24 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
         {/* Student */}
         <button
           style={{
-            background: C.amber, border: 'none', borderRadius: 16, padding: '24px 20px',
+            background: C.amber, border: 'none', borderRadius: 16, padding: '18px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: 8, minHeight: 130, justifyContent: 'center',
+            gap: 6, minHeight: 108, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(245,166,35,0.30)', transition: 'opacity 0.15s',
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <GraduationCap size={48} color={C.white} />
-          <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>I'm a Student</span>
-          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <GraduationCap size={38} color={C.white} />
+          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I'm a Student</span>
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Submit work and get feedback
           </span>
         </button>
       </div>
 
       {/* Sign in link */}
-      <div style={{ marginTop: 32, textAlign: 'center', fontSize: 14, color: C.g500 }}>
+      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 14, color: C.g500 }}>
         Already have an account?{' '}
         <button
           onClick={onSignIn}
@@ -1079,22 +1076,12 @@ function PhoneScreen({
   };
 
   return (
-    <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
+    <Screen style={{ justifyContent: 'flex-start', padding: '40px 20px 24px' }}>
       {/* Branding */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}>
-        <div style={{
-          width: 80, height: 80, borderRadius: 20, overflow: 'hidden', marginBottom: 0,
-          background: C.teal50, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Image
-            src="/images/logo/logo-dark-brackground.png"
-            alt="Neriah"
-            width={80} height={80}
-            style={{ objectFit: 'contain', width: '100%', height: '100%' }}
-          />
-        </div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: C.g900 }}>Neriah</div>
-        <div style={{ fontSize: 13, color: C.g500, marginTop: 4, textAlign: 'center', lineHeight: 1.4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 24 }}>
+        <BookOpen size={64} color={C.teal} />
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.g900, marginTop: 8 }}>Neriah</div>
+        <div style={{ fontSize: 12, color: C.g500, marginTop: 4, textAlign: 'center', lineHeight: 1.4 }}>
           AI homework marking for African schools
         </div>
       </div>
@@ -1108,23 +1095,23 @@ function PhoneScreen({
           onClick={handleContinue}
           disabled={number.length < 7 || loading}
           style={{
-            marginTop: 20, background: (number.length >= 7 && !loading) ? C.teal : C.teal100,
-            border: 'none', borderRadius: 10, padding: 16,
+            marginTop: 14, background: (number.length >= 7 && !loading) ? C.teal : C.teal100,
+            border: 'none', borderRadius: 10, padding: '12px 16px',
             cursor: (number.length >= 7 && !loading) ? 'pointer' : 'not-allowed',
-            color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit', transition: 'background 0.15s',
+            color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit', transition: 'background 0.15s',
           }}
         >
           {loading ? 'Sending code…' : 'Continue'}
         </button>
       </div>
 
-      <div style={{ marginTop: 36, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6 }}>
+      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.5 }}>
         By continuing you agree to Neriah's terms of service.{'\n'}Standard SMS rates may apply.
       </div>
 
       <button
         onClick={onRegister}
-        style={{ marginTop: 14, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit' }}
+        style={{ marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 13, fontFamily: 'inherit' }}
       >
         New user? Register here
       </button>
@@ -1262,25 +1249,25 @@ function OTPScreen({
   const formatCd = (s: number) => `0:${String(s).padStart(2, '0')}`;
 
   return (
-    <Screen style={{ padding: 20, paddingTop: 28 }}>
+    <Screen style={{ padding: 16, paddingTop: 20 }}>
       <style>{OTP_SHAKE_CSS}</style>
 
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 16 }}>
         <BackButton label="Back" onClick={onBack} />
       </div>
 
       {/* Channel badge */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         {isWa
-          ? <MessageCircle size={26} color={C.waGreen} />
-          : <MessageSquare size={26} color={C.teal} />}
-        <span style={{ fontSize: 15, fontWeight: 700, color: iconColor }}>
+          ? <MessageCircle size={22} color={C.waGreen} />
+          : <MessageSquare size={22} color={C.teal} />}
+        <span style={{ fontSize: 14, fontWeight: 700, color: iconColor }}>
           {isWa ? 'Check your WhatsApp' : 'Check your SMS'}
         </span>
       </div>
 
-      <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 6 }}>Enter your code</div>
-      <div style={{ fontSize: 14, color: C.g500, lineHeight: 1.6, marginBottom: 24 }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 }}>Enter your code</div>
+      <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5, marginBottom: 18 }}>
         {isWa ? 'We sent a code to your WhatsApp' : 'We sent a code to your SMS'}{' '}
         <span style={{ color: C.text, fontWeight: 600 }}>{masked}</span>
       </div>
@@ -1327,9 +1314,9 @@ function OTPScreen({
         disabled={!allFilled || loading}
         style={{
           background: (allFilled && !loading) ? C.teal : C.teal100,
-          border: 'none', borderRadius: 10, padding: 16,
+          border: 'none', borderRadius: 10, padding: '12px 16px',
           cursor: (allFilled && !loading) ? 'pointer' : 'not-allowed',
-          color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit', marginBottom: 14,
+          color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit', marginBottom: 10,
           width: '100%', transition: 'background 0.15s',
         }}
       >
@@ -1344,7 +1331,7 @@ function OTPScreen({
           background: 'none', border: 'none',
           cursor: (cooldown > 0 || loading) ? 'not-allowed' : 'pointer',
           color: (cooldown > 0 || loading) ? C.g400 : C.teal,
-          fontWeight: 600, fontSize: 15, fontFamily: 'inherit', padding: 6,
+          fontWeight: 600, fontSize: 13, fontFamily: 'inherit', padding: 4,
           width: '100%', textAlign: 'center',
         }}
       >
@@ -3313,11 +3300,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             <span style={{ fontSize: 13, color: C.g500 }}>Your AI teaching assistant</span>
           </div>
           {/* Quick actions: pinned at bottom of scroll area, adjacent to input bar */}
-          <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          <div style={{ padding: '0 14px 10px', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
             {AI_QUICK_ACTIONS.map(a => (
               <button key={a.label} onClick={() => send(a.label, a.action)}
                 style={{ background: C.white, border: `1.5px solid ${C.teal}`,
-                  borderRadius: 10, padding: '12px 14px', color: C.teal, fontSize: 13,
+                  borderRadius: 8, padding: '8px 12px', color: C.teal, fontSize: 12,
                   fontWeight: 600, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
                 {a.label}
               </button>
