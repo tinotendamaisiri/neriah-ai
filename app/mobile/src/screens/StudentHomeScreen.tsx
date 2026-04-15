@@ -166,7 +166,7 @@ export default function StudentHomeScreen() {
       <View style={styles.header}>
         <View style={{ flex: 1 }} />
         <View style={styles.headerCenter}>
-          <Text style={styles.greeting}>{t('my_homework')}</Text>
+          <Text style={styles.greeting} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('my_homework')}</Text>
           <Text style={styles.subGreeting}>{t('hello_name').replace('{name}', firstName)}</Text>
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
