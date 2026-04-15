@@ -136,7 +136,7 @@ def _classes_for_school_name(school_name: str, search: str = "") -> list[dict]:
         all_teachers = query("teachers", [])
         teachers = [
             t for t in all_teachers
-            if sn_lower in (t.get("school_name") or t.get("school_id") or "").lower()
+            if sn_lower in (t.get("school_name") or t.get("school") or t.get("school_id") or "").lower()
         ]
 
     if not teachers:

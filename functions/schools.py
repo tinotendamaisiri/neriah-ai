@@ -86,10 +86,12 @@ def search_schools():
     try:
         teachers = query("teachers", [])
         for t in teachers:
-            sn = t.get("school_name") or ""
+            # Check both field names — some docs use "school", some use "school_name"
+            sn = t.get("school_name") or t.get("school") or ""
             if sn and q in sn.lower():
                 names.add(sn)
     except Exception:
+        logger.warning("[schools] Firestore teacher query failed in search")
         pass
 
     schools = sorted(names)[:10]

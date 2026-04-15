@@ -76,6 +76,8 @@ export default function ClassManagementScreen() {
 
   // ── School autocomplete ────────────────────────────────────────────────────
 
+  const [schoolSearching, setSchoolSearching] = useState(false);
+
   const onSchoolTextChange = (text: string) => {
     setSchoolQuery(text);
     setSelectedSchool('');
@@ -83,9 +85,23 @@ export default function ClassManagementScreen() {
     if (schoolTimerRef.current) clearTimeout(schoolTimerRef.current);
     if (text.trim().length < 2) { setSchoolSuggestions([]); return; }
     schoolTimerRef.current = setTimeout(async () => {
+      setSchoolSearching(true);
       try {
-        setSchoolSuggestions(await searchSchools(text.trim()));
-      } catch { setSchoolSuggestions([]); }
+        console.log('[ClassMgmt] searching schools for:', text.trim());
+        let results = await searchSchools(text.trim());
+        console.log('[ClassMgmt] school results:', results);
+        // Fallback: if no API results but student's own school matches, show it
+        if (results.length === 0 && user) {
+          const userSchool = (user as any).school || (user as any).school_name || '';
+          if (userSchool && text.trim().toLowerCase().split(' ').some((w: string) => userSchool.toLowerCase().includes(w))) {
+            results = [userSchool];
+          }
+        }
+        setSchoolSuggestions(results);
+      } catch (err) {
+        console.warn('[ClassMgmt] school search error:', err);
+        setSchoolSuggestions([]);
+      } finally { setSchoolSearching(false); }
     }, 300);
   };
 
@@ -257,8 +273,9 @@ export default function ClassManagementScreen() {
                   )}
                 </View>
 
-                {schoolQuery.length >= 3 && schoolSuggestions.length === 0 && !selectedSchool && (
-                  <Text style={m.hint}>No schools found — try a different name</Text>
+                {schoolSearching && <ActivityIndicator color={COLORS.teal500} size="small" style={{ marginTop: 8 }} />}
+                {!schoolSearching && schoolQuery.length >= 3 && schoolSuggestions.length === 0 && !selectedSchool && (
+                  <Text style={m.hint}>No schools found for "{schoolQuery}". Try a shorter term.</Text>
                 )}
 
                 {searchingClasses && <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 16 }} />}
