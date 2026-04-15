@@ -6516,10 +6516,6 @@ function StudentTutorScreen({
     </div>
   );
 }
-      />
-    </div>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Student Class Management
