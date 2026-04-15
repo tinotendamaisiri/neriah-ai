@@ -1007,7 +1007,7 @@ const TZ_TO_CODE: Record<string, string> = {
 };
 
 // ── Shared: phone number input row ─────────────────────────────────────────────
-function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: string, dialCode: string) => void }) {
+function PhoneInputRow({ value, onChange, compact = false }: { value: string; onChange: (digits: string, dialCode: string) => void; compact?: boolean }) {
   const [country, setCountry] = useState<PhoneCountry>(PHONE_COUNTRIES[0]); // Zimbabwe default
   const [open, setOpen]       = useState(false);
   const [search, setSearch]   = useState('');
@@ -1108,6 +1108,7 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
           borderRadius: '10px 0 0 10px', paddingInline: 10, paddingBlock: 14,
           background: C.g50, minWidth: 88, whiteSpace: 'nowrap',
           cursor: 'pointer', fontFamily: 'inherit', outline: 'none',
+          ...(compact ? { height: 40, boxSizing: 'border-box' as const } : {}),
         }}
       >
         <span style={{ fontSize: 16 }}>{country.flag}</span>
@@ -1127,6 +1128,7 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
           flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
           padding: '14px 12px', fontSize: 15, color: C.text, outline: 'none',
           fontFamily: 'inherit',
+          ...(compact ? { height: 40, boxSizing: 'border-box' as const } : {}),
         }}
       />
 
@@ -1661,6 +1663,7 @@ function SchoolPickerInline({
         border: `1px solid ${open ? C.teal : C.g200}`, borderRadius: 10,
         padding: '0 12px', background: C.white,
         transition: 'border-color 0.12s',
+        height: 40, boxSizing: 'border-box' as const,
       }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.g400} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -1675,8 +1678,8 @@ function SchoolPickerInline({
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
           style={{
-            flex: 1, border: 'none', outline: 'none', padding: '12px 0',
-            fontSize: 15, color: C.text, background: 'transparent', fontFamily: 'inherit',
+            flex: 1, border: 'none', outline: 'none', padding: 0,
+            fontSize: 13, color: C.text, background: 'transparent', fontFamily: 'inherit',
           }}
         />
         {query && (
@@ -1749,12 +1752,13 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
   const [loading, setLoading]     = useState(false);
 
   const inputStyle: React.CSSProperties = {
-    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 14px',
-    fontSize: 15, color: C.text, outline: 'none', width: '100%', boxSizing: 'border-box',
+    height: 40, boxSizing: 'border-box',
+    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '0 12px',
+    fontSize: 13, color: C.text, outline: 'none', width: '100%',
     fontFamily: 'inherit', background: C.white,
   };
   const labelStyle: React.CSSProperties = {
-    fontSize: 13, fontWeight: 600, color: C.g900, marginTop: 8, marginBottom: 3, display: 'block',
+    fontSize: 13, fontWeight: 600, color: C.g900, marginBottom: 3, display: 'block',
   };
 
   const handleCreate = async () => {
@@ -1787,27 +1791,28 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
   };
 
   return (
-    <Screen style={{ padding: '0 20px 16px', paddingTop: 16, overflowY: 'auto' }}>
-      <div style={{ marginBottom: 8 }}>
+    <Screen style={{ padding: '8px 16px 4px', overflowY: 'hidden' }}>
+      {/* Back button */}
+      <div style={{ marginBottom: 4 }}>
         <BackButton label="Back" onClick={onSignIn} />
       </div>
 
-      {/* Icon badge — 80×80, light teal rounded square, teal clipboard */}
+      {/* Icon badge — 72×72, light teal rounded square, borderRadius 16, teal clipboard 36px */}
       <div style={{
-        width: 80, height: 80, borderRadius: 20, background: C.primaryLight,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8,
+        width: 72, height: 72, borderRadius: 16, background: '#E8F4F4',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 6,
       }}>
         <ClipboardList size={36} color={C.teal} />
       </div>
 
-      <div style={{ fontSize: 19, fontWeight: 800, color: C.text, marginBottom: 1 }}>Create teacher account</div>
-      <div style={{ fontSize: 13, color: C.g500, marginBottom: 10, lineHeight: 1.5 }}>Enter your details to get started.</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: C.g900, marginTop: 9, marginBottom: 0 }}>Create teacher account</div>
+      <div style={{ fontSize: 13, color: C.g500, marginTop: 3, marginBottom: 0 }}>Enter your details to get started.</div>
 
-      {/* Title pills — outline style, teal border + text when selected */}
-      <label style={labelStyle}>
+      {/* Title pills */}
+      <label style={{ ...labelStyle, marginTop: 8 }}>
         Title <span style={{ fontWeight: 400, color: C.g500 }}>(optional)</span>
       </label>
-      <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBlock: 2, paddingBottom: 6, marginBottom: 2 }}>
+      <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none' }}>
         {TITLES.map(t => (
           <button
             key={t}
@@ -1829,7 +1834,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       </div>
 
       {/* First name */}
-      <label style={labelStyle}>First name</label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>First name</label>
       <input
         type="text"
         placeholder="e.g. Tendai"
@@ -1839,7 +1844,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       />
 
       {/* Surname */}
-      <label style={labelStyle}>Surname</label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>Surname</label>
       <input
         type="text"
         placeholder="e.g. Moyo"
@@ -1849,16 +1854,16 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       />
 
       {/* Phone */}
-      <label style={labelStyle}>Phone number</label>
-      <PhoneInputRow value={number} onChange={(digits, dc) => { setNumber(digits); setDialCode(dc); }} />
+      <label style={{ ...labelStyle, marginTop: 6 }}>Phone number</label>
+      <PhoneInputRow value={number} onChange={(digits, dc) => { setNumber(digits); setDialCode(dc); }} compact />
 
       {/* School — searchable picker */}
-      <label style={labelStyle}>School</label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>School</label>
       <SchoolPickerInline value={school} onChange={setSchool} placeholder="Select your school" />
 
       {/* Error */}
       {error && (
-        <div style={{ color: C.red, fontSize: 13, marginTop: 6, fontWeight: 600 }}>{error}</div>
+        <div style={{ color: C.red, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{error}</div>
       )}
 
       {/* Create account button — full width, always visible */}
@@ -1866,11 +1871,12 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
         onClick={handleCreate}
         disabled={loading}
         style={{
-          marginTop: 12, background: loading ? C.teal100 : C.teal,
-          border: 'none', borderRadius: 10, padding: '12px 0',
+          marginTop: 12, height: 44, boxSizing: 'border-box',
+          background: loading ? C.teal100 : C.teal,
+          border: 'none', borderRadius: 12,
           cursor: loading ? 'not-allowed' : 'pointer',
           color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
-          width: '100%', boxSizing: 'border-box', transition: 'background 0.15s',
+          width: '100%', transition: 'background 0.15s',
         }}
       >
         {loading ? 'Creating account…' : 'Create account'}
@@ -1880,15 +1886,15 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       <button
         onClick={onSignIn}
         style={{
-          marginTop: 8, background: 'none', border: 'none', cursor: 'pointer',
-          color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit',
-          padding: 4, width: '100%', textAlign: 'center',
+          marginTop: 6, background: 'none', border: 'none', cursor: 'pointer',
+          color: C.teal, fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
+          padding: '2px 0', width: '100%', textAlign: 'center',
         }}
       >
         Already have an account? <span style={{ textDecoration: 'underline' }}>Sign in</span>
       </button>
 
-      <div style={{ marginTop: 6, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 8 }}>
+      <div style={{ marginTop: 4, textAlign: 'center', fontSize: 11, color: C.g500, lineHeight: 1.4 }}>
         A 6-digit verification code will be sent to your phone.
       </div>
     </Screen>
