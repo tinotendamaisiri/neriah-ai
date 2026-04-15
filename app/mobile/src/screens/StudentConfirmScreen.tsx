@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import * as MailComposer from 'expo-mail-composer';
 import * as MediaLibrary from 'expo-media-library';
+import Constants from 'expo-constants';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { submitStudentWork } from '../services/api';
@@ -93,20 +94,24 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
   // ── WhatsApp channel ──────────────────────────────────────────────────────
 
   const _submitViaWhatsApp = async () => {
-    // Save images to camera roll so the student can attach them in WhatsApp
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission required', 'Allow access to save pages to your gallery for WhatsApp sharing.');
-      return;
-    }
+    const isExpoGo = Constants.appOwnership === 'expo';
 
-    try {
-      for (const uri of images) {
-        await MediaLibrary.saveToLibraryAsync(uri);
+    if (!isExpoGo) {
+      // Save images to camera roll so the student can attach them in WhatsApp
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Allow access to save pages to your gallery for WhatsApp sharing.');
+        return;
       }
-    } catch {
-      // Non-critical — images may already be accessible
+      try {
+        for (const uri of images) {
+          await MediaLibrary.saveToLibraryAsync(uri);
+        }
+      } catch {
+        // Non-critical — images may already be accessible
+      }
     }
+    // Expo Go: media library unavailable — skip gallery save, continue with WhatsApp link
 
     const studentName = user ? `${user.first_name} ${user.surname}` : 'Student';
     const message =

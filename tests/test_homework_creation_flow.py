@@ -5831,6 +5831,99 @@ class TestChatSessionTracing:
             "Web: webRelativeTime must parse an ISO string via new Date(iso)"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TestExpoGoGuards — notifications + media library guarded for Expo Go
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestExpoGoGuards:
+    """Static analysis tests verifying Expo Go guards are in place for
+    push notifications and media library access."""
+
+    MOBILE_PATH = "app/mobile/src/screens/StudentConfirmScreen.tsx"
+    AUTH_PATH   = "app/mobile/src/context/AuthContext.tsx"
+    LANG_PATH   = "app/mobile/src/context/LanguageContext.tsx"
+    APP_PATH    = "app/mobile/App.tsx"
+
+    def _read(self, rel: str) -> str:
+        import os
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(base, rel)) as f:
+            return f.read()
+
+    @feature_test("language_default_is_english")
+    def test_language_context_defaults_to_english(self):
+        """
+        LanguageContext must:
+          1. Define DEFAULT_LANG = 'en' (not empty string).
+          2. Initialise useState with that default.
+          3. Load persisted language from SecureStore on mount.
+          4. Not emit noisy console.log statements on every language change.
+        """
+        src = self._read(self.LANG_PATH)
+
+        assert "DEFAULT_LANG: LangCode = 'en'" in src or \
+               "DEFAULT_LANG = 'en'" in src, \
+            "LanguageContext: DEFAULT_LANG must be 'en'"
+
+        assert "useState<LangCode>(DEFAULT_LANG)" in src, \
+            "LanguageContext: useState must initialise with DEFAULT_LANG"
+
+        assert "SecureStore.getItemAsync" in src, \
+            "LanguageContext: must load persisted language from SecureStore on mount"
+
+        # Verbose debug logs removed
+        assert "setLangState dispatched" not in src, \
+            "LanguageContext: verbose debug log 'setLangState dispatched' must be removed"
+        assert "SecureStore write done" not in src, \
+            "LanguageContext: verbose debug log 'SecureStore write done' must be removed"
+
+    @feature_test("notifications_guarded_in_expo_go")
+    def test_notifications_skipped_in_expo_go(self):
+        """
+        Push notification registration must be guarded so it does not run
+        inside Expo Go:
+          - AuthContext must check Constants.appOwnership !== 'expo'
+          - AuthContext must check Device.isDevice
+          - LogBox.ignoreLogs must silence known harmless Expo Go warnings
+        """
+        auth = self._read(self.AUTH_PATH)
+        app  = self._read(self.APP_PATH)
+
+        # Auth guard
+        assert "appOwnership" in auth, \
+            "AuthContext: must check Constants.appOwnership to skip push registration in Expo Go"
+        assert "Device.isDevice" in auth, \
+            "AuthContext: must check Device.isDevice before registering push token"
+        assert "getExpoPushTokenAsync" in auth, \
+            "AuthContext: getExpoPushTokenAsync must be called inside the Expo Go guard"
+
+        # Verify the guard wraps the notification call
+        guard_pos  = auth.find("appOwnership")
+        token_pos  = auth.find("getExpoPushTokenAsync")
+        assert guard_pos < token_pos, \
+            "AuthContext: appOwnership check must appear before getExpoPushTokenAsync"
+
+        # LogBox suppressions in App.tsx
+        assert "LogBox" in app, \
+            "App.tsx: LogBox must be imported to suppress harmless Expo Go warnings"
+        assert "LogBox.ignoreLogs" in app, \
+            "App.tsx: LogBox.ignoreLogs must be called to silence Expo Go notification warnings"
+        assert "expo-notifications" in app, \
+            "App.tsx: LogBox.ignoreLogs must include expo-notifications warning pattern"
+
+        # Media library guard in StudentConfirmScreen
+        confirm = self._read(self.MOBILE_PATH)
+        assert "isExpoGo" in confirm, \
+            "StudentConfirmScreen: must define isExpoGo guard before calling MediaLibrary"
+        assert "appOwnership" in confirm, \
+            "StudentConfirmScreen: must check Constants.appOwnership for Expo Go"
+        # Guard must wrap the MediaLibrary call
+        guard_pos  = confirm.find("isExpoGo")
+        media_pos  = confirm.find("MediaLibrary.requestPermissionsAsync")
+        assert guard_pos < media_pos, \
+            "StudentConfirmScreen: isExpoGo check must appear before MediaLibrary.requestPermissionsAsync"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TestHomeworkList — GET /api/answer-keys?class_id=... enriched with counts
 # ═══════════════════════════════════════════════════════════════════════════════

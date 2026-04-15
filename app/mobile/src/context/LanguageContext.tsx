@@ -41,19 +41,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
-  // Log every language change so we can trace the update chain
-  useEffect(() => {
-    console.log('[LanguageContext] language state is now:', language);
-  }, [language]);
-
   const setLanguage = useCallback(async (lang: LangCode) => {
-    console.log('[LanguageContext] setLanguage called with:', lang);
     setLangState(lang);
-    console.log('[LanguageContext] setLangState dispatched, SecureStore write next');
-    await SecureStore.setItemAsync(LANGUAGE_STORAGE_KEY, lang).catch((e) => {
-      console.warn('[LanguageContext] SecureStore.setItemAsync failed:', e);
-    });
-    console.log('[LanguageContext] SecureStore write done');
+    await SecureStore.setItemAsync(LANGUAGE_STORAGE_KEY, lang).catch(() => {});
   }, []);
 
   const t = useCallback(

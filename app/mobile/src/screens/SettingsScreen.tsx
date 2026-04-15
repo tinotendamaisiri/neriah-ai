@@ -167,11 +167,7 @@ export default function SettingsScreen() {
       [
         ...LANGUAGES.map(l => ({
           text: l.code === language ? `${l.label} ✓` : l.label,
-          onPress: () => {
-            console.log('[SettingsScreen] language tapped:', l.code, '(current:', language + ')');
-            setLanguage(l.code);
-            console.log('[SettingsScreen] setLanguage called');
-          },
+          onPress: () => setLanguage(l.code),
         })),
         { text: t('cancel'), style: 'cancel' },
       ],

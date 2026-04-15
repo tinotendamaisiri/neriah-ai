@@ -18,8 +18,16 @@
 import React from 'react';
 import {
   ActivityIndicator, View, Modal, Text, TouchableOpacity,
-  StyleSheet,
+  StyleSheet, LogBox,
 } from 'react-native';
+
+// Suppress Expo Go limitations that are not bugs in our code
+LogBox.ignoreLogs([
+  'expo-notifications: Android Push notifications',
+  'expo-notifications functionality is not fully supported',
+  'Due to changes in Androids permission requirements',
+  'Bottom Tab Navigator: lazy',
+]);
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
