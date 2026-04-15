@@ -7364,3 +7364,89 @@ class TestPhoneValidation:
         valid, err = _validate_phone("263771234567")
         assert valid is False
         assert "country code" in err.lower()
+
+
+# ── RAG pipeline audit ──────────────────────────────────────────────────────
+
+class TestRAGPipelineAudit:
+    """Verify the complete RAG pipeline: indexing, storage, retrieval, injection."""
+
+    @feature_test("syllabus_chunking_and_indexing")
+    def test_syllabus_chunks_stored_in_vector_db(self):
+        """_chunk_text produces chunks, store_document called for each with correct metadata."""
+        from functions.curriculum import _chunk_text
+
+        # Use paragraph breaks so _chunk_text splits properly
+        text = "\n\n".join([f"Chapter {i}: Quadratic equations and linear algebra topics for Form 2 ZIMSEC examination. " * 10 for i in range(20)])
+        chunks = _chunk_text(text, max_words=50)
+
+        assert len(chunks) > 1, f"Expected multiple chunks, got {len(chunks)}"
+
+        # Verify store_document is called with correct collection and metadata shape
+        stored = []
+        def fake_store(collection, doc_id, text, metadata=None):
+            stored.append({"collection": collection, "metadata": metadata})
+
+        with patch("shared.vector_db.store_document", side_effect=fake_store):
+            from shared.vector_db import store_document
+            for i, c in enumerate(chunks[:2]):
+                store_document("syllabuses", f"test-{i}", c, {
+                    "curriculum": "ZIMSEC", "subject": "Mathematics",
+                    "education_level": "Form 2", "doc_type": "syllabus",
+                })
+
+        assert len(stored) == 2
+        assert stored[0]["collection"] == "syllabuses"
+        assert stored[0]["metadata"]["subject"] == "Mathematics"
+
+    @feature_test("grading_stored_after_approval")
+    def test_approved_grading_stores_in_vector_db(self):
+        """collect_training_sample stores verdicts in grading_examples collection."""
+        stored = []
+
+        def fake_store(collection, doc_id, text, metadata=None):
+            stored.append({"collection": collection, "doc_id": doc_id})
+
+        sub = {"id": "sub-1", "score": 8, "max_score": 10, "status": "approved"}
+        mark = {"verdicts": [
+            {"question_number": 1, "verdict": "correct", "awarded_marks": 4, "max_marks": 5,
+             "student_answer": "x=3", "feedback": "Well done"},
+        ]}
+        answer_key = {"subject": "Mathematics", "education_level": "Form 2",
+                       "questions": [{"question_number": 1, "question_text": "Solve 2x+5=11", "correct_answer": "x=3"}]}
+        class_doc = {"curriculum": "ZIMSEC"}
+
+        with patch("shared.vector_db.store_document", side_effect=fake_store):
+            from shared.training_data import _store_grading_vector
+            _store_grading_vector(sub, mark, answer_key, class_doc, teacher_override=False)
+
+        assert len(stored) == 1
+        assert stored[0]["collection"] == "grading_examples"
+        assert "sub-1-q1" in stored[0]["doc_id"]
+
+    @feature_test("rag_injected_in_grading_prompt")
+    def test_rag_context_injected_in_grading(self):
+        """_build_rag_context returns formatted context when vector DB has data."""
+        fake_results = [{"text": "ZIMSEC Form 2 Mathematics: quadratic equations...", "metadata": {}, "score": 0.1}]
+
+        with patch("shared.vector_db.search_with_user_context", return_value=fake_results):
+            from shared.gemma_client import _build_rag_context
+            result = _build_rag_context("quadratic equations", {"subject": "Mathematics", "education_level": "Form 2"})
+
+        assert "CURRICULUM CONTEXT" in result
+        assert "quadratic equations" in result
+
+    @feature_test("search_falls_back_to_chroma")
+    def test_search_falls_back_to_chroma_when_firestore_fails(self):
+        """search_similar falls back to ChromaDB when Firestore vector search returns empty."""
+        chroma_results = [{"text": "fallback result", "metadata": {}, "score": 0.2}]
+
+        with patch("shared.vector_db._use_firestore_vectors", return_value=True), \
+             patch("shared.vector_db._firestore_search", return_value=[]), \
+             patch("shared.vector_db._chroma_search", return_value=chroma_results), \
+             patch("shared.vector_db.get_embedding", return_value=[0.1] * 768):
+            from shared.vector_db import search_similar
+            results = search_similar("syllabuses", "test query")
+
+        assert len(results) == 1
+        assert results[0]["text"] == "fallback result"

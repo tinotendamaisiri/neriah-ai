@@ -253,7 +253,11 @@ def search_similar(
         return []
 
     if _use_firestore_vectors():
-        return _firestore_search(collection, query_embedding, filters, top_k)
+        results = _firestore_search(collection, query_embedding, filters, top_k)
+        if results:
+            return results
+        # Firestore vector search failed or returned nothing — fall back to ChromaDB
+        logger.debug("[vector_db] Firestore returned no results for '%s', trying ChromaDB fallback", collection)
     return _chroma_search(collection, query_embedding, filters, top_k)
 
 
