@@ -238,9 +238,13 @@ export default function ClassManagementScreen() {
 
       {/* ── Join modal — school autocomplete ── */}
       <Modal visible={joinModal} animationType="slide" transparent onRequestClose={resetJoinModal}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <View style={m.overlay}>
-            <View style={[m.sheet, { maxHeight: '85%' }]}>
+        <TouchableOpacity activeOpacity={1} onPress={resetJoinModal} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}
+          keyboardVerticalOffset={0}
+        >
+            <View style={[m.sheet, { maxHeight: '80%' }]}>
               <View style={m.header}>
                 <Text style={m.title}>Join a Class</Text>
                 <TouchableOpacity onPress={resetJoinModal}>
@@ -248,30 +252,32 @@ export default function ClassManagementScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView style={{ paddingHorizontal: 20 }} contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
+              <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
                 <Text style={m.label}>School</Text>
-                <View style={{ position: 'relative', zIndex: 10 }}>
-                  <TextInput
-                    style={m.input}
-                    value={schoolQuery}
-                    onChangeText={onSchoolTextChange}
-                    placeholder="Start typing school name…"
-                    autoCapitalize="words"
-                    autoFocus
-                  />
-                  {schoolSuggestions.length > 0 && (
-                    <View style={m.dropdown}>
-                      <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 180 }}>
-                        {schoolSuggestions.map(name => (
-                          <TouchableOpacity key={name} onPress={() => onSchoolSelected(name)} style={m.dropdownItem}>
-                            <Ionicons name="school-outline" size={16} color={COLORS.teal500} />
-                            <Text style={m.dropdownText}>{name}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
-                </View>
+                <TextInput
+                  style={m.input}
+                  value={schoolQuery}
+                  onChangeText={onSchoolTextChange}
+                  placeholder="Start typing school name…"
+                  autoCapitalize="words"
+                  autoFocus
+                />
+
+                {/* School suggestions — inline list, not absolute dropdown */}
+                {schoolSuggestions.length > 0 && (
+                  <ScrollView
+                    style={{ maxHeight: 160, borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, marginTop: 4, backgroundColor: COLORS.white }}
+                    keyboardShouldPersistTaps="always"
+                    nestedScrollEnabled
+                  >
+                    {schoolSuggestions.map(name => (
+                      <TouchableOpacity key={name} onPress={() => onSchoolSelected(name)} style={m.dropdownItem}>
+                        <Ionicons name="school-outline" size={16} color={COLORS.teal500} />
+                        <Text style={m.dropdownText}>{name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
 
                 {schoolSearching && <ActivityIndicator color={COLORS.teal500} size="small" style={{ marginTop: 8 }} />}
                 {!schoolSearching && schoolQuery.length >= 3 && schoolSuggestions.length === 0 && !selectedSchool && (
@@ -290,32 +296,33 @@ export default function ClassManagementScreen() {
                 {availableClasses.length > 0 && (
                   <>
                     <Text style={[m.label, { marginTop: 16 }]}>{selectedSchool}</Text>
-                    {availableClasses.map(cls => {
-                      const teacherName = `${cls.teacher.first_name} ${cls.teacher.surname}`.trim();
-                      return (
-                        <View key={cls.id} style={m.classRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={m.className}>{cls.name}{cls.subject ? ` — ${cls.subject}` : ''}</Text>
-                            <Text style={m.classMeta}>{teacherName}</Text>
+                    <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="always" nestedScrollEnabled>
+                      {availableClasses.map(cls => {
+                        const teacherName = `${cls.teacher.first_name} ${cls.teacher.surname}`.trim();
+                        return (
+                          <View key={cls.id} style={m.classRow}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={m.className}>{cls.name}{cls.subject ? ` — ${cls.subject}` : ''}</Text>
+                              <Text style={m.classMeta}>{teacherName}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={[m.joinRowBtn, joining === cls.id && { opacity: 0.5 }]}
+                              onPress={() => handleJoinById(cls)}
+                              disabled={joining === cls.id}
+                            >
+                              {joining === cls.id
+                                ? <ActivityIndicator size="small" color={COLORS.white} />
+                                : <Text style={m.joinRowBtnText}>Join</Text>
+                              }
+                            </TouchableOpacity>
                           </View>
-                          <TouchableOpacity
-                            style={[m.joinRowBtn, joining === cls.id && { opacity: 0.5 }]}
-                            onPress={() => handleJoinById(cls)}
-                            disabled={joining === cls.id}
-                          >
-                            {joining === cls.id
-                              ? <ActivityIndicator size="small" color={COLORS.white} />
-                              : <Text style={m.joinRowBtnText}>Join</Text>
-                            }
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
+                        );
+                      })}
+                    </ScrollView>
                   </>
                 )}
-              </ScrollView>
+              </View>
             </View>
-          </View>
         </KeyboardAvoidingView>
       </Modal>
     </View>
