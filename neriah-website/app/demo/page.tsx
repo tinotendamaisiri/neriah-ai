@@ -994,8 +994,8 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
     <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       {/* Header */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 36, marginBottom: 0 }}>
-        <BookOpen size={72} color={C.teal} />
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center', marginTop: 14 }}>
+        <Image src="/images/icon-transparent.png" alt="Neriah" width={80} height={80} style={{ marginBottom: 12, objectFit: 'contain' }} />
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center' }}>
           Welcome to Neriah
         </div>
       </div>
@@ -1079,8 +1079,8 @@ function PhoneScreen({
     <Screen style={{ justifyContent: 'flex-start', padding: '40px 20px 24px' }}>
       {/* Branding */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 24 }}>
-        <BookOpen size={64} color={C.teal} />
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.g900, marginTop: 8 }}>Neriah</div>
+        <Image src="/images/icon-transparent.png" alt="Neriah" width={80} height={80} style={{ marginBottom: 12, objectFit: 'contain' }} />
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.g900 }}>Neriah</div>
         <div style={{ fontSize: 12, color: C.g500, marginTop: 4, textAlign: 'center', lineHeight: 1.4 }}>
           AI homework marking for African schools
         </div>
