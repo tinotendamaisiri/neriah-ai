@@ -1201,7 +1201,7 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
       `}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 36, marginBottom: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 28, marginBottom: 0 }}>
         <Image src="/images/icon-transparent.png" alt="Neriah" width={80} height={80} style={{ marginBottom: 12, objectFit: 'contain' }} />
         <div style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: 'center' }}>
           Welcome to Neriah
@@ -1209,7 +1209,7 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
       </div>
 
       {/* Role cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 28 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
         {/* Teacher */}
         {highlight === 'teacher' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 2 }}>
@@ -1221,18 +1221,18 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
           onClick={onTeacher}
           style={{
             background: C.teal, border: highlight === 'teacher' ? `3px solid ${C.teal}` : 'none',
-            borderRadius: 16, padding: '18px 16px',
+            borderRadius: 16, padding: '16px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: 6, minHeight: 108, justifyContent: 'center',
+            gap: 6, minHeight: 100, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(13,115,119,0.30)', transition: 'opacity 0.15s',
             animation: highlight === 'teacher' ? 'pulse-teal 2s ease-in-out infinite' : undefined,
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <Briefcase size={38} color={C.white} />
-          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I&apos;m a Teacher</span>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <Briefcase size={34} color={C.white} />
+          <span style={{ fontSize: 16, fontWeight: 800, color: C.white }}>I&apos;m a Teacher</span>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Mark exercise books with AI
           </span>
         </button>
@@ -1247,25 +1247,25 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
         <button
           style={{
             background: C.amber, border: highlight === 'student' ? `3px solid ${C.amber}` : 'none',
-            borderRadius: 16, padding: '18px 16px',
+            borderRadius: 16, padding: '16px 16px',
             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: 6, minHeight: 108, justifyContent: 'center',
+            gap: 6, minHeight: 100, justifyContent: 'center',
             boxShadow: '0 4px 14px rgba(245,166,35,0.30)', transition: 'opacity 0.15s',
             animation: highlight === 'student' ? 'pulse-amber 2s ease-in-out infinite' : undefined,
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.92')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
         >
-          <GraduationCap size={38} color={C.white} />
-          <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>I&apos;m a Student</span>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
+          <GraduationCap size={34} color={C.white} />
+          <span style={{ fontSize: 16, fontWeight: 800, color: C.white }}>I&apos;m a Student</span>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 1.4 }}>
             Submit work and get feedback
           </span>
         </button>
       </div>
 
       {/* Sign in link */}
-      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 14, color: C.g500 }}>
+      <div style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: C.g500 }}>
         Already have an account?{' '}
         <button
           onClick={onSignIn}
@@ -1301,18 +1301,18 @@ function PhoneScreen({
   };
 
   return (
-    <Screen style={{ justifyContent: 'flex-start', padding: '40px 20px 24px' }}>
+    <Screen style={{ justifyContent: 'flex-start', padding: '32px 20px 20px' }}>
       {/* Branding */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 24 }}>
-        <Image src="/images/icon-transparent.png" alt="Neriah" width={80} height={80} style={{ marginBottom: 12, objectFit: 'contain' }} />
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.g900 }}>Neriah</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 10 }}>
+        <Image src="/images/icon-transparent.png" alt="Neriah" width={72} height={72} style={{ marginBottom: 10, objectFit: 'contain' }} />
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.g900 }}>Neriah</div>
         <div style={{ fontSize: 12, color: C.g500, marginTop: 4, textAlign: 'center', lineHeight: 1.4 }}>
           AI homework marking for African schools
         </div>
       </div>
 
       {/* Form */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.g900, marginTop: 8 }}>Phone number</div>
         <PhoneInputRow value={number} onChange={(digits, dc) => { setNumber(digits); setDialCode(dc); }} />
 
@@ -1330,13 +1330,13 @@ function PhoneScreen({
         </button>
       </div>
 
-      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.5 }}>
+      <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.5 }}>
         By continuing you agree to Neriah's terms of service.{'\n'}Standard SMS rates may apply.
       </div>
 
       <button
         onClick={onRegister}
-        style={{ marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 13, fontFamily: 'inherit' }}
+        style={{ marginTop: 6, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 13, fontFamily: 'inherit' }}
       >
         New user? Register here
       </button>
@@ -1788,38 +1788,38 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
 
   return (
     <Screen style={{ padding: '0 20px 16px', paddingTop: 16, overflowY: 'auto' }}>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 8 }}>
         <BackButton label="Back" onClick={onSignIn} />
       </div>
 
       {/* Icon badge — 80×80, light teal rounded square, teal clipboard */}
       <div style={{
         width: 80, height: 80, borderRadius: 20, background: C.primaryLight,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8,
       }}>
         <ClipboardList size={36} color={C.teal} />
       </div>
 
-      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 2 }}>Create teacher account</div>
-      <div style={{ fontSize: 13, color: C.g500, marginBottom: 14, lineHeight: 1.5 }}>Enter your details to get started.</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: C.text, marginBottom: 1 }}>Create teacher account</div>
+      <div style={{ fontSize: 13, color: C.g500, marginBottom: 10, lineHeight: 1.5 }}>Enter your details to get started.</div>
 
       {/* Title pills — outline style, teal border + text when selected */}
       <label style={labelStyle}>
         Title <span style={{ fontWeight: 400, color: C.g500 }}>(optional)</span>
       </label>
-      <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBlock: 2, paddingBottom: 6, marginBottom: 2 }}>
+      <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBlock: 2, paddingBottom: 6, marginBottom: 2 }}>
         {TITLES.map(t => (
           <button
             key={t}
             onClick={() => setTitle(prev => prev === t ? '' : t)}
             style={{
               flexShrink: 0,
-              padding: '8px 16px',
+              padding: '6px 12px',
               borderRadius: 999,
               border: `1px solid ${title === t ? C.teal : C.g200}`,
               background: C.white,
               color: title === t ? C.teal : C.g900,
-              fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
               transition: 'all 0.12s',
             }}
           >
@@ -1866,10 +1866,10 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
         onClick={handleCreate}
         disabled={loading}
         style={{
-          marginTop: 16, background: loading ? C.teal100 : C.teal,
-          border: 'none', borderRadius: 10, padding: '14px 0',
+          marginTop: 12, background: loading ? C.teal100 : C.teal,
+          border: 'none', borderRadius: 10, padding: '12px 0',
           cursor: loading ? 'not-allowed' : 'pointer',
-          color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit',
+          color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
           width: '100%', boxSizing: 'border-box', transition: 'background 0.15s',
         }}
       >
@@ -1880,7 +1880,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
       <button
         onClick={onSignIn}
         style={{
-          marginTop: 12, background: 'none', border: 'none', cursor: 'pointer',
+          marginTop: 8, background: 'none', border: 'none', cursor: 'pointer',
           color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit',
           padding: 4, width: '100%', textAlign: 'center',
         }}
@@ -1888,7 +1888,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
         Already have an account? <span style={{ textDecoration: 'underline' }}>Sign in</span>
       </button>
 
-      <div style={{ marginTop: 8, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 16 }}>
+      <div style={{ marginTop: 6, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 8 }}>
         A 6-digit verification code will be sent to your phone.
       </div>
     </Screen>
@@ -2076,11 +2076,15 @@ function AddHomeworkScreen({
 
   return (
     <Screen style={{ background: C.white }}>
-      <div style={{ flex: 1, padding: '20px 18px', paddingBottom: 24 }}>
-        <div style={{ marginBottom: 16 }}><BackButton label="Back" onClick={onBack} /></div>
+      {/* Header */}
+      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <BackButton onClick={onBack} label="" />
+        <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Add Homework</span>
+      </div>
+      <div style={{ flex: 1, padding: '12px 16px', paddingBottom: 20, overflowY: 'auto' }}>
 
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>Add Homework</div>
-        <div style={{ fontSize: 13, color: C.g500, marginBottom: 20, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 2 }}>Add Homework</div>
+        <div style={{ fontSize: 12, color: C.g500, marginBottom: 12, lineHeight: 1.5 }}>
           Upload the homework paper and Neriah will generate the marking scheme for you.
         </div>
 
@@ -2163,7 +2167,7 @@ function AddHomeworkScreen({
         )}
 
         {/* ── Due Date + Total Marks row ──────────────────────────────────── */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+        <div style={{ display: 'flex', gap: 12, marginTop: 10 }}>
           <div style={{ flex: 3 }}>
             <label style={labelStyle}>Due Date</label>
             <input
@@ -2193,7 +2197,7 @@ function AddHomeworkScreen({
 
         {/* ── HOMEWORK PAPER section ────────────────────────────────────────── */}
         <div style={{
-          marginTop: 20, marginBottom: 6,
+          marginTop: 14, marginBottom: 4,
           fontSize: 11, fontWeight: 800, color: C.g500,
           letterSpacing: '0.07em', textTransform: 'uppercase',
         }}>
@@ -2205,7 +2209,7 @@ function AddHomeworkScreen({
 
         {/* Upload buttons row */}
         {!textMode && (
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 5 }}>
             {[
               { icon: <Camera size={18} color={C.teal} />, label: 'Camera',  onClick: () => setCameraOpen(true) },
               { icon: <ImageIcon size={18} color={C.teal} />, label: 'Gallery', onClick: () => galleryRef.current?.click() },
@@ -2218,7 +2222,7 @@ function AddHomeworkScreen({
                 onClick={btn.onClick}
                 style={{
                   flex: 1, border: `1px solid ${C.g200}`, borderRadius: 10,
-                  padding: '10px 4px', background: C.white, cursor: 'pointer',
+                  padding: '8px 4px', background: C.white, cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
                   fontFamily: 'inherit', transition: 'border-color 0.12s, background 0.12s',
                 }}
@@ -2390,8 +2394,8 @@ function AddHomeworkScreen({
             onClick={handleCreate}
             disabled={loading}
             style={{
-              marginTop: 22, width: '100%', background: loading ? C.teal100 : C.teal,
-              border: 'none', borderRadius: 10, padding: '14px 0',
+              marginTop: 14, width: '100%', background: loading ? C.teal100 : C.teal,
+              border: 'none', borderRadius: 10, padding: '12px 0',
               cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
               fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -2895,170 +2899,86 @@ function ClassSetupScreen({ onBack, onCreate }: { onBack: () => void; onCreate: 
   };
 
   return (
-    <Screen>
+    <Screen style={{ background: C.white }}>
       {/* Header */}
       <div style={{
         background: C.white, borderBottom: `1px solid ${C.border}`,
         padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
       }}>
         <BackButton onClick={onBack} label="" />
-        <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Create Class</span>
+        <span style={{ fontSize: 17, fontWeight: 700, color: C.text, flex: 1, textAlign: 'center' }}>New Class</span>
+        <div style={{ width: 36 }} />
       </div>
 
       {/* Form */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ flex: 1, padding: '16px 16px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
 
         {/* Class Name */}
         <div>
-          <label style={labelStyle}>Class Name <span style={{ color: C.red }}>*</span></label>
+          <label style={labelStyle}>CLASS NAME <span style={{ color: C.red }}>*</span></label>
           <input
             style={inputStyle}
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="e.g. Form 2A"
+            placeholder="e.g. 3B Mathematics"
             maxLength={60}
           />
         </div>
 
-        {/* Subject */}
+        {/* Curriculum pills */}
         <div>
-          <label style={labelStyle}>Subject</label>
-          <select
-            style={{ ...inputStyle, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}
-            value={subject}
-            onChange={e => setSubject(e.target.value)}
-          >
-            <option value="">Select a subject…</option>
-            {COMMON_SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <label style={labelStyle}>CURRICULUM</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['ZIMSEC', 'Cambridge'].map(c => (
+              <button key={c}
+                style={{
+                  padding: '8px 16px', borderRadius: 999, border: `1.5px solid ${C.teal}`,
+                  background: c === 'ZIMSEC' ? C.teal : C.white, color: c === 'ZIMSEC' ? C.white : C.teal,
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}>
+                {c}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Education Level */}
         <div>
-          <label style={labelStyle}>Education Level <span style={{ color: C.red }}>*</span></label>
+          <label style={labelStyle}>EDUCATION LEVEL <span style={{ color: C.red }}>*</span></label>
           <select
             style={{ ...inputStyle, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}
             value={educationLevel}
             onChange={e => setEducationLevel(e.target.value)}
           >
-            <option value="">Select level…</option>
+            <option value="">Select education level</option>
             {EDUCATION_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
 
-        {/* Description */}
-        <div>
-          <label style={labelStyle}>Description <span style={{ color: C.g400, fontWeight: 400 }}>(optional)</span></label>
-          <textarea
-            style={{ ...inputStyle, minHeight: 72, resize: 'vertical' } as React.CSSProperties}
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            placeholder="e.g. Morning session"
-            maxLength={200}
-          />
-        </div>
-
-        {/* ── OR IMPORT CLASS REGISTER ─────────────────────────────────────── */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <div style={{ flex: 1, height: 1, background: C.border }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
-              or import class register
-            </span>
-            <div style={{ flex: 1, height: 1, background: C.border }} />
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            {/* Camera button */}
-            <button
-              type="button"
-              onClick={() => setBulkCameraOpen(true)}
-              disabled={bulkExtracting}
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                padding: '11px 8px', background: C.tealLt, border: `1.5px solid ${C.teal100}`,
-                borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 13, fontWeight: 600, color: C.teal, opacity: bulkExtracting ? 0.6 : 1,
-              }}
-            >
-              <Camera size={15} />
-              Take Photo
-            </button>
-
-            {/* Upload button */}
-            <button
-              type="button"
-              onClick={() => bulkFileRef.current?.click()}
-              disabled={bulkExtracting}
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                padding: '11px 8px', background: C.tealLt, border: `1.5px solid ${C.teal100}`,
-                borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 13, fontWeight: 600, color: C.teal, opacity: bulkExtracting ? 0.6 : 1,
-              }}
-            >
-              <FileText size={15} />
-              Upload PDF / Image
-            </button>
-            <input
-              ref={bulkFileRef}
-              type="file"
-              accept=".pdf,image/*"
-              style={{ display: 'none' }}
-              onChange={handleBulkFile}
-            />
-          </div>
-
-          {bulkExtracting && (
-            <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 13, color: C.g500 }}>
-              Extracting student names…
-            </div>
-          )}
-
-          {/* Confirmed students preview */}
-          {confirmedStudents.length > 0 && !confirmOpen && (
-            <div style={{
-              marginTop: 10, background: C.tealLt, border: `1px solid ${C.teal100}`,
-              borderRadius: 10, padding: '10px 12px',
-            }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.teal, marginBottom: 6 }}>
-                {confirmedStudents.length} students ready to add
-              </div>
-              {confirmedStudents.slice(0, 3).map((s, i) => (
-                <div key={i} style={{ fontSize: 12, color: C.tealDk }}>{s.first_name} {s.surname}</div>
-              ))}
-              {confirmedStudents.length > 3 && (
-                <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>+{confirmedStudents.length - 3} more</div>
-              )}
-              <button
-                type="button"
-                onClick={() => setConfirmedStudents([])}
-                style={{ marginTop: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: C.red, padding: 0, fontFamily: 'inherit' }}
-              >
-                Clear
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Add students link */}
+        <button style={{
+          background: 'none', border: 'none', cursor: 'pointer', color: C.teal,
+          fontSize: 13, fontWeight: 600, fontFamily: 'inherit', textAlign: 'left',
+          padding: 0, display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <Plus size={14} color={C.teal} />
+          Add students to this class
+        </button>
 
         {error && (
           <div style={{ background: C.redLt, border: `1px solid ${C.red200}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: C.red700 }}>
             {error}
           </div>
         )}
-      </div>
 
-      {/* CTA */}
-      <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, background: C.white, flexShrink: 0 }}>
         <button
           onClick={handleCreate}
           disabled={saving}
           style={{
-            width: '100%', background: saving ? C.tealDk : C.teal,
-            color: C.white, border: 'none', borderRadius: 12,
-            padding: '14px 0', fontSize: 16, fontWeight: 700,
-            cursor: saving ? 'default' : 'pointer', fontFamily: 'inherit',
-            opacity: saving ? 0.8 : 1, transition: 'opacity 0.15s',
+            marginTop: 'auto', width: '100%', background: saving ? C.teal100 : C.teal,
+            border: 'none', borderRadius: 10, padding: '14px 0',
+            cursor: saving ? 'not-allowed' : 'pointer', color: C.white,
+            fontWeight: 700, fontSize: 15, fontFamily: 'inherit',
           }}
         >
           {saving ? 'Creating…' : 'Create Class'}
@@ -3686,9 +3606,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           <div style={{ padding: '0 14px 10px', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
             {AI_QUICK_ACTIONS.map(a => (
               <button key={a.label} onClick={() => send(a.label, a.action)}
-                style={{ background: C.white, border: `1.5px solid ${C.teal}`,
-                  borderRadius: 8, padding: '8px 12px', color: C.teal, fontSize: 12,
-                  fontWeight: 600, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
+                style={{ background: C.white, border: `1px solid ${C.g200}`,
+                  borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 13,
+                  fontWeight: 600, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ color: C.teal }}>✦</span>
                 {a.label}
               </button>
             ))}
@@ -4029,15 +3951,15 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg, position: 'relative' }}>
       {/* Header */}
       <div style={{
-        background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14,
+        background: C.white, paddingInline: 18, paddingTop: 12, paddingBottom: 10,
         borderBottom: `1px solid ${C.border}`, flexShrink: 0,
       }}>
-        <div style={{ fontSize: 12, color: C.g500 }}>Hello,</div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginTop: 2 }}>My Classes</div>
+        <div style={{ fontSize: 11, color: C.g500 }}>Hello, Mr Maisiri</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>My Classes</div>
       </div>
 
       {/* List */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 80 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 12, paddingBottom: 72 }}>
         {/* Class group */}
         <div style={{ marginBottom: 18 }}>
           {/* Class card */}
@@ -4045,7 +3967,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
             background: C.white, borderRadius: 12, marginBottom: 0,
             boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '12px 14px', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Form 2A</div>
                 <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Form 2</div>
@@ -4081,7 +4003,7 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
                 onClick={onOpenHomework}
                 style={{
                   width: '100%', background: hw.badge === 'amber' ? C.amber50 : C.white,
-                  borderRadius: 10, marginBottom: 6, padding: '11px 12px',
+                  borderRadius: 10, marginBottom: 6, padding: '9px 10px',
                   display: 'flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer',
                   boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontFamily: 'inherit', textAlign: 'left',
                   transition: 'box-shadow 0.12s',
@@ -6295,7 +6217,18 @@ function AnalyticsScreen({
 
         <div style={{ marginBottom: 14 }}><BackButton label="Classes" onClick={onBack} /></div>
 
-        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 14 }}>Analytics</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 10 }}>Analytics</div>
+
+        {/* Class info card */}
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '12px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Form 2A</div>
+            <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Form 2 · Mathematics</div>
+          </div>
+          <div style={{ background: C.teal50, borderRadius: 999, paddingInline: 10, paddingBlock: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.teal }}>3 homework</span>
+          </div>
+        </div>
 
         {/* Loading skeleton */}
         {hasData === null && (
@@ -7134,7 +7067,7 @@ function PhoneFrame({ label, labelColor = C.teal, children, showAIStatus }: Phon
         {label}
       </div>
       <div style={{
-        width: 320, height: 640, borderRadius: 44, border: `3px solid ${C.g200}`,
+        width: 320, height: 680, borderRadius: 44, border: `3px solid ${C.g200}`,
         background: C.white, boxShadow: '0 8px 40px rgba(13,115,119,0.10), 0 2px 8px rgba(0,0,0,0.07)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
       }}>
@@ -7447,134 +7380,131 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void;
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg }}>
       {/* Header */}
-      <div style={{ background: C.white, paddingInline: 18, paddingTop: 56, paddingBottom: 16, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+      <div style={{ background: C.white, paddingInline: 18, paddingTop: 16, paddingBottom: 14, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Settings</div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
 
-        {/* ── PIN Security section ── */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>PIN Security</div>
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '14px 16px', marginBottom: 20 }}>
-          {/* Section header row */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>PIN Lock</span>
-            {pinActive && (
-              <span style={{
-                background: C.greenLt, color: C.green, fontSize: 11, fontWeight: 700,
-                borderRadius: 8, paddingInline: 9, paddingBlock: 3, border: `1px solid #BBF7D0`,
-              }}>
-                Active
-              </span>
-            )}
-          </div>
-
-          {!pinActive ? (
-            <>
-              <p style={{ fontSize: 13, color: C.g500, margin: '0 0 12px', lineHeight: 1.5 }}>
-                Add a 4-digit PIN to protect your account
-              </p>
-              <button
-                onClick={() => setPinModal('setup')}
-                style={{
-                  width: '100%', padding: '11px 0', borderRadius: 10,
-                  border: `1.5px solid ${C.teal}`, background: 'transparent',
-                  color: C.teal, fontSize: 14, fontWeight: 700,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                Set Up PIN
-              </button>
-            </>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <button
-                onClick={() => setPinModal('change')}
-                style={{
-                  width: '100%', padding: '11px 0', borderRadius: 10,
-                  border: `1.5px solid ${C.teal}`, background: 'transparent',
-                  color: C.teal, fontSize: 14, fontWeight: 700,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                Change PIN
-              </button>
-              <button
-                onClick={() => setPinModal('remove')}
-                style={{
-                  width: '100%', padding: '11px 0', borderRadius: 10,
-                  border: `1.5px solid ${C.red}`, background: 'transparent',
-                  color: C.red, fontSize: 14, fontWeight: 700,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                Remove PIN
-              </button>
+        {/* ── PROFILE section ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Profile</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: '14px 16px', marginBottom: 14, position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 24, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: C.white }}>T</span>
             </div>
-          )}
-        </div>
-
-        {/* Offline AI Model */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
-          {/* Model name */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
-              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E4B</div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 6 }}>
-                Works offline for:{' '}
-                <span style={{ color: C.g900, fontWeight: 600 }}>Homework Grading · Teacher Assistant</span>
-              </div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Download to use Neriah AI without internet</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Mr Tendai Maisiri</div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>+263 •••• •••• 67</div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 1 }}>Kuwadzana High School</div>
             </div>
-            <div style={{ fontSize: 12, color: C.g500 }}>3.5 GB</div>
           </div>
-          {/* Cloud-only badge */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
-            <Cloud size={13} color={C.g500} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
-          </div>
-
-          <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>
-            On-device AI models run locally on the <strong>Neriah mobile app</strong>, keeping your data private and letting you grade even without internet.
-          </p>
-
-          {/* App download CTA */}
-          <a
-            href="https://neriah.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              background: C.teal, color: C.white, borderRadius: 10, padding: '12px 16px',
-              textDecoration: 'none', fontSize: 14, fontWeight: 700,
-            }}
-          >
-            <span>Download the Neriah app</span>
-            <span style={{ fontSize: 16 }}>→</span>
-          </a>
+          <button style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+            <Pencil size={16} color={C.g400} />
+          </button>
         </div>
 
-        {/* Version */}
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 14, marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 14, color: C.g900 }}>Version</span>
-            <span style={{ fontSize: 14, color: C.g500 }}>Demo</span>
-          </div>
+        {/* ── ACCOUNT section ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Account</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, overflow: 'hidden' }}>
+          {[
+            { label: 'School', right: 'Kuwadzana High' },
+            { label: pinActive ? 'Change PIN' : 'Set PIN', right: pinActive ? 'Active' : '' },
+            { label: 'Language', right: 'English' },
+          ].map((row, i, arr) => (
+            <button key={row.label}
+              onClick={row.label.includes('PIN') ? () => setPinModal(pinActive ? 'change' : 'setup') : undefined}
+              style={{
+                width: '100%', background: 'none', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${C.g100}` : 'none',
+                padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+              <span style={{ fontSize: 14, color: C.text }}>{row.label}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {row.right && <span style={{ fontSize: 13, color: C.g400 }}>{row.right}</span>}
+                <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
+              </div>
+            </button>
+          ))}
         </div>
 
-        {/* Back */}
+        {/* ── OFFLINE AI MODEL section ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Offline AI Model</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, overflow: 'hidden' }}>
+          {/* Cloud badge */}
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}` }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '5px 10px' }}>
+              <Cloud size={12} color={C.g500} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
+            </div>
+          </div>
+          {/* Model info */}
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E4B</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 4 }}>
+                Works offline for: <span style={{ color: C.g900, fontWeight: 600 }}>Homework Grading · Teacher Assistant</span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 12, color: C.g400 }}>Not downloaded</div>
+              <div style={{ fontSize: 12, color: C.g400, marginTop: 2 }}>3.5 GB</div>
+            </div>
+          </div>
+          {/* Download row */}
+          <button style={{ width: '100%', background: 'none', border: 'none', borderBottom: `1px solid ${C.g100}`, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: 'inherit' }}>
+            <span style={{ fontSize: 14, color: C.text }}>Download model</span>
+            <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+          {/* Wi-Fi toggle */}
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14, color: C.text }}>Wi-Fi only downloads</span>
+            <div style={{ width: 36, height: 20, borderRadius: 10, background: C.g200, position: 'relative', cursor: 'pointer' }}>
+              <div style={{ width: 16, height: 16, borderRadius: 8, background: C.white, position: 'absolute', top: 2, left: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+            </div>
+          </div>
+          {/* Never ask */}
+          <button style={{ width: '100%', background: 'none', border: 'none', padding: '10px 16px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+            <span style={{ fontSize: 13, color: C.red }}>Never ask again</span>
+          </button>
+        </div>
+
+        {/* ── ABOUT section ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>About</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, overflow: 'hidden' }}>
+          {[
+            { label: 'Version', right: '0.1.0' },
+            { label: 'Terms of Service', right: '' },
+            { label: 'Privacy Policy', right: '' },
+          ].map((row, i, arr) => (
+            <div key={row.label} style={{ padding: '12px 16px', borderBottom: i < arr.length - 1 ? `1px solid ${C.g100}` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 14, color: C.text }}>{row.label}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {row.right && <span style={{ fontSize: 13, color: C.g400 }}>{row.right}</span>}
+                {!row.right && <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Delete account */}
+        <div style={{ textAlign: 'center', marginBottom: 12 }}>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 14, fontWeight: 600, fontFamily: 'inherit' }}>
+            Delete Account
+          </button>
+        </div>
+
+        {/* Log out */}
         <button
           onClick={onBack}
           style={{
-            width: '100%', padding: 14, borderRadius: 10, border: `1px solid ${C.border}`,
-            background: C.white, color: C.g500, fontSize: 14, fontWeight: 600, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            width: '100%', padding: '12px 0', borderRadius: 10, border: 'none',
+            background: C.redLt, color: C.red, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+            fontFamily: 'inherit', marginBottom: 8,
           }}
         >
-          <ChevronLeft size={16} color={C.g500} />
-          Back to classes
+          Log out
         </button>
       </div>
 
@@ -7583,6 +7513,7 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void;
         {[
           { icon: <Home size={16} />,     label: 'Classes',   active: false, onClick: onBack },
           { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
+          { icon: <Sparkles size={16} />, label: 'Assistant', active: false, onClick: undefined as (() => void) | undefined },
           { icon: <Settings size={16} />, label: 'Settings',  active: true,  onClick: undefined as (() => void) | undefined },
         ].map(tab => (
           <div
