@@ -6376,7 +6376,10 @@ function StudentTutorScreen({
       <div style={{ background: C.teal, paddingInline: 16, paddingTop: 14, paddingBottom: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <button onClick={() => setShowDrawer(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Menu size={22} color={C.white} /></button>
         <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Neriah</span>
-        <button onClick={startNew} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Pencil size={18} color={C.white} /></button>
+        <div onClick={onBack} style={{ width: 36, height: 36, borderRadius: 18, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>
+          <span style={{ color: C.white, fontSize: 15, fontWeight: 700 }}>{firstName[0]}</span>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.teal}` }} />
+        </div>
       </div>
 
       {/* Context pills */}

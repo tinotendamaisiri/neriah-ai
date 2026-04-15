@@ -37,9 +37,11 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { sendTutorMessage, TutorChatMessage } from '../services/api';
 import InAppCamera from '../components/InAppCamera';
+import AIStatusDot from '../components/AIStatusDot';
 import { COLORS } from '../constants/colors';
 
 // ── Palette (matches Teacher AI exactly) ──────────────────────────────────────
@@ -146,6 +148,7 @@ function TypingIndicator() {
 
 export default function StudentTutorScreen() {
   const { user } = useAuth();
+  const navigation = useNavigation();
   const studentId = user?.id ?? 'demo';
   const firstName = user?.first_name ?? 'there';
 
@@ -440,8 +443,11 @@ export default function StudentTutorScreen() {
               <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah</Text>
-            <TouchableOpacity style={s.hBtn} onPress={startNewChat}>
-              <Ionicons name="create-outline" size={22} color={AI.userText} />
+            <TouchableOpacity onPress={() => (navigation as any).navigate('StudentSettings')} style={{ position: 'relative' }}>
+              <View style={s.headerAvatar}>
+                <Text style={s.headerAvatarText}>{firstName[0].toUpperCase()}</Text>
+              </View>
+              <AIStatusDot />
             </TouchableOpacity>
           </View>
 
@@ -630,6 +636,12 @@ const s = StyleSheet.create({
   },
   hBtn:   { padding: 6 },
   hTitle: { fontSize: 18, fontWeight: '800', color: AI.userText },
+  headerAvatar: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  headerAvatarText: { color: AI.userText, fontSize: 16, fontWeight: '700' },
 
   // Pills
   pillRow: {
