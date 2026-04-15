@@ -215,6 +215,15 @@ export const translations = {
     submission_history: 'Submission History',
     commendations: 'Commendations',
     no_chart_data: 'Not enough data for chart',
+    // Student home / class switcher
+    my_homework: 'Homework',
+    my_assignments: 'My Assignments',
+    no_assignments_yet: 'No assignments yet',
+    teacher_no_homework: 'Your teacher has not assigned any homework yet.',
+    recent_feedback: 'Recent Feedback',
+    submitted: 'Submitted',
+    switch_class: 'Switch Class',
+    select_class: 'Select Class',
   },
 
   sn: {
@@ -416,6 +425,14 @@ export const translations = {
     submission_history: 'Nhoroondo yeZvishumiso',
     commendations: 'Kurumbidzwa',
     no_chart_data: 'Hapana data yakakwana yechati',
+    my_homework: 'Basa reKudzidza',
+    my_assignments: 'Mabasa Angu',
+    no_assignments_yet: 'Hapana mabasa zvachose',
+    teacher_no_homework: 'Mudzidzisi wako haasati apa basa.',
+    recent_feedback: 'Mhedzisiro Yapedza',
+    submitted: 'Yakatumirwa',
+    switch_class: 'Chinja Kirasi',
+    select_class: 'Sarudza Kirasi',
   },
 
   nd: {
@@ -617,6 +634,14 @@ export const translations = {
     submission_history: 'Umlando Wokufaka',
     commendations: 'Izincomo',
     no_chart_data: 'Amanani anele ishadi awekho',
+    my_homework: 'Umsebenzi weKhaya',
+    my_assignments: 'Imisebenzi Yami',
+    no_assignments_yet: 'Ayikho imisebenzi okwamanje',
+    teacher_no_homework: 'Umfundisi wakho kakasiki anikanga umsebenzi.',
+    recent_feedback: 'Imiphumela Yakamuva',
+    submitted: 'Kuthunyelwe',
+    switch_class: 'Shintsha Ikilasi',
+    select_class: 'Khetha Ikilasi',
   },
 } as const;
 

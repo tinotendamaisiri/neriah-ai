@@ -25,12 +25,22 @@ import { Assignment, StudentMark, StudentClassAnalytics, StudentRootStackParamLi
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import AIStatusDot from '../components/AIStatusDot';
+import { useLanguage } from '../context/LanguageContext';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
+
+interface ClassInfo {
+  class_id: string;
+  name: string;
+  subject: string;
+  school_name: string;
+  teacher_name: string;
+}
 
 export default function StudentHomeScreen() {
   const { user } = useAuth();
   const navigation = useNavigation<Nav>();
+  const { t } = useLanguage();
 
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [recentMarks, setRecentMarks] = useState<StudentMark[]>([]);
@@ -38,16 +48,42 @@ export default function StudentHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // ── Multi-class switcher ──────────────────────────────────────────────────
+  const [enrolledClasses, setEnrolledClasses] = useState<ClassInfo[]>([]);
+  const [activeClassId, setActiveClassId] = useState(user?.class_id ?? '');
+  const [classPickerOpen, setClassPickerOpen] = useState(false);
+
+  useEffect(() => {
+    const classes: ClassInfo[] = (user as any)?.classes ?? [];
+    if (classes.length > 0) {
+      setEnrolledClasses(classes);
+      AsyncStorage.getItem('active_class_id').then(saved => {
+        if (saved && classes.some(c => c.class_id === saved)) setActiveClassId(saved);
+        else setActiveClassId(user?.class_id ?? classes[0]?.class_id ?? '');
+      }).catch(() => {});
+    }
+  }, [user]);
+
+  const switchClass = (classId: string) => {
+    setActiveClassId(classId);
+    setClassPickerOpen(false);
+    AsyncStorage.setItem('active_class_id', classId).catch(() => {});
+    setLoading(true);
+    load(false, classId);
+  };
+
+  const activeClass = enrolledClasses.find(c => c.class_id === activeClassId);
+
   const ASSIGN_CACHE = user ? `cache_assignments_${user.id}` : null;
   const MARKS_CACHE = user ? `cache_marks_${user.id}` : null;
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (isRefresh = false, classIdOverride?: string) => {
     if (!user) return;
-    console.log('[StudentHome] student class_id:', user?.class_id);
-    console.log('[StudentHome] fetching assignments for class:', user?.class_id);
+    const classId = classIdOverride || activeClassId || user.class_id;
+    console.log('[StudentHome] fetching assignments for class:', classId);
 
     const [assignmentsResult, marksResult] = await Promise.allSettled([
-      user.class_id ? getAssignments(user.class_id) : Promise.resolve([]),
+      classId ? getAssignments(classId) : Promise.resolve([]),
       getStudentMarks(user.id, 5),
     ]);
 
@@ -75,9 +111,9 @@ export default function StudentHomeScreen() {
       Alert.alert('Offline', 'Showing cached data. Pull to refresh when connected.');
     }
 
-    if (user.class_id) {
+    if (classId) {
       try {
-        const analyticsData = await getStudentClassAnalytics(user.class_id, user.id);
+        const analyticsData = await getStudentClassAnalytics(classId, user.id);
         setAnalytics(analyticsData);
       } catch {
         // Analytics non-critical
@@ -128,23 +164,55 @@ export default function StudentHomeScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerCenter}>
-          <Text style={styles.greeting}>Homework</Text>
-          <Text style={styles.subGreeting}>Hello, {firstName}</Text>
-        </View>
         <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
           <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-          <AIStatusDot />
         </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.greeting}>{t('my_homework')}</Text>
+          <Text style={styles.subGreeting}>Hello, {firstName}</Text>
+        </View>
+        <AIStatusDot />
       </View>
 
+      {/* Class switcher (only if 2+ classes) */}
+      {enrolledClasses.length > 1 && (
+        <TouchableOpacity
+          style={styles.classSwitcher}
+          onPress={() => setClassPickerOpen(!classPickerOpen)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.classSwitcherText}>
+            {activeClass ? `${activeClass.name}${activeClass.school_name ? ' — ' + activeClass.school_name : ''}` : t('select_class')}
+          </Text>
+          <Ionicons name={classPickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={COLORS.teal500} />
+        </TouchableOpacity>
+      )}
+
+      {classPickerOpen && (
+        <View style={styles.classPickerList}>
+          {enrolledClasses.map(c => (
+            <TouchableOpacity
+              key={c.class_id}
+              style={[styles.classPickerItem, c.class_id === activeClassId && styles.classPickerItemActive]}
+              onPress={() => switchClass(c.class_id)}
+            >
+              <Text style={[styles.classPickerName, c.class_id === activeClassId && { color: COLORS.teal500 }]}>
+                {c.name}{c.subject ? ` — ${c.subject}` : ''}
+              </Text>
+              <Text style={styles.classPickerSchool}>{c.school_name || ''}</Text>
+              {c.class_id === activeClassId && <Ionicons name="checkmark-circle" size={18} color={COLORS.teal500} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
       {/* Assignments */}
-      <Text style={styles.sectionTitle}>My Assignments</Text>
+      <Text style={styles.sectionTitle}>{t('my_assignments')}</Text>
       {assignments.length === 0 ? (
         <View style={styles.emptyCard}>
           <Ionicons name="document-text-outline" size={36} color={COLORS.gray300} style={{ marginBottom: 10 }} />
-          <Text style={styles.emptyTitle}>No assignments yet</Text>
-          <Text style={styles.emptyText}>Your teacher has not assigned any homework yet.</Text>
+          <Text style={styles.emptyTitle}>{t('no_assignments_yet')}</Text>
+          <Text style={styles.emptyText}>{t('teacher_no_homework')}</Text>
         </View>
       ) : (
         assignments.map(a => {
@@ -184,7 +252,7 @@ export default function StudentHomeScreen() {
       {/* Recent feedback */}
       {recentMarks.length > 0 && (
         <>
-          <Text style={styles.sectionTitle}>Recent Feedback</Text>
+          <Text style={styles.sectionTitle}>{t('recent_feedback')}</Text>
           {recentMarks.map(m => {
             const pct = m.max_score > 0 ? Math.round((m.score / m.max_score) * 100) : 0;
             return (
@@ -265,6 +333,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: { color: COLORS.white, fontSize: 20, fontWeight: '700' },
+  classSwitcher: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginHorizontal: 16, marginTop: 10, paddingVertical: 8, paddingHorizontal: 14,
+    backgroundColor: COLORS.white, borderRadius: 10, borderWidth: 1, borderColor: COLORS.teal100,
+  },
+  classSwitcherText: { fontSize: 13, fontWeight: '600', color: COLORS.teal500 },
+  classPickerList: {
+    marginHorizontal: 16, marginTop: 4, backgroundColor: COLORS.white,
+    borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border,
+  },
+  classPickerItem: {
+    flexDirection: 'row', alignItems: 'center', padding: 12,
+    borderBottomWidth: 1, borderBottomColor: COLORS.background, gap: 8,
+  },
+  classPickerItemActive: { backgroundColor: COLORS.teal50 },
+  classPickerName: { fontSize: 14, fontWeight: '600', color: COLORS.text, flex: 1 },
+  classPickerSchool: { fontSize: 12, color: COLORS.gray500 },
   sectionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

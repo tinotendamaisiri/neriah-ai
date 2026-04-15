@@ -5360,6 +5360,20 @@ function StudentHomeScreen({
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 14, paddingBottom: 70 }}>
+        {/* Class switcher — demo shows two classes */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {[
+            { id: 'cls1', label: 'Form 2A — Harare High', active: true },
+            { id: 'cls2', label: 'Form 3B — Allan Wilson', active: false },
+          ].map(c => (
+            <button key={c.id} style={{
+              flex: 1, padding: '7px 0', borderRadius: 8, border: `1px solid ${c.active ? C.teal : C.g200}`,
+              background: c.active ? C.teal50 : C.white, color: c.active ? C.teal : C.g500,
+              fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{c.label}</button>
+          ))}
+        </div>
+
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', marginBottom: 10, textTransform: 'uppercase' }}>
           My Assignments
         </div>

@@ -7036,3 +7036,79 @@ class TestStudentJoinClass:
 
         assert rv.status_code == 409
         assert "already enrolled" in rv.get_json()["error"].lower()
+
+
+# ── Language switch + multi-class ────────────────────────────────────────────
+
+class TestLanguageAndMultiClass:
+    """Tests for language switching and multi-class student context."""
+
+    @feature_test("language_switch_changes_ui")
+    def test_language_translations_complete(self):
+        """Critical translation keys exist in all 3 languages."""
+        import re
+        path = "app/mobile/src/i18n/translations.ts"
+        with open(path) as f:
+            content = f.read()
+
+        # Split by the `  en: {`, `  sn: {`, `  nd: {` block boundaries
+        blocks = re.split(r'\n\s+(en|sn|nd):\s*\{', content)
+        # blocks: ['preamble', 'en', 'en_body', 'sn', 'sn_body', 'nd', 'nd_body']
+        lang_bodies = {}
+        for i in range(1, len(blocks) - 1, 2):
+            lang_bodies[blocks[i]] = blocks[i + 1]
+
+        def extract_keys(body: str) -> set[str]:
+            return set(re.findall(r'^\s+(\w+)\s*:', body, re.MULTILINE))
+
+        en_keys = extract_keys(lang_bodies.get("en", ""))
+        sn_keys = extract_keys(lang_bodies.get("sn", ""))
+        nd_keys = extract_keys(lang_bodies.get("nd", ""))
+
+        critical = {"my_homework", "my_assignments", "no_assignments_yet", "recent_feedback",
+                     "switch_class", "select_class", "settings", "my_classes"}
+        for key in critical:
+            assert key in en_keys, f"Missing in English: {key}"
+            assert key in sn_keys, f"Missing in Shona: {key}"
+            assert key in nd_keys, f"Missing in Ndebele: {key}"
+
+    @feature_test("student_me_returns_classes")
+    def test_student_me_returns_enriched_classes(self, client):
+        """GET /api/auth/me for a student returns classes array with teacher/school info."""
+        from shared.auth import create_jwt
+        student_id = "student-me-001"
+        token = create_jwt(student_id, "student", 1)
+
+        student = {
+            "id": student_id, "first_name": "Chipo", "surname": "Dube",
+            "class_id": "cls-a", "class_ids": ["cls-a", "cls-b"],
+            "role": "student", "token_version": 1,
+        }
+        class_a = {"id": "cls-a", "name": "Form 2A", "subject": "Mathematics", "teacher_id": "t1", "education_level": "form_2"}
+        class_b = {"id": "cls-b", "name": "Form 3B", "subject": "Physics", "teacher_id": "t2", "education_level": "form_3"}
+        teacher1 = {"id": "t1", "first_name": "Mr", "surname": "Maisiri", "school_name": "Chiredzi High"}
+        teacher2 = {"id": "t2", "first_name": "Mrs", "surname": "Dube", "school_name": "Allan Wilson"}
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == student_id:
+                return student
+            if collection == "teachers":
+                return {"t1": teacher1, "t2": teacher2}.get(doc_id)
+            if collection == "classes":
+                return {"cls-a": class_a, "cls-b": class_b}.get(doc_id)
+            return None
+
+        with patch("functions.auth.get_doc", side_effect=fake_get_doc):
+            rv = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert body["role"] == "student"
+        assert "classes" in body
+        assert len(body["classes"]) == 2
+        names = {c["name"] for c in body["classes"]}
+        assert names == {"Form 2A", "Form 3B"}
+        # School name attached
+        schools = {c["school_name"] for c in body["classes"]}
+        assert "Chiredzi High" in schools
+        assert "Allan Wilson" in schools
