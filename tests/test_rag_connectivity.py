@@ -76,8 +76,10 @@ def test_chromadb_connects_and_returns_results():
     from shared.vector_db import search_similar
 
     expected = [{"text": MOCK_SYLLABUS_CONTEXT, "metadata": {}, "score": 0.15}]
+    # Force ChromaDB path by making _use_firestore_vectors() return False
     with patch("shared.vector_db._chroma_search", return_value=expected), \
-         patch("shared.vector_db.get_embedding", return_value=[0.1] * 384):
+         patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
+         patch("shared.vector_db._use_firestore_vectors", return_value=False):
         results = search_similar("syllabuses", "quadratic equations", top_k=3)
 
     assert len(results) > 0
@@ -87,8 +89,10 @@ def test_chromadb_connects_and_returns_results():
 @feature_test("rag_embeddings_generated")
 def test_embeddings_generated_for_query():
     """get_embedding() calls the local sentence-transformers backend."""
-    with patch("shared.embeddings._local_embed", return_value=[0.1] * 384) as mock_embed:
-        from shared.embeddings import get_embedding
+    from shared.embeddings import get_embedding
+    # Force local path by making _use_vertex() return False
+    with patch("shared.embeddings._use_vertex", return_value=False), \
+         patch("shared.embeddings._local_embed", return_value=[0.1] * 384) as mock_embed:
         embedding = get_embedding("velocity and acceleration")
 
     # Local model returns 384-dimensional vectors
