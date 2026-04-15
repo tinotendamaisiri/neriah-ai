@@ -1,18 +1,24 @@
 // src/components/AIStatusDot.tsx
-// Tiny status dot — sits on the top-right corner of the avatar circle.
+// Tri-state status dot — sits on the top-right corner of the avatar circle.
 //
-// Lime green (#22C55E) = online (Cloud AI via Vertex)
-// Red (#EF4444)        = offline
+// Lime green (#22C55E)  = online (Cloud AI via Vertex)
+// Amber (#F5A623)       = offline + on-device model ready
+// Red (#EF4444)         = offline + no model available
 //
 // Positioned absolute — parent must have overflow visible or be the avatar View.
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useAIRouter } from '../services/router';
+import { useModel } from '../context/ModelContext';
 
 export default function AIStatusDot() {
   const { isOnline } = useAIRouter();
-  const color = isOnline ? '#22C55E' : '#EF4444';
+  const { status: modelStatus } = useModel();
+  const modelReady = modelStatus === 'done';
+
+  // Tri-state: green online, amber offline+model, red offline+no-model
+  const color = isOnline ? '#22C55E' : modelReady ? '#F5A623' : '#EF4444';
 
   return (
     <View style={[styles.dot, { backgroundColor: color }]} />
