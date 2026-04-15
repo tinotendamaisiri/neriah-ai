@@ -570,8 +570,8 @@ def auth_pin_delete():
 
 @auth_bp.post("/auth/profile/request-otp")
 def auth_profile_request_otp():
-    """Send OTP to a phone number for profile update verification. Requires valid JWT."""
-    user_id, err = require_role(request, "teacher")
+    """Send OTP to a phone number for profile update verification. Requires valid JWT (teacher or student)."""
+    user_id, err = require_role(request, "teacher", "student")
     if err:
         return jsonify({"error": err}), 401
 

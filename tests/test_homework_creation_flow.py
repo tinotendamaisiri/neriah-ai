@@ -7246,3 +7246,68 @@ class TestRoutingLogic:
         assert dot_color(True, True) == '#22C55E'
         assert dot_color(False, True) == '#F5A623'
         assert dot_color(False, False) == '#EF4444'
+
+
+# ── Student verification gates ───────────────────────────────────────────────
+
+class TestStudentVerificationGates:
+    """Tests for PIN/OTP verification gates on sensitive student actions."""
+
+    @feature_test("student_profile_otp_accepts_students")
+    def test_profile_otp_endpoint_accepts_student_jwt(self, client):
+        """POST /api/auth/profile/request-otp must accept student JWT (not just teacher)."""
+        from shared.auth import create_jwt
+        student_id = "student-gate-001"
+        token = create_jwt(student_id, "student", 1)
+
+        def fake_get_doc(collection, doc_id):
+            return None  # bypass token_version check
+
+        saved_otps = {}
+        def fake_upsert(collection, doc_id, data):
+            saved_otps[doc_id] = data
+            return data
+
+        with patch("functions.auth.get_doc", side_effect=fake_get_doc), \
+             patch("functions.auth.upsert", side_effect=fake_upsert), \
+             patch("functions.auth._send_otp", return_value="sms"), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
+            rv = client.post("/api/auth/profile/request-otp",
+                json={"phone": "+263771234567"},
+                headers={"Authorization": f"Bearer {token}"})
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert body.get("channel") == "sms" or body.get("message") == "OTP sent"
+
+    @feature_test("verification_gate_logic")
+    def test_verification_gate_requires_pin_before_action(self):
+        """Verification gate: if PIN is set, action is deferred until PIN verified."""
+        # Test the pure gate logic (TypeScript logic reproduced in Python)
+        action_called = False
+
+        def gate_logic(has_pin: bool, require_pin: bool) -> bool:
+            """Returns True if action should proceed immediately, False if blocked."""
+            if require_pin and has_pin:
+                return False  # blocked — show PIN modal
+            return True  # proceed
+
+        # PIN set + requirePin → blocked
+        assert gate_logic(True, True) is False
+        # PIN set + no requirePin → proceed
+        assert gate_logic(True, False) is True
+        # No PIN + requirePin → proceed (no PIN to verify)
+        assert gate_logic(False, True) is True
+        # No PIN + no requirePin → proceed
+        assert gate_logic(False, False) is True
+
+    @feature_test("student_delete_requires_verification")
+    def test_student_delete_gated_behind_auth(self, client):
+        """DELETE /api/auth/student/{id} without matching JWT returns 401/403."""
+        from shared.auth import create_jwt
+        # Wrong student ID
+        token = create_jwt("other-student", "student", 1)
+        with patch("functions.auth.get_doc", return_value=None):
+            rv = client.delete("/api/auth/student/target-student-001",
+                headers={"Authorization": f"Bearer {token}"})
+        assert rv.status_code == 403

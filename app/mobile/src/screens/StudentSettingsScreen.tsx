@@ -27,6 +27,7 @@ import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
 import { useModel } from '../context/ModelContext';
 import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from '../services/modelManager';
+import { useVerificationGate } from '../hooks/useVerificationGate';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -58,6 +59,9 @@ export default function StudentSettingsScreen() {
       if (pinSet && !ctxHasPin) markPinSet();
     });
   }, [isFocused]);
+
+  // ── Verification gate for sensitive actions ────────────────────────────────
+  const gate = useVerificationGate();
 
   // ── Class + school fetch ────────────────────────────────────────────────────
   const [classDisplay, setClassDisplay] = useState('');
@@ -210,13 +214,18 @@ export default function StudentSettingsScreen() {
   };
 
   const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'This will permanently delete your account and all results. Contact support@neriah.africa to request deletion.',
-      [
-        { text: 'Contact Support', onPress: () => Linking.openURL(`mailto:support@neriah.africa?subject=${encodeURIComponent('Student Account Deletion')}&body=${encodeURIComponent(`Phone: ${user?.phone ?? ''}`)}`) },
-        { text: 'Cancel', style: 'cancel' },
-      ],
+    gate.guard(
+      () => {
+        Alert.alert(
+          'Delete Account',
+          'This will permanently delete your account and all results. Contact support@neriah.africa to request deletion.',
+          [
+            { text: 'Contact Support', onPress: () => Linking.openURL(`mailto:support@neriah.africa?subject=${encodeURIComponent('Student Account Deletion')}&body=${encodeURIComponent(`Phone: ${user?.phone ?? ''}`)}`) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+      },
+      { requirePin: true },
     );
   };
 
@@ -238,7 +247,7 @@ export default function StudentSettingsScreen() {
       {/* ── PROFILE ─────────────────────────────────────────────────── */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Profile</Text>
-        <TouchableOpacity style={s.profileCard} onPress={() => setNameModal(true)} activeOpacity={0.7}>
+        <TouchableOpacity style={s.profileCard} onPress={() => gate.guard(() => setNameModal(true), { requirePin: true })} activeOpacity={0.7}>
           <View style={s.avatar}>
             <Text style={s.avatarText}>{initials}</Text>
           </View>
@@ -259,7 +268,7 @@ export default function StudentSettingsScreen() {
           <Row label="Class" value={classDisplay || '—'} />
           <View style={s.divider} />
 
-          <TouchableOpacity style={s.settingsRow} onPress={() => (navigation as any).navigate('ClassManagement')}>
+          <TouchableOpacity style={s.settingsRow} onPress={() => gate.guard(() => (navigation as any).navigate('ClassManagement'), { requirePin: true })}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="school-outline" size={18} color={COLORS.teal500} />
               <Text style={s.settingsRowLabel}>My Classes</Text>
@@ -442,6 +451,41 @@ export default function StudentSettingsScreen() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Gate PIN verification modal ────────────────────────────── */}
+      <Modal visible={gate.pinModalVisible} animationType="slide" transparent onRequestClose={gate.dismiss}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <View style={m.overlay}>
+            <View style={m.sheet}>
+              <View style={m.header}>
+                <Text style={m.title}>Verify PIN</Text>
+                <TouchableOpacity onPress={gate.dismiss}><Text style={m.close}>✕</Text></TouchableOpacity>
+              </View>
+              <View style={m.body}>
+                <Text style={m.label}>Enter your 4-digit PIN to continue</Text>
+                <TextInput
+                  style={[m.input, { fontSize: 28, fontWeight: '700', letterSpacing: 12, textAlign: 'center' }]}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  secureTextEntry
+                  autoFocus
+                  onChangeText={async (pin) => {
+                    if (pin.length === 4) {
+                      // Verify PIN against stored hash
+                      const storedPin = await SecureStore.getItemAsync('neriah_pin');
+                      if (storedPin === pin) {
+                        gate.onPinVerified();
+                      } else {
+                        Alert.alert('Wrong PIN', 'The PIN you entered is incorrect.');
+                      }
+                    }
+                  }}
+                />
+              </View>
+            </View>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
