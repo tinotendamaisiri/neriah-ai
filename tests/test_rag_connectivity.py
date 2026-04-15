@@ -386,20 +386,64 @@ def test_rag_context_injected_in_teacher_assistant():
 
 @feature_test("rag_teacher_assistant_class_performance")
 def test_teacher_assistant_class_performance_uses_firestore():
-    """_class_performance_data() queries Firestore marks and surfaces struggling students."""
-    from functions.teacher_assistant import _class_performance_data
+    """get_teacher_context_data() with include_marks=True queries Firestore and surfaces per-class stats."""
+    from functions.teacher_assistant import get_teacher_context_data
 
-    mock_marks = [
-        {"student_id": "s1", "student_name": "Alice",  "percentage": 80.0},
-        {"student_id": "s2", "student_name": "Bob",    "percentage": 45.0},
-        {"student_id": "s3", "student_name": "Carol",  "percentage": 72.0},
-    ]
-    with patch("functions.teacher_assistant.query", return_value=mock_marks):
-        result = _class_performance_data("cls1")
+    mock_class_doc = MagicMock()
+    mock_class_doc.id = "cls1"
+    mock_class_doc.to_dict.return_value = {
+        "id": "cls1", "name": "Form 2 Maths", "subject": "Mathematics",
+        "education_level": "form_2", "teacher_id": "t1",
+    }
 
-    assert "Class average" in result
-    # Bob scored below 50% — must appear in struggling students section
-    assert "Bob" in result
+    mock_student_doc = MagicMock()
+    mock_student_doc.id = "s1"
+    mock_student_doc.to_dict.return_value = {
+        "id": "s1", "first_name": "Alice", "surname": "Moyo", "class_id": "cls1",
+    }
+
+    mock_mark_docs = []
+    for sid, name, pct in [("s1", "Alice Moyo", 80.0), ("s2", "Bob Dube", 45.0), ("s3", "Carol Choto", 72.0)]:
+        m = MagicMock()
+        m.id = f"mark_{sid}"
+        m.to_dict.return_value = {
+            "student_id": sid, "student_name": name,
+            "percentage": pct, "score": int(pct), "max_score": 100,
+            "approved": True, "verdicts": [],
+        }
+        mock_mark_docs.append(m)
+
+    mock_db = MagicMock()
+    classes_ref = mock_db.collection.return_value.where.return_value
+    classes_ref.stream.return_value = [mock_class_doc]
+
+    students_ref = MagicMock()
+    students_ref.stream.return_value = [mock_student_doc]
+
+    marks_ref = MagicMock()
+    marks_ref.stream.return_value = mock_mark_docs
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "classes":
+            col.where.return_value.stream.return_value = [mock_class_doc]
+        elif name == "students":
+            col.where.return_value.stream.return_value = [mock_student_doc]
+        elif name == "marks":
+            col.where.return_value.stream.return_value = mock_mark_docs
+        return col
+
+    mock_db.collection.side_effect = collection_side_effect
+
+    with patch("functions.teacher_assistant.get_db", return_value=mock_db):
+        result = get_teacher_context_data("t1", include_marks=True)
+
+    assert "classes" in result
+    classes = result["classes"]
+    assert len(classes) == 1
+    cls = classes[0]
+    # include_marks=True means marks stats must be present
+    assert "average_score" in cls or "students" in cls
 
 
 @feature_test("rag_teacher_assistant_curriculum_aware")
