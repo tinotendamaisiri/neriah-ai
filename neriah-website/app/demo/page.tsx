@@ -957,24 +957,97 @@ function WebCameraModal({ open, onCapture, onClose }: WebCameraModalProps) {
   );
 }
 
+// ── Country list for phone input ──────────────────────────────────────────────
+interface PhoneCountry { flag: string; name: string; dialCode: string; }
+const PHONE_COUNTRIES: PhoneCountry[] = [
+  { flag: '🇿🇼', name: 'Zimbabwe',       dialCode: '+263' },
+  { flag: '🇿🇦', name: 'South Africa',   dialCode: '+27'  },
+  { flag: '🇿🇲', name: 'Zambia',         dialCode: '+260' },
+  { flag: '🇲🇼', name: 'Malawi',         dialCode: '+265' },
+  { flag: '🇹🇿', name: 'Tanzania',       dialCode: '+255' },
+  { flag: '🇰🇪', name: 'Kenya',          dialCode: '+254' },
+  { flag: '🇺🇬', name: 'Uganda',         dialCode: '+256' },
+  { flag: '🇬🇭', name: 'Ghana',          dialCode: '+233' },
+  { flag: '🇳🇬', name: 'Nigeria',        dialCode: '+234' },
+  { flag: '🇧🇼', name: 'Botswana',       dialCode: '+267' },
+  { flag: '🇳🇦', name: 'Namibia',        dialCode: '+264' },
+  { flag: '🇲🇿', name: 'Mozambique',     dialCode: '+258' },
+  { flag: '🇷🇼', name: 'Rwanda',         dialCode: '+250' },
+  { flag: '🇪🇹', name: 'Ethiopia',       dialCode: '+251' },
+  { flag: '🇸🇳', name: 'Senegal',        dialCode: '+221' },
+  { flag: '🇨🇮', name: "Côte d'Ivoire",  dialCode: '+225' },
+  { flag: '🇨🇩', name: 'DRC',            dialCode: '+243' },
+  { flag: '🇦🇴', name: 'Angola',         dialCode: '+244' },
+  { flag: '🇹🇳', name: 'Tunisia',        dialCode: '+216' },
+  { flag: '🇪🇬', name: 'Egypt',          dialCode: '+20'  },
+  { flag: '🇲🇦', name: 'Morocco',        dialCode: '+212' },
+  { flag: '🇩🇿', name: 'Algeria',        dialCode: '+213' },
+  { flag: '🇺🇸', name: 'United States',  dialCode: '+1'   },
+  { flag: '🇬🇧', name: 'United Kingdom', dialCode: '+44'  },
+  { flag: '🇮🇳', name: 'India',          dialCode: '+91'  },
+  { flag: '🇨🇳', name: 'China',          dialCode: '+86'  },
+  { flag: '🇦🇺', name: 'Australia',      dialCode: '+61'  },
+  { flag: '🇨🇦', name: 'Canada',         dialCode: '+1'   },
+];
+
 // ── Shared: phone number input row ─────────────────────────────────────────────
-function PhoneInputRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: string, dialCode: string) => void }) {
+  const [country, setCountry] = useState<PhoneCountry>(PHONE_COUNTRIES[0]); // Zimbabwe default
+  const [open, setOpen]       = useState(false);
+  const [search, setSearch]   = useState('');
+  const numInputRef           = useRef<HTMLInputElement>(null);
+  const containerRef          = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false); setSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const filtered = search
+    ? PHONE_COUNTRIES.filter(c =>
+        c.name.toLowerCase().includes(search.toLowerCase()) || c.dialCode.includes(search)
+      )
+    : PHONE_COUNTRIES;
+
+  const handleSelect = (c: PhoneCountry) => {
+    setCountry(c); setOpen(false); setSearch('');
+    onChange(value, c.dialCode);
+    setTimeout(() => numInputRef.current?.focus(), 50);
+  };
+
   return (
-    <div style={{ display: 'flex', gap: 0 }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 6,
-        border: `1px solid ${C.g200}`, borderRight: 'none',
-        borderRadius: '10px 0 0 10px', paddingInline: 12, paddingBlock: 14,
-        background: C.g50, minWidth: 88, whiteSpace: 'nowrap',
-      }}>
-        <span style={{ fontSize: 16 }}>🇿🇼</span>
-        <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>+263</span>
-        <span style={{ fontSize: 11, color: C.g500 }}>▾</span>
-      </div>
+    <div ref={containerRef} style={{ display: 'flex', gap: 0, position: 'relative' }}>
+      {/* Country selector button */}
+      <button
+        type="button"
+        onClick={() => { setOpen(v => !v); setSearch(''); }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 5,
+          border: `1px solid ${C.g200}`, borderRight: 'none',
+          borderRadius: '10px 0 0 10px', paddingInline: 10, paddingBlock: 14,
+          background: C.g50, minWidth: 88, whiteSpace: 'nowrap',
+          cursor: 'pointer', fontFamily: 'inherit', outline: 'none',
+        }}
+      >
+        <span style={{ fontSize: 16 }}>{country.flag}</span>
+        <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{country.dialCode}</span>
+        <span style={{ fontSize: 10, color: C.g500 }}>▾</span>
+      </button>
+
+      {/* Phone number input */}
       <input
+        ref={numInputRef}
         type="tel"
+        inputMode="numeric"
         value={value}
-        onChange={e => onChange(e.target.value.replace(/\D/g, ''))}
+        onChange={e => onChange(e.target.value.replace(/\D/g, ''), country.dialCode)}
         placeholder="77 123 4567"
         style={{
           flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
@@ -982,6 +1055,56 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (v: strin
           fontFamily: 'inherit',
         }}
       />
+
+      {/* Country dropdown */}
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+          background: C.white, border: `1px solid ${C.g200}`, borderRadius: 10,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 200, overflow: 'hidden',
+        }}>
+          {/* Search input */}
+          <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.g100}` }}>
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search country..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                border: `1px solid ${C.g200}`, borderRadius: 7,
+                padding: '7px 10px', fontSize: 13, outline: 'none',
+                fontFamily: 'inherit', color: C.text,
+              }}
+            />
+          </div>
+          {/* Country list */}
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '14px 12px', fontSize: 13, color: C.g400, textAlign: 'center' }}>
+                No country found
+              </div>
+            ) : filtered.map(c => (
+              <button
+                key={c.name}
+                type="button"
+                onMouseDown={() => handleSelect(c)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 9,
+                  width: '100%', padding: '9px 12px', border: 'none',
+                  background: c.name === country.name ? C.tealLt : 'none',
+                  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                }}
+              >
+                <span style={{ fontSize: 16 }}>{c.flag}</span>
+                <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{c.name}</span>
+                <span style={{ fontSize: 12, color: C.g500, fontWeight: 600 }}>{c.dialCode}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1060,11 +1183,12 @@ function WelcomeScreen({ onTeacher, onSignIn }: { onTeacher: () => void; onSignI
 function PhoneScreen({
   onContinue, onRegister,
 }: { onContinue: (phone: string, channel: 'whatsapp' | 'sms') => void; onRegister: () => void }) {
-  const [number, setNumber] = useState('');
+  const [number, setNumber]   = useState('');
+  const [dialCode, setDialCode] = useState('+263');
   const [loading, setLoading] = useState(false);
 
   const handleContinue = async () => {
-    const phone = '+263' + number;
+    const phone = dialCode + number;
     setLoading(true);
     const res = await demoFetch('/demo/auth/send-otp', {
       method: 'POST',
@@ -1089,7 +1213,7 @@ function PhoneScreen({
       {/* Form */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.g900, marginTop: 8 }}>Phone number</div>
-        <PhoneInputRow value={number} onChange={setNumber} />
+        <PhoneInputRow value={number} onChange={(digits, dc) => { setNumber(digits); setDialCode(dc); }} />
 
         <button
           onClick={handleContinue}
@@ -1515,6 +1639,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
   const [firstName, setFirstName] = useState('');
   const [surname, setSurname]     = useState('');
   const [number, setNumber]       = useState('');
+  const [dialCode, setDialCode]   = useState('+263');
   const [school, setSchool]       = useState('');
   const [error, setError]         = useState('');
   const [loading, setLoading]     = useState(false);
@@ -1534,7 +1659,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
     if (!surname.trim())   { setError('Surname is required'); return; }
     if (!school.trim())    { setError('School is required'); return; }
 
-    const phone = '+263' + number;
+    const phone = dialCode + number;
     setLoading(true);
 
     await demoFetch('/demo/auth/register', {
@@ -1619,7 +1744,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
 
       {/* Phone */}
       <label style={labelStyle}>Phone number</label>
-      <PhoneInputRow value={number} onChange={setNumber} />
+      <PhoneInputRow value={number} onChange={(digits, dc) => { setNumber(digits); setDialCode(dc); }} />
 
       {/* School — searchable picker */}
       <label style={labelStyle}>School</label>
@@ -3771,6 +3896,8 @@ function HomeworkDetailScreen({
   gradingComplete: boolean;
 }) {
   const [toggling, setToggling] = useState(false);
+  const [regen, setRegen]       = useState(false);
+  const [hwToast, setHwToast]   = useState('');
 
   // Inline question editing
   const [editingQIdx, setEditingQIdx]   = useState<number | null>(null);
@@ -3941,14 +4068,22 @@ function HomeworkDetailScreen({
           <div style={{ padding: '11px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: C.g700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Marking Scheme</span>
             <button
-              onClick={() => {/* Regenerate — demo no-op */}}
+              disabled={regen}
+              onClick={async () => {
+                setRegen(true);
+                await new Promise(r => setTimeout(r, 1500));
+                setRegen(false);
+                setHwToast('Scheme regenerated');
+                setTimeout(() => setHwToast(''), 3000);
+              }}
               style={{
-                background: 'none', border: `1px solid ${C.teal}`, borderRadius: 20,
-                padding: '4px 10px', cursor: 'pointer', color: C.teal, fontSize: 12,
+                background: 'none', border: `1px solid ${regen ? C.g200 : C.teal}`, borderRadius: 20,
+                padding: '4px 10px', cursor: regen ? 'not-allowed' : 'pointer',
+                color: regen ? C.g400 : C.teal, fontSize: 12,
                 fontWeight: 700, fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4,
               }}
             >
-              <Sparkles size={11} /> Regenerate
+              <Sparkles size={11} /> {regen ? 'Regenerating…' : 'Regenerate'}
             </button>
           </div>
           {questions.map((q, idx) =>
@@ -4156,6 +4291,7 @@ function HomeworkDetailScreen({
           )}
         </div>
       </div>
+      {hwToast && <Toast message={hwToast} onDone={() => setHwToast('')} />}
     </Screen>
   );
 }
@@ -5435,11 +5571,12 @@ function StudentTutorScreen({
 // ──────────────────────────────────────────────────────────────────────────────
 
 function AnalyticsScreen({
-  onBack, demoToken, onViewStudent,
+  onBack, demoToken, onViewStudent, onSettings,
 }: {
   onBack: () => void;
   demoToken: string | null;
   onViewStudent: (student: DemoAnalyticsStudent) => void;
+  onSettings: () => void;
 }) {
   const [analytics, setAnalytics] = useState<DemoClassAnalytics>(DEMO_CLASS_ANALYTICS);
 
@@ -5587,7 +5724,7 @@ function AnalyticsScreen({
         {[
           { icon: <Home size={16} />,     label: 'Classes',   active: false, onClick: onBack },
           { icon: <BarChart2 size={16} />, label: 'Analytics', active: true,  onClick: undefined as (() => void) | undefined },
-          { icon: <Settings size={16} />, label: 'Settings',  active: false, onClick: undefined as (() => void) | undefined },
+          { icon: <Settings size={16} />, label: 'Settings',  active: false, onClick: onSettings },
         ].map(tab => (
           <div
             key={tab.label}
@@ -6817,6 +6954,7 @@ export default function DemoPage() {
           <AnalyticsScreen
             onBack={() => go('classes')}
             demoToken={demoToken}
+            onSettings={() => go('t-settings')}
             onViewStudent={(s) => { setSelectedStudent(s); go('student-analytics'); }}
           />
         );
@@ -6908,7 +7046,7 @@ export default function DemoPage() {
             if (!selectedSubmission) { sGo('homework-detail'); return null; }
             return <GradingDetailScreen submission={selectedSubmission} hw={hwInfo} onBack={() => sGo('homework-detail')} demoToken={demoToken} onApproved={(url) => { setAnnotatedImageUrl(url); triggerSync(); }} />;
           case 'analytics':
-            return <AnalyticsScreen onBack={() => sGo('classes')} demoToken={demoToken} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} />;
+            return <AnalyticsScreen onBack={() => sGo('classes')} demoToken={demoToken} onSettings={() => sGo('t-settings')} onViewStudent={(s) => { setSelectedStudent(s); sGo('student-analytics'); }} />;
           case 'student-analytics':
             if (!selectedStudent) { sGo('analytics'); return null; }
             return <StudentAnalyticsScreen student={selectedStudent} onBack={() => sGo('analytics')} demoToken={demoToken} />;

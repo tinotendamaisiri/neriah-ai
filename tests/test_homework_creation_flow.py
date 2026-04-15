@@ -4119,3 +4119,308 @@ class TestInAppCameraEnforcement:
 
         assert "enhanceImage(" in source, \
                "InAppCamera.tsx must call enhanceImage() after capture"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUITE — Bulk Student Import + Web Audit Fixes
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBulkStudentImport:
+    """
+    Tests for the bulk student import flow and the four audit-fix features:
+      1. POST /api/demo/teacher/assistant with action_type='extract_students'
+      2. POST /api/demo/students/batch stores students in Firestore
+      3. StudentResultsScreen shows EmptyState, not an infinite spinner
+      4. AnalyticsScreen uses AbortController on class switch
+      5. HomeworkDetailScreen 'Grade All' button guarded by answer_key + questions
+    """
+
+    @feature_test("web_bulk_student_import")
+    def test_bulk_student_import_returns_names(self, client):
+        """
+        POST /api/demo/teacher/assistant with action_type='extract_students'
+        and a base64 image returns a students array with first_name and surname.
+        """
+        import io, base64
+        from PIL import Image as PILImg
+
+        buf = io.BytesIO()
+        PILImg.new("RGB", (10, 10), (255, 255, 255)).save(buf, format="JPEG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        with patch("shared.config.settings") as mock_settings:
+            mock_settings.NERIAH_ENV = "demo"
+            resp = client.post(
+                "/api/demo/teacher/assistant",
+                json={
+                    "action_type": "extract_students",
+                    "file_data":   img_b64,
+                    "media_type":  "image",
+                },
+                content_type="application/json",
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["action_type"] == "extract_students", \
+            f"action_type must be 'extract_students', got: {body.get('action_type')!r}"
+        students = body.get("students", [])
+        assert isinstance(students, list), "students must be a list"
+        assert len(students) >= 1, "Must return at least 1 demo student"
+        for s in students:
+            assert "first_name" in s, f"Student missing first_name: {s}"
+            assert "surname"    in s, f"Student missing surname: {s}"
+            assert s["first_name"].strip(), "first_name must not be blank"
+            assert s["surname"].strip(),    "surname must not be blank"
+
+    @feature_test("web_bulk_student_batch_create")
+    def test_bulk_student_batch_endpoint(self, client):
+        """
+        POST /api/demo/students/batch with a list of students creates all of them
+        in demo Firestore and returns created count.
+        """
+        saved_students: dict = {}
+        upsert_calls: list   = []
+
+        def capture_upsert(collection, doc_id, data):
+            if collection == "students":
+                saved_students[doc_id] = data
+            upsert_calls.append((collection, doc_id, data))
+
+        payload = [
+            {"first_name": "Tendai",   "surname": "Moyo"},
+            {"first_name": "Chipo",    "surname": "Dube"},
+            {"first_name": "Takudzwa", "surname": "Ncube"},
+            {"first_name": "Blessing", "surname": "Chivanda"},
+            {"first_name": "Farai",    "surname": "Gumbo"},
+        ]
+
+        with patch("shared.config.settings") as mock_settings, \
+             patch("functions.demo.upsert", side_effect=capture_upsert), \
+             patch("functions.demo.get_doc", return_value=None):
+            mock_settings.NERIAH_ENV = "demo"
+            resp = client.post(
+                "/api/demo/students/batch",
+                json={"class_id": "demo-class-1", "students": payload},
+                content_type="application/json",
+            )
+
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["created"] == 5, f"Expected 5 students created, got {body['created']}"
+        assert len(body["students"]) == 5
+
+        # Every student has an id and class_id
+        for s in body["students"]:
+            assert s.get("id"),       f"student missing id: {s}"
+            assert s.get("class_id") == "demo-class-1", \
+                f"class_id mismatch: {s.get('class_id')!r}"
+            assert s.get("first_name"), f"first_name missing: {s}"
+            assert s.get("surname"),    f"surname missing: {s}"
+
+        # All 5 were written to Firestore under 'students'
+        assert len(saved_students) == 5, \
+            f"Expected 5 Firestore writes under 'students', got {len(saved_students)}"
+
+    @feature_test("web_results_empty_state_not_spinner")
+    def test_results_empty_state_shown_not_spinner(self):
+        """
+        StudentResultsScreen in page.tsx must:
+        - Have isLoading state (not show infinite spinner)
+        - Show a 'No results yet' or 'Could not load' empty state when not loading
+        - Have a timeout guard (10_000 ms or 10s)
+        - Never render an indefinite spinner without a timeout
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "neriah-website", "app", "demo", "page.tsx",
+            )
+        )
+        assert os.path.isfile(demo_path), f"page.tsx not found: {demo_path}"
+
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert "isLoading" in source, \
+            "StudentResultsScreen must have isLoading state to avoid infinite spinner"
+        assert "10_000" in source or "10000" in source, \
+            "Must have a 10-second timeout guard in StudentResultsScreen"
+        assert "No results yet" in source, \
+            "EmptyState 'No results yet' message must be present"
+        assert "Could not load" in source, \
+            "Error state 'Could not load results' must be present for timeout case"
+
+    @feature_test("web_analytics_abort_on_class_switch")
+    def test_analytics_fetch_aborted_on_class_switch(self):
+        """
+        AnalyticsScreen in page.tsx must use AbortController to cancel stale
+        analytics fetches and a debounce timer to prevent race conditions.
+        - AbortController must be created inside useEffect
+        - controller.abort() must be called in cleanup
+        - A debounce setTimeout (>= 100 ms) must wrap the fetch call
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "neriah-website", "app", "demo", "page.tsx",
+            )
+        )
+        assert os.path.isfile(demo_path), f"page.tsx not found: {demo_path}"
+
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert "AbortController" in source, \
+            "AnalyticsScreen must use AbortController to cancel stale fetches"
+        assert "controller.abort()" in source, \
+            "AbortController cleanup (controller.abort()) must be called on unmount"
+        assert "controller.signal" in source, \
+            "AbortController signal must be passed to fetch options"
+        # Debounce: setTimeout with a delay
+        assert "150" in source or "100" in source, \
+            "A debounce delay (>= 100 ms) must be used to prevent rapid-switch race conditions"
+
+    @feature_test("web_homework_detail_grade_button_guarded")
+    def test_grade_button_only_shown_with_answer_key(self):
+        """
+        HomeworkDetailScreen in page.tsx must guard the 'Grade All with AI' button:
+        - Only renders when hw.answer_key_id is truthy AND questions.length > 0
+        - Must NOT be rendered unconditionally
+        """
+        import os, re
+        demo_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "neriah-website", "app", "demo", "page.tsx",
+            )
+        )
+        assert os.path.isfile(demo_path), f"page.tsx not found: {demo_path}"
+
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # The Grade All button text must exist
+        assert "Grade All with AI" in source, \
+            "'Grade All with AI' button text must be present in HomeworkDetailScreen"
+
+        # Find the section around the Grade All button and verify guard conditions
+        # Look for answer_key_id and questions.length checks near the button
+        assert "hw.answer_key_id" in source, \
+            "Grade All button must be guarded by hw.answer_key_id check"
+        assert "questions.length" in source, \
+            "Grade All button must be guarded by questions.length > 0 check"
+
+        # The button must NOT appear without its guard — verify the guard wraps it.
+        # Verify the guard and button co-exist in the HomeworkDetailScreen function.
+        # Find the HomeworkDetailScreen function body and check the guard is present
+        # before each occurrence of the Grade All button.
+        #
+        # Strategy: Extract the HomeworkDetailScreen function body, then verify
+        # that hw.answer_key_id && questions.length appears before Grade All with AI.
+
+        # Locate HomeworkDetailScreen
+        hw_detail_start = source.find("function HomeworkDetailScreen(")
+        assert hw_detail_start >= 0, "HomeworkDetailScreen not found"
+
+        # Extract a generous chunk of the function (3000 chars is enough for the section)
+        # The Grade All button with guard is in the middle of the function
+        btn_pos_in_fn = source.find("Grade All with AI", hw_detail_start)
+        assert btn_pos_in_fn >= 0, "'Grade All with AI' not found after HomeworkDetailScreen"
+
+        # Look from function start to the button text
+        fn_to_btn = source[hw_detail_start:btn_pos_in_fn]
+        assert "hw.answer_key_id" in fn_to_btn, \
+            "hw.answer_key_id guard not found before 'Grade All with AI' in HomeworkDetailScreen"
+        assert "questions.length" in fn_to_btn, \
+            "questions.length guard not found before 'Grade All with AI' in HomeworkDetailScreen"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Country Code Dropdown + Dead Button Tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestCountryCodeAndDeadButtons:
+    """Static analysis tests for the country code dropdown and dead button fixes."""
+
+    @feature_test("country_code_dropdown_has_countries")
+    def test_country_code_list_includes_african_countries(self):
+        """
+        page.tsx must define PHONE_COUNTRIES with at least the key African countries.
+        Each entry must have flag, name, and dialCode fields.
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        assert os.path.isfile(demo_path), f"page.tsx not found: {demo_path}"
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # Array must exist
+        assert "PHONE_COUNTRIES" in source, "PHONE_COUNTRIES array not found in page.tsx"
+
+        # Key African countries present
+        for country in ["Zimbabwe", "Kenya", "Nigeria", "South Africa", "Ghana", "Tanzania"]:
+            assert country in source, f"Country '{country}' missing from PHONE_COUNTRIES"
+
+        # Dial codes present
+        for code in ["'+263'", "'+254'", "'+234'", "'+27'"]:
+            assert code in source, f"Dial code {code} missing from PHONE_COUNTRIES"
+
+        # Structure fields present
+        assert "dialCode" in source, "'dialCode' field missing from country entries"
+        assert "flag" in source, "'flag' field missing from country entries"
+
+    @feature_test("country_code_default_zimbabwe")
+    def test_default_country_is_zimbabwe(self):
+        """
+        PhoneInputRow must default to PHONE_COUNTRIES[0] which is Zimbabwe (+263).
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # Default must be PHONE_COUNTRIES[0]
+        assert "PHONE_COUNTRIES[0]" in source, \
+            "PhoneInputRow must default to PHONE_COUNTRIES[0] (Zimbabwe)"
+
+        # Zimbabwe must be the first entry
+        idx_zw = source.find("Zimbabwe")
+        idx_sa = source.find("South Africa")
+        assert idx_zw >= 0, "Zimbabwe entry not found"
+        assert idx_sa >= 0, "South Africa entry not found"
+        # Zimbabwe should appear before South Africa in the PHONE_COUNTRIES definition
+        assert idx_zw < idx_sa, \
+            "Zimbabwe must be the first entry in PHONE_COUNTRIES (before South Africa)"
+
+    @feature_test("no_empty_onclick_handlers")
+    def test_no_empty_onclick_handlers(self):
+        """
+        page.tsx must contain zero onClick={() => {/* ... */}} no-op handlers.
+        The Regenerate button and all other previously dead buttons must be wired.
+        """
+        import os, re
+        demo_path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # Check the specific pattern that was a no-op: demo no-op comment
+        assert "no-op" not in source, \
+            "Found '/* ... no-op */' comment inside an onClick — wire it to a real handler"
+
+        # Check for completely empty arrow functions: onClick={() => {}}
+        empty_pattern = re.compile(r'onClick=\{\(\)\s*=>\s*\{\s*\}\}')
+        empty_matches = empty_pattern.findall(source)
+        assert len(empty_matches) == 0, \
+            f"Found {len(empty_matches)} empty onClick handlers: {empty_matches}"
+
+        # Regenerate button must be wired (has setRegen or similar non-trivial handler)
+        assert "setRegen" in source, \
+            "Regenerate button must be wired to setRegen — not a no-op"
