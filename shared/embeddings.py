@@ -1,11 +1,11 @@
 """
 Text embedding wrapper.
 
-Production (INFERENCE_BACKEND=vertex):
+Production (non-demo):
     Vertex AI text-embedding-005 — 768-dimensional embeddings.
     Requires google-cloud-aiplatform (already in requirements.txt).
 
-Demo / local dev (INFERENCE_BACKEND=ollama or NERIAH_ENV=demo):
+Demo (NERIAH_ENV=demo):
     sentence-transformers all-MiniLM-L6-v2 — 384-dimensional embeddings.
     Runs on CPU, no external service required.
     Model is ~80 MB and is downloaded once then cached to ~/.cache/torch/.
@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from shared.config import is_demo, settings
+from shared.config import is_demo
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ LOCAL_EMBEDDING_DIM  = 384
 
 
 def _use_vertex() -> bool:
-    """True when running against Vertex AI inference (not demo, not local Ollama)."""
-    return settings.INFERENCE_BACKEND == "vertex" and not is_demo()
+    """True in production (non-demo). Demo uses local sentence-transformers."""
+    return not is_demo()
 
 
 @lru_cache(maxsize=1)
@@ -48,8 +48,8 @@ def get_embedding(text: str) -> list[float]:
     Generate an embedding vector for *text*.
 
     Returns a list[float]:
-      - 768 floats when INFERENCE_BACKEND=vertex (Vertex AI text-embedding-005)
-      - 384 floats otherwise (sentence-transformers all-MiniLM-L6-v2)
+      - 768 floats in production (Vertex AI text-embedding-005)
+      - 384 floats in demo mode (sentence-transformers all-MiniLM-L6-v2)
 
     Returns [] on any failure — callers must handle this gracefully and not
     store a document or query the vector DB when the embedding is empty.

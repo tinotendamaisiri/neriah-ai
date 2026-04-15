@@ -8,7 +8,7 @@ Collections
 
 Backends
 --------
-  Production (INFERENCE_BACKEND=vertex):
+  Production:
     Firestore native vector search via find_nearest().
     Requires a vector index per collection — create with:
 
@@ -27,7 +27,7 @@ Backends
     If the index does not exist, find_nearest() raises and RAG degrades gracefully
     (grading continues without context — never blocks).
 
-  Demo / local (NERIAH_ENV=demo or INFERENCE_BACKEND=ollama):
+  Demo (NERIAH_ENV=demo):
     ChromaDB EphemeralClient (in-memory).
     Warmed from Firestore on first access so demo-seeded data is available.
     Cleared on demo reset.
@@ -48,7 +48,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from shared.config import is_demo, settings
+from shared.config import is_demo
 from shared.embeddings import get_embedding
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def _now_iso() -> str:
 
 
 def _use_firestore_vectors() -> bool:
-    return settings.INFERENCE_BACKEND == "vertex" and not is_demo()
+    return not is_demo()
 
 
 # ── ChromaDB cache (demo / local only) ────────────────────────────────────────

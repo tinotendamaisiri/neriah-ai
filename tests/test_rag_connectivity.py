@@ -296,8 +296,7 @@ def test_rag_context_injected_in_tutor():
     from shared.gemma_client import student_tutor
 
     with patch("shared.gemma_client._build_rag_context", return_value=_RAG_SECTION) as mock_rag, \
-         patch("shared.gemma_client._ollama_chat", return_value="Have you tried factoring?"), \
-         patch("shared.gemma_client._vertex_chat", return_value="Have you tried factoring?"):
+         patch("shared.gemma_client.chat", return_value="Have you tried factoring?"):
         response = student_tutor(
             message="How do I solve x^2 - 4 = 0?",
             conversation_history=[],
@@ -316,15 +315,14 @@ def test_tutor_incorporates_student_weak_areas():
 
     captured: list[str] = []
 
-    def _capture_ollama(system_prompt, history, message, image_bytes, complexity):
+    def _capture_chat(system_prompt, history, message, image_bytes=None):
         captured.append(system_prompt)
         return "Good — what do you know about fractions?"
 
     with patch("shared.vector_db.search_with_user_context",
                return_value=[{"text": MOCK_SYLLABUS_CONTEXT, "metadata": {}, "score": 0.1}]), \
          patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
-         patch("shared.gemma_client._ollama_chat", side_effect=_capture_ollama), \
-         patch("shared.gemma_client._vertex_chat", return_value=""):
+         patch("shared.gemma_client.chat", side_effect=_capture_chat):
         student_tutor(
             message="Help",
             conversation_history=[],
@@ -345,8 +343,7 @@ def test_tutor_response_is_socratic():
 
     socratic = "What do you think happens when you substitute x=2 into the equation?"
     with patch("shared.gemma_client._build_rag_context", return_value=""), \
-         patch("shared.gemma_client._ollama_chat", return_value=socratic), \
-         patch("shared.gemma_client._vertex_chat", return_value=socratic):
+         patch("shared.gemma_client.chat", return_value=socratic):
         response = student_tutor("Solve x^2=4", [], "Form 2")
 
     assert "?" in response

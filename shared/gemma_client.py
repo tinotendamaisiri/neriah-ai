@@ -1,22 +1,12 @@
 """
-Gemma 4 inference client — Ollama (local) and Vertex AI (cloud) backends.
+Gemma 4 inference client — Vertex AI (GCP) backend.
 
-Backend selection via INFERENCE_BACKEND env var:
-  "ollama"  — local Ollama server (default, dev)
-  "vertex"  — Vertex AI Model Garden serverless via OpenAI-compatible API (production)
+Endpoint: https://aiplatform.googleapis.com/v1/projects/{GCP_PROJECT_ID}/
+          locations/global/endpoints/openapi/chat/completions
+Model:    VERTEX_MODEL_ID  (default: google/gemma-4-26b-a4b-it-maas)
+Auth:     Application Default Credentials — gcloud auth / Workload Identity
 
-Ollama model routing:
-  Simple / student queries         →  OLLAMA_MODEL_STUDENT  (gemma4:e2b)
-  Teacher grading / complex tasks  →  OLLAMA_MODEL_TEACHER  (gemma4:latest)
-  Cloud-equivalent local model     →  OLLAMA_MODEL_CLOUD    (gemma4:26b-a4b-it-q4_K_M)
-
-Vertex AI (INFERENCE_BACKEND=vertex):
-  Endpoint: https://aiplatform.googleapis.com/v1/projects/{GCP_PROJECT_ID}/
-            locations/global/endpoints/openapi/chat/completions
-  Model:    VERTEX_MODEL_ID  (default: google/gemma-4-26b-a4b-it-maas)
-  Auth:     Application Default Credentials — gcloud auth / Workload Identity
-
-All function signatures and JSON output schemas are backend-agnostic.
+All function signatures and JSON output schemas are stable.
 All functions return safe fallback values on error and never raise.
 """
 
@@ -26,11 +16,9 @@ import base64
 import json
 import logging
 import re
-from functools import lru_cache
 
 import google.auth
 import google.auth.transport.requests
-import ollama
 import requests
 
 from shared.config import settings
@@ -50,44 +38,7 @@ _NERIAH_IDENTITY = (
 )
 
 
-# ─── Lazy client factories ────────────────────────────────────────────────────
-
-@lru_cache(maxsize=1)
-def _ollama_client() -> ollama.Client:
-    return ollama.Client(host=settings.OLLAMA_BASE_URL)
-
-
-# ─── Backend dispatch ─────────────────────────────────────────────────────────
-
-def _generate(
-    prompt: str,
-    image_bytes: bytes | None = None,
-    complexity: str = "complex",   # "simple" | "complex"
-    max_tokens: int | None = None,
-) -> str:
-    """
-    Route to Ollama or Vertex AI based on INFERENCE_BACKEND.
-    Returns raw model text. Raises on error (callers catch).
-    """
-    if settings.INFERENCE_BACKEND == "vertex":
-        return _vertex_generate(prompt, image_bytes, max_tokens=max_tokens)
-    return _ollama_generate(prompt, image_bytes, complexity, max_tokens=max_tokens)
-
-
-def _ollama_generate(
-    prompt: str,
-    image_bytes: bytes | None = None,
-    complexity: str = "complex",
-    max_tokens: int | None = None,
-) -> str:
-    model = settings.OLLAMA_MODEL_STUDENT if complexity == "simple" else settings.OLLAMA_MODEL_TEACHER
-    message: dict = {"role": "user", "content": prompt}
-    if image_bytes is not None:
-        message["images"] = [image_bytes]
-    options = {"num_predict": max_tokens} if max_tokens is not None else {}
-    response = _ollama_client().chat(model=model, messages=[message], options=options or None)
-    return response.message.content
-
+# ─── Vertex AI helpers ────────────────────────────────────────────────────────
 
 def _get_vertex_token() -> str:
     """Obtain a short-lived Bearer token from Application Default Credentials."""
@@ -125,11 +76,17 @@ def _vertex_chat_completions(
     return response.json()["choices"][0]["message"]["content"]
 
 
-def _vertex_generate(
+def _generate(
     prompt: str,
     image_bytes: bytes | None = None,
+    complexity: str = "complex",   # kept for API compatibility — ignored, Vertex handles both
     max_tokens: int | None = None,
 ) -> str:
+    """
+    Call Vertex AI with an optional image. Returns raw model text. Raises on error.
+    The ``complexity`` param is retained for call-site compatibility but has no effect —
+    Vertex routes all queries through the same model.
+    """
     if image_bytes is not None:
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         content: list = [
@@ -140,6 +97,31 @@ def _vertex_generate(
     else:
         messages = [{"role": "user", "content": prompt}]
     return _vertex_chat_completions(messages, max_tokens=max_tokens)
+
+
+def chat(
+    system_prompt: str,
+    history: list[dict],
+    current_message: str,
+    image_bytes: bytes | None = None,
+) -> str:
+    """
+    Multi-turn Vertex AI chat. Sends full message history to the model.
+    Returns the assistant response text. Raises on error.
+    """
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    if image_bytes is not None:
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        content: list = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            {"type": "text", "text": current_message},
+        ]
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": current_message})
+    return _vertex_chat_completions(messages)
 
 
 # ─── JSON helpers ─────────────────────────────────────────────────────────────
@@ -216,7 +198,7 @@ def extract_names_from_image(image_bytes: bytes) -> list[str]:
         "Return raw JSON only — no markdown fences."
     )
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex")
+        raw = _generate(prompt, image_bytes=image_bytes)
         parsed = _parse_json(raw, [])
         return parsed if isinstance(parsed, list) else []
     except Exception:
@@ -237,7 +219,7 @@ def extract_answer_key_from_image(image_bytes: bytes) -> dict:
         "Return raw JSON only — no markdown fences."
     )
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex")
+        raw = _generate(prompt, image_bytes=image_bytes)
         return _parse_json(raw, _FALLBACK)
     except Exception:
         logger.exception("extract_answer_key_from_image failed")
@@ -249,7 +231,6 @@ def extract_answer_key_from_image(image_bytes: bytes) -> dict:
 def check_image_quality(image_bytes: bytes) -> dict:
     """
     Returns {"pass": bool, "reason": str, "suggestion": str}.
-    Uses the simple model (gemma4:2b) — fast pre-flight check.
     Returns a passing result on error to avoid blocking the pipeline.
     """
     _FALLBACK = {"pass": True, "reason": "quality check unavailable", "suggestion": ""}
@@ -260,7 +241,7 @@ def check_image_quality(image_bytes: bytes) -> dict:
         "in-frame document page. Return raw JSON only — no markdown fences."
     )
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="simple")
+        raw = _generate(prompt, image_bytes=image_bytes)
         return _parse_json(raw, _FALLBACK)
     except Exception:
         logger.exception("check_image_quality failed")
@@ -337,7 +318,7 @@ Rules:
 - Return raw JSON array only — no markdown fences, no commentary."""
 
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex")
+        raw = _generate(prompt, image_bytes=image_bytes)
         parsed = _parse_json(raw, _FALLBACK)
         return parsed if isinstance(parsed, list) else _FALLBACK
     except Exception:
@@ -362,7 +343,6 @@ def _build_rag_context(
     try:
         from shared.vector_db import search_with_user_context  # noqa: PLC0415
 
-        # For grading examples we also want education_level in the filter
         syllabus_hits = search_with_user_context(
             "syllabuses", query_text, user_context, top_k=3,
         )
@@ -409,9 +389,6 @@ def generate_marking_scheme(
     """
     Auto-generates an answer key from a question paper (plain text).
     Returns {"title": str, "total_marks": int, "questions": [...]}. Never raises.
-
-    user_context — from shared.user_context.get_user_context(); used to retrieve
-    curriculum marking conventions from the vector DB.
     """
     _FALLBACK: dict = {"title": "Auto-generated scheme", "total_marks": 0, "questions": []}
     ctx = user_context or {}
@@ -419,10 +396,8 @@ def generate_marking_scheme(
     subject    = ctx.get("subject") or ""
 
     logger.info(
-        "[gemma] generate_marking_scheme level=%s curriculum=%s subject=%s "
-        "rag=%s",
-        education_level, curriculum or "-", subject or "-",
-        bool(ctx),
+        "[gemma] generate_marking_scheme level=%s curriculum=%s subject=%s rag=%s",
+        education_level, curriculum or "-", subject or "-", bool(ctx),
     )
 
     rag_section = _build_rag_context(
@@ -470,7 +445,7 @@ Rules:
 - Return raw JSON only — no markdown fences."""
 
     try:
-        raw = _generate(prompt, complexity="complex")
+        raw = _generate(prompt)
         return _parse_json(raw, _FALLBACK)
     except Exception:
         logger.exception("generate_marking_scheme failed")
@@ -494,9 +469,6 @@ def generate_scheme_from_text(
       (None, raw_response)   — Gemma responded but JSON parse failed
       (None, None)           — generation error (already logged)
     Never raises.
-
-    user_context — from shared.user_context.get_user_context(); used to retrieve
-    curriculum marking conventions from the vector DB.
     """
     ctx = user_context or {}
     curriculum = ctx.get("curriculum") or ""
@@ -546,7 +518,7 @@ def generate_scheme_from_text(
 
     raw: str = ""
     try:
-        raw = _generate(prompt, complexity="complex")
+        raw = _generate(prompt)
         logger.info("Gemma raw response: %.500s", raw)
         cleaned = re.sub(r"```json|```", "", raw).strip()
         data = json.loads(cleaned)
@@ -575,9 +547,6 @@ def generate_marking_scheme_from_image(
     Returns {"title": str, "total_marks": int, "questions": [...]} on success.
     Returns {"error": str, "raw_response": str} if generation fails.
     Never raises.
-
-    user_context — from shared.user_context.get_user_context(); used to retrieve
-    curriculum marking conventions from the vector DB.
     """
     ctx = user_context or {}
     subject = subject or ctx.get("subject") or None
@@ -589,7 +558,6 @@ def generate_marking_scheme_from_image(
         education_level, curriculum or "-", subject or "-", bool(ctx),
     )
 
-    # RAG: retrieve curriculum marking conventions (no grading examples needed here)
     rag_section = _build_rag_context(
         query_text=f"{curriculum} {subject or ''} {education_level} marking scheme conventions",
         user_context=ctx,
@@ -630,9 +598,8 @@ Respond ONLY with valid JSON matching this schema exactly — no text before or 
 }}"""
 
     try:
-        raw = _generate(prompt, image_bytes=image_bytes, complexity="complex", max_tokens=4096)
+        raw = _generate(prompt, image_bytes=image_bytes, max_tokens=4096)
 
-        # Primary parse (handles markdown fences)
         parsed = _parse_json(raw, None)
 
         # Regex fallback — find first {...} block in case of surrounding text
@@ -668,9 +635,6 @@ def grade_document(
     """
     Grades a tertiary submission (text extracted from PDF/DOCX) against a rubric.
     Returns list of criterion verdict dicts. Never raises.
-
-    user_context — from shared.user_context.get_user_context(); used to retrieve
-    curriculum context for tertiary assessment.
     """
     _FALLBACK: list[dict] = []
     ctx = user_context or {}
@@ -716,56 +680,12 @@ For each rubric criterion, assess the submission and return ONLY a valid JSON ar
 Return raw JSON array only — no markdown fences, no commentary."""
 
     try:
-        raw = _generate(prompt, complexity="complex")
+        raw = _generate(prompt)
         parsed = _parse_json(raw, _FALLBACK)
         return parsed if isinstance(parsed, list) else _FALLBACK
     except Exception:
         logger.exception("grade_document failed")
         return _FALLBACK
-
-
-# ─── Multi-turn chat helpers ──────────────────────────────────────────────────
-
-def _ollama_chat(
-    system_prompt: str,
-    history: list[dict],
-    current_message: str,
-    image_bytes: bytes | None,
-    complexity: str,
-) -> str:
-    """Multi-turn Ollama chat. Sends full message history to the model."""
-    model = settings.OLLAMA_MODEL_STUDENT if complexity == "simple" else settings.OLLAMA_MODEL_TEACHER
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    for msg in history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    user_msg: dict = {"role": "user", "content": current_message}
-    if image_bytes is not None:
-        user_msg["images"] = [image_bytes]
-    messages.append(user_msg)
-    response = _ollama_client().chat(model=model, messages=messages)
-    return response.message.content
-
-
-def _vertex_chat(
-    system_prompt: str,
-    history: list[dict],
-    current_message: str,
-    image_bytes: bytes | None,
-) -> str:
-    """Multi-turn Vertex AI chat via OpenAI-compatible endpoint."""
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    for msg in history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    if image_bytes is not None:
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        content: list = [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            {"type": "text", "text": current_message},
-        ]
-        messages.append({"role": "user", "content": content})
-    else:
-        messages.append({"role": "user", "content": current_message})
-    return _vertex_chat_completions(messages)
 
 
 # ─── 5. Generate rubric ───────────────────────────────────────────────────────
@@ -807,7 +727,7 @@ Return ONLY valid JSON:
 Return raw JSON only — no markdown fences."""
 
     try:
-        raw = _generate(prompt, complexity="complex")
+        raw = _generate(prompt)
         return _parse_json(raw, _FALLBACK)
     except Exception:
         logger.exception("generate_rubric failed")
@@ -877,19 +797,16 @@ def student_tutor(
         bool(ctx),
     )
 
-    # Augment short/generic queries with weak topics so RAG retrieves relevant content
     rag_query = message
     if weak_topics and len(message.split()) < 8:
         rag_query = message + " " + " ".join(weak_topics[:3])
 
-    # RAG: retrieve relevant curriculum content for this student's question
     rag_section = _build_rag_context(
         query_text=rag_query,
         user_context=ctx,
         include_grading_examples=False,
     )
 
-    # Append curriculum context to system prompt when available
     curriculum_note = ""
     if rag_section:
         curriculum_note = (
@@ -897,7 +814,6 @@ def student_tutor(
             "use this to give curriculum-aligned hints):\n" + rag_section
         )
 
-    # Append weakness context so Neriah gives extra patience on known weak areas
     weakness_note = ""
     if weak_topics:
         topics_str = ", ".join(weak_topics)
@@ -915,9 +831,7 @@ def student_tutor(
     )
 
     try:
-        if settings.INFERENCE_BACKEND == "vertex":
-            return _vertex_chat(system_prompt, conversation_history, message, image_bytes)
-        return _ollama_chat(system_prompt, conversation_history, message, image_bytes, complexity="simple")
+        return chat(system_prompt, conversation_history, message, image_bytes)
     except Exception:
         logger.exception("student_tutor failed")
         return "I'm having a little trouble right now. Please try again in a moment!"

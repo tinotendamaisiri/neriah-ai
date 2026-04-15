@@ -3744,14 +3744,12 @@ class TestNeriahIdentityAndRAG:
         RAG_SENTINEL = "<<ZIMSEC-GRADE5-SCIENCE-RAG>>"
         captured_system: list[str] = []
 
-        def capturing_ollama_chat(system, history, message, image_bytes=None, **kwargs):
+        def capturing_chat(system, history, message, image_bytes=None, **kwargs):
             captured_system.append(system)
             return "What do you think happens when water evaporates?"
 
         with patch("shared.gemma_client._build_rag_context", return_value=RAG_SENTINEL), \
-             patch("shared.gemma_client._ollama_chat", side_effect=capturing_ollama_chat), \
-             patch("shared.gemma_client.settings") as mock_settings:
-            mock_settings.INFERENCE_BACKEND = "ollama"
+             patch("shared.gemma_client.chat", side_effect=capturing_chat):
             student_tutor(
                 message="Explain the water cycle",
                 conversation_history=[],
@@ -3759,7 +3757,7 @@ class TestNeriahIdentityAndRAG:
                 user_context={"curriculum": "ZIMSEC", "subject": "Science"},
             )
 
-        assert captured_system, "_ollama_chat was not invoked"
+        assert captured_system, "chat was not invoked"
         system_prompt = captured_system[0]
         assert RAG_SENTINEL in system_prompt, (
             f"RAG sentinel not found in student_tutor system prompt.\n"
@@ -4849,7 +4847,8 @@ class TestTeacherAssistantContextInjection:
             captured_system.append(system)
             return "Happy to help once your class is set up!"
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
              patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_NO_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
@@ -4896,7 +4895,8 @@ class TestTeacherAssistantContextInjection:
             systems_seen.append(system)
             return "Great teaching idea!"
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
              patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_WITH_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
@@ -4965,7 +4965,8 @@ class TestTeacherAssistantContextInjection:
             include_marks_calls.append(include_marks)
             return {"has_data": False, "message": "No class data yet", "classes": [], "total_students": 0}
 
-        with patch("functions.teacher_assistant.get_teacher_context_data", side_effect=capturing_gtcd), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("functions.teacher_assistant.get_teacher_context_data", side_effect=capturing_gtcd), \
              patch("shared.firestore_client.get_doc", return_value={"school_name": "S", "token_version": 1}), \
              patch("functions.teacher_assistant._call_model", return_value="ok"), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
@@ -5338,7 +5339,8 @@ class TestIndividualStudentQueries:
             "recent_history": [],
         }
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
              patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._RICH_CTX), \
              patch("functions.teacher_assistant.get_student_performance_data", return_value=student_perf), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
@@ -5395,7 +5397,8 @@ class TestIndividualStudentQueries:
             "message": "No graded submissions yet for Farai Dube",
         }
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
              patch("functions.teacher_assistant.get_teacher_context_data", return_value=ctx_with_farai), \
              patch("functions.teacher_assistant.get_student_performance_data", return_value=no_data_result), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \

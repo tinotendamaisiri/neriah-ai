@@ -16,15 +16,6 @@ class Settings(BaseSettings):
     GCS_BUCKET_MARKED: str = ""
     GCS_BUCKET_SUBMISSIONS: str = ""
 
-    # Inference backend: "ollama" (local) | "vertex" (GCP dedicated endpoint)
-    INFERENCE_BACKEND: str = "ollama"
-
-    # Ollama — local inference
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL_STUDENT: str = "gemma4:e2b"                  # simple / student queries
-    OLLAMA_MODEL_TEACHER: str = "gemma4:latest"               # teacher grading / complex tasks
-    OLLAMA_MODEL_CLOUD: str = "gemma4:26b-a4b-it-q4_K_M"     # cloud-equivalent quantised model
-
     # Vertex AI / Gemma 4 — serverless Model Garden (MaaS) or dedicated endpoint
     # Serverless (default): publishers/google/models/gemma-4-26b-a4b-it-maas
     # Dedicated endpoint:   projects/.../locations/.../endpoints/{id}  (set VERTEX_ENDPOINT_ID)
