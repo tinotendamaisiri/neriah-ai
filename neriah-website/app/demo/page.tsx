@@ -5463,7 +5463,7 @@ function StudentHomeScreen({
       {/* Bottom tabs */}
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
         {([
-          { icon: <FileText size={16} />, label: 'Homework', active: false, onClick: onSubmit },
+          { icon: <FileText size={16} />, label: 'Homework', active: true, onClick: undefined as (() => void) | undefined },
           { icon: <Sparkles size={16} />, label: 'Tutor', active: false, onClick: onTutor },
           { icon: <BarChart2 size={16} />, label: 'Results', active: false, onClick: onResults },
         ]).map(tab => (

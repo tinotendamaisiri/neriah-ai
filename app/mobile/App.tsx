@@ -289,7 +289,6 @@ function StudentTabs() {
         tabBarStyle: { borderTopColor: COLORS.border },
         tabBarIcon: ({ color, size }) => {
           const icons: Partial<Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap>> = {
-            StudentHome: 'home-outline',
             StudentSubmit: 'document-text-outline',
             StudentTutor: 'sparkles-outline',
             StudentResults: 'checkmark-circle-outline',
@@ -298,11 +297,6 @@ function StudentTabs() {
         },
       })}
     >
-      <StudentTab.Screen
-        name="StudentHome"
-        component={StudentHomeScreen}
-        options={{ title: 'Home', tabBarLabel: 'Home', headerShown: false }}
-      />
       <StudentTab.Screen
         name="StudentSubmit"
         component={StudentSubmitScreen}
@@ -317,6 +311,11 @@ function StudentTabs() {
         name="StudentResults"
         component={StudentResultsScreen}
         options={{ title: 'My Results', tabBarLabel: 'Results', headerShown: false }}
+      />
+      <StudentTab.Screen
+        name="StudentHome"
+        component={StudentHomeScreen}
+        options={{ title: 'Home', headerShown: false, tabBarButton: () => null }}
       />
       <StudentTab.Screen
         name="StudentSettings"
