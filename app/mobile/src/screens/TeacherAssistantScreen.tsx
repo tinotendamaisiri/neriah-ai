@@ -36,6 +36,7 @@ import {
   teacherAssistantChat,
   teacherAssistantExport,
 } from '../services/api';
+import InAppCamera from '../components/InAppCamera';
 import { useAuth } from '../context/AuthContext';
 import { Class, RootStackParamList } from '../types';
 
@@ -297,7 +298,8 @@ export default function TeacherAssistantScreen() {
     name: string;
     uri?: string;
   } | null>(null);
-  const [showAttachSheet, setShowAttachSheet] = useState(false);
+  const [showAttachSheet, setShowAttachSheet]   = useState(false);
+  const [showInAppCamera, setShowInAppCamera]   = useState(false);
 
   const flatRef   = useRef<FlatList<ChatMessage>>(null);
   const userId    = user?.id ?? 'unknown';
@@ -348,13 +350,8 @@ export default function TeacherAssistantScreen() {
   };
 
   // ── Attachment picker ─────────────────────────────────────────────────────
-  const pickFromCamera = useCallback(async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) { showToast('Camera permission is required.'); return; }
-    const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8 });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    setAttachment({ data: asset.base64 ?? '', type: 'image', name: 'Photo', uri: asset.uri });
+  const pickFromCamera = useCallback(() => {
+    setShowInAppCamera(true);
   }, []);
 
   const pickFromGallery = useCallback(async () => {
@@ -762,6 +759,16 @@ export default function TeacherAssistantScreen() {
         </KeyboardAvoidingView>
       </SafeAreaView>
 
+      {/* In-app camera */}
+      <InAppCamera
+        visible={showInAppCamera}
+        onCapture={(base64, uri) => {
+          setAttachment({ data: base64, type: 'image', name: 'Photo', uri });
+          setShowInAppCamera(false);
+        }}
+        onClose={() => setShowInAppCamera(false)}
+      />
+
       {/* Attach media bottom sheet */}
       <Modal
         visible={showAttachSheet}
@@ -777,7 +784,7 @@ export default function TeacherAssistantScreen() {
           <View style={s.attachSheet} onStartShouldSetResponder={() => true}>
             <Text style={s.attachSheetTitle}>Attach a file</Text>
             {[
-              { icon: 'camera-outline',        label: 'Camera',        color: AI.teal, onPress: () => { setShowAttachSheet(false); pickFromCamera(); } },
+              { icon: 'camera-outline',        label: 'Camera',        color: AI.teal, onPress: () => { setShowAttachSheet(false); setShowInAppCamera(true); } },
               { icon: 'image-outline',         label: 'Gallery',       color: AI.teal, onPress: () => { setShowAttachSheet(false); pickFromGallery(); } },
               { icon: 'document-outline',      label: 'PDF',           color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('pdf'); } },
               { icon: 'document-text-outline', label: 'Word',          color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('word'); } },

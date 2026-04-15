@@ -4007,3 +4007,115 @@ class TestFileAttachments:
         final_msg = captured_message[0]
         assert USER_TEXT in final_msg, "Original user text not found in combined message"
         assert PDF_TEXT in final_msg, "PDF extracted text not found in combined message"
+
+
+# ── In-app camera enforcement tests ──────────────────────────────────────────
+
+class TestInAppCameraEnforcement:
+    """Verify that the system camera is never launched directly anywhere in the codebase."""
+
+    @feature_test("camera_always_inapp_mobile")
+    def test_no_system_camera_launch_in_mobile(self):
+        """
+        All .tsx files under app/mobile/src/ must contain zero calls to
+        ImagePicker.launchCameraAsync. Every camera entry point must go
+        through InAppCamera instead.
+        """
+        import os
+        import re
+
+        src_root = os.path.join(
+            os.path.dirname(__file__), "..", "app", "mobile", "src"
+        )
+        src_root = os.path.realpath(src_root)
+        assert os.path.isdir(src_root), f"src directory not found: {src_root}"
+
+        violations: list[str] = []
+        pattern  = re.compile(r"ImagePicker\.launchCameraAsync")
+        comment  = re.compile(r"^\s*//")
+
+        for dirpath, _, filenames in os.walk(src_root):
+            for fname in filenames:
+                if not fname.endswith((".tsx", ".ts")):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                with open(fpath, encoding="utf-8") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if comment.match(line):
+                            continue  # skip comment-only lines
+                        if pattern.search(line):
+                            rel = os.path.relpath(fpath, src_root)
+                            violations.append(f"{rel}:{lineno}: {line.strip()}")
+
+        assert not violations, (
+            "Found ImagePicker.launchCameraAsync — use InAppCamera instead:\n"
+            + "\n".join(violations)
+        )
+
+    @feature_test("camera_always_inapp_web")
+    def test_no_file_input_capture_in_web(self):
+        """
+        neriah-website/app/demo/page.tsx must contain zero <input> elements
+        with capture="environment". Every camera entry point must use
+        WebCameraModal (navigator.mediaDevices.getUserMedia) instead.
+        """
+        import os
+        import re
+
+        demo_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "neriah-website", "app", "demo", "page.tsx",
+            )
+        )
+        assert os.path.isfile(demo_path), f"Demo page not found: {demo_path}"
+
+        # Match capture= that is NOT inside a comment
+        pattern = re.compile(r'capture\s*=\s*["\']environment["\']')
+        comment  = re.compile(r'^\s*//')
+
+        violations: list[str] = []
+        with open(demo_path, encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+                if comment.match(line):
+                    continue
+                if pattern.search(line):
+                    violations.append(f"line {lineno}: {line.strip()}")
+
+        assert not violations, (
+            'Found capture="environment" in file inputs — use WebCameraModal instead:\n'
+            + "\n".join(violations)
+        )
+
+    @feature_test("inapp_camera_quality_check_wired")
+    def test_inapp_camera_runs_quality_check(self):
+        """
+        InAppCamera.tsx must import both imageQuality and imageEnhance,
+        and must call checkImageQuality() and enhanceImage() after capture.
+        """
+        import os
+
+        cam_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "app", "mobile", "src", "components", "InAppCamera.tsx",
+            )
+        )
+        assert os.path.isfile(cam_path), f"InAppCamera.tsx not found: {cam_path}"
+
+        with open(cam_path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert "from '../services/imageQuality'" in source or \
+               'from "../services/imageQuality"' in source, \
+               "InAppCamera.tsx must import imageQuality"
+
+        assert "from '../services/imageEnhance'" in source or \
+               'from "../services/imageEnhance"' in source, \
+               "InAppCamera.tsx must import imageEnhance"
+
+        assert "checkImageQuality(" in source, \
+               "InAppCamera.tsx must call checkImageQuality() after capture"
+
+        assert "enhanceImage(" in source, \
+               "InAppCamera.tsx must call enhanceImage() after capture"
