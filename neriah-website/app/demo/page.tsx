@@ -3732,6 +3732,15 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics, onAssistant, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void }) {
   const [fabOpen, setFabOpen] = useState(false);
 
+  // Demo homework items for Form 2A — 3 items so the "+ 1 more" link is exercised
+  const demoHomeworks = [
+    { id: 'hw1', title: 'Chapter 5 Maths Test',  created: '12 Apr 2026', submissions: 2, badge: 'ready'  },
+    { id: 'hw2', title: 'Chapter 6 Algebra Quiz', created: '10 Apr 2026', submissions: 0, badge: 'amber'  },
+    { id: 'hw3', title: 'Chapter 7 Geometry',     created: '8 Apr 2026',  submissions: 1, badge: 'ready'  },
+  ];
+  const previewHomeworks = demoHomeworks.slice(0, 2);
+  const hiddenCount = demoHomeworks.length - previewHomeworks.length;
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg, position: 'relative' }}>
       {/* Header */}
@@ -3764,52 +3773,71 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics,
                 </div>
                 <div style={{ width: 1, height: 28, background: C.border }} />
                 <div style={{ textAlign: 'center', minWidth: 40 }}>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>1</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.teal }}>{demoHomeworks.length}</div>
                   <div style={{ fontSize: 11, color: C.g500 }}>homework</div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Homework under this class */}
+          {/* Homework under this class — max 2 previewed */}
           <div style={{ marginTop: 4, marginLeft: 12, borderLeft: `2px solid ${C.teal100}`, paddingLeft: 10 }}>
-            {/* Homework card — tappable */}
-            <button
-              onClick={onOpenHomework}
-              style={{
-                width: '100%', background: C.white, borderRadius: 10, marginBottom: 6, padding: '11px 12px',
-                display: 'flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontFamily: 'inherit', textAlign: 'left',
-                transition: 'box-shadow 0.12s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(13,115,119,0.14)')}
-              onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)')}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Chapter 5 Maths Test</div>
-                <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Created 12 Apr 2026</div>
-                <div style={{ fontSize: 11, color: C.teal, marginTop: 3, fontWeight: 600 }}>2 submissions</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                  background: C.teal50, borderRadius: 8, paddingInline: 7, paddingBlock: 5,
-                  fontSize: 11, color: C.teal, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
-                }}>
-                  Ready to{'\n'}Grade
-                </div>
-                <span style={{ fontSize: 18, color: C.g400 }}>›</span>
-              </div>
-            </button>
-
-            {/* Empty state: no homework */}
-            {false && (
+            {previewHomeworks.length === 0 && (
               <div style={{ padding: '14px 8px', textAlign: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><FileText size={20} color={C.g400} /></div>
                 <div style={{ fontSize: 13, color: C.g500 }}>No homework yet</div>
               </div>
             )}
+            {previewHomeworks.map(hw => (
+              <button
+                key={hw.id}
+                onClick={onOpenHomework}
+                style={{
+                  width: '100%', background: hw.badge === 'amber' ? C.amber50 : C.white,
+                  borderRadius: 10, marginBottom: 6, padding: '11px 12px',
+                  display: 'flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontFamily: 'inherit', textAlign: 'left',
+                  transition: 'box-shadow 0.12s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(13,115,119,0.14)')}
+                onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)')}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{hw.title}</div>
+                  <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Created {hw.created}</div>
+                  <div style={{ fontSize: 11, color: C.teal, marginTop: 3, fontWeight: 600 }}>{hw.submissions} submissions</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {hw.badge === 'amber' ? (
+                    <div style={{
+                      background: C.amber200, borderRadius: 8, paddingInline: 7, paddingBlock: 5,
+                      fontSize: 11, color: C.amber500, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
+                    }}>Add{'\n'}Scheme</div>
+                  ) : (
+                    <div style={{
+                      background: C.teal50, borderRadius: 8, paddingInline: 7, paddingBlock: 5,
+                      fontSize: 11, color: C.teal, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
+                    }}>Ready to{'\n'}Grade</div>
+                  )}
+                  <span style={{ fontSize: 18, color: C.g400 }}>›</span>
+                </div>
+              </button>
+            ))}
 
-            {/* Add homework */}
+            {/* "+ X more" link — only when there are hidden homeworks */}
+            {hiddenCount > 0 && (
+              <button
+                onClick={onOpenHomework}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', display: 'flex',
+                  alignItems: 'center', paddingBlock: 6, paddingInline: 4, fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ fontSize: 13, color: C.teal, fontWeight: 600 }}>+ {hiddenCount} more</span>
+              </button>
+            )}
+
+            {/* Add homework button */}
             <button
               onClick={onAddHomework}
               style={{

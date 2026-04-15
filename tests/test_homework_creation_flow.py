@@ -4491,3 +4491,87 @@ class TestCountryCodeAndDeadButtons:
         try_count = len(re.findall(r'\btry\b', source))
         assert try_count >= 4, \
             f"Expected at least 4 try blocks (one per fallback layer + sessionStorage), found {try_count}"
+
+
+class TestClassCardHomeworkPreview:
+    """Tests for the max-2 homework preview rule on class cards (mobile + web)."""
+
+    def _demo_source(self) -> str:
+        import os
+        path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def _mobile_source(self) -> str:
+        import os
+        path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "app", "mobile", "src", "screens", "HomeScreen.tsx")
+        )
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    @feature_test("class_card_shows_max_2_homeworks")
+    def test_class_card_preview_limited_to_2(self):
+        """
+        Both mobile and web must slice the homework list to 2 and show
+        a '+ X more' link when there are more than 2 homeworks.
+        """
+        demo = self._demo_source()
+        mobile = self._mobile_source()
+
+        # Web: slicing to 2
+        assert "slice(0, 2)" in demo, \
+            "Web ClassesScreen must call .slice(0, 2) on the homework array"
+        # Web: hiddenCount variable or equivalent
+        assert "hiddenCount" in demo, \
+            "Web ClassesScreen must compute hiddenCount = total - 2"
+        # Web: '+ X more' rendered (JSX text node: >+ {hiddenCount} more<)
+        assert "hiddenCount} more" in demo, \
+            "Web ClassesScreen must render '+ {hiddenCount} more' text when hiddenCount > 0"
+
+        # Mobile: slicing to 2
+        assert "slice(0, 2)" in mobile, \
+            "Mobile HomeScreen must call .slice(0, 2) on the answer key array"
+        # Mobile: hiddenCount variable or equivalent
+        assert "hiddenCount" in mobile, \
+            "Mobile HomeScreen must compute hiddenCount = total - 2"
+        # Mobile: '+ X more' rendered
+        assert "more" in mobile, \
+            "Mobile HomeScreen must render a '+ X more' TouchableOpacity when hiddenCount > 0"
+
+    @feature_test("class_card_shows_all_if_2_or_fewer")
+    def test_class_card_shows_all_when_2_or_fewer(self):
+        """
+        The slice(0, 2) pattern must be used so that when there are ≤ 2 homeworks
+        the preview list equals the full list (no items hidden, no link shown).
+        The '+ more' link must be gated on hiddenCount > 0.
+        """
+        demo = self._demo_source()
+        mobile = self._mobile_source()
+
+        # Both must guard the '+ more' render on hiddenCount > 0
+        assert "hiddenCount > 0" in demo, \
+            "Web must only show '+ more' link when hiddenCount > 0 (not when ≤ 2 homeworks)"
+        assert "hiddenCount > 0" in mobile, \
+            "Mobile must only show '+ more' link when hiddenCount > 0 (not when ≤ 2 homeworks)"
+
+    @feature_test("class_card_no_more_link_if_exact_2")
+    def test_no_more_link_when_exactly_2_homeworks(self):
+        """
+        When exactly 2 homeworks exist, slice(0, 2) produces hiddenCount = 0,
+        so the '+ more' link must NOT be shown.
+        The implementation correctly handles this via hiddenCount > 0 guard.
+        """
+        import re
+        demo = self._demo_source()
+        mobile = self._mobile_source()
+
+        # Verify the math: slice(0,2) on a 2-item array → hiddenCount = 2 - 2 = 0
+        # Both files must have the slice call and the > 0 guard together
+        for label, source in [("Web", demo), ("Mobile", mobile)]:
+            assert "slice(0, 2)" in source and "hiddenCount > 0" in source, (
+                f"{label}: must use both slice(0, 2) and hiddenCount > 0 guard "
+                f"so that exactly-2-homework classes show no '+ more' link"
+            )

@@ -90,57 +90,79 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
       </TouchableOpacity>
 
       <View style={styles.homeworkSection}>
-        {answerKeys.filter(k => k.open_for_submission === true).map(ak => {
-          const subCount = submCountByKey[ak.id] ?? 0;
-          const gradedCount = gradedCountByKey[ak.id] ?? 0;
-          const isPendingSetup = ak.status === 'pending_setup';
-          const hasScheme = ak.questions.length > 0;
-          const hasGraded = gradedCount > 0;
+        {(() => {
+          const allKeys = answerKeys.filter(k => k.open_for_submission === true);
+          const previewKeys = allKeys.slice(0, 2);
+          const hiddenCount = allKeys.length - previewKeys.length;
           return (
-            <TouchableOpacity
-              key={ak.id}
-              style={[styles.homeworkCard, isPendingSetup && styles.homeworkCardAmber]}
-              onPress={() => onHomeworkPress(ak, cls)}
-              activeOpacity={0.75}
-            >
-              <View style={styles.homeworkCardLeft}>
-                <Text style={styles.homeworkTitle}>{ak.title}</Text>
-                <Text style={styles.homeworkMeta}>{t('created')} {fmtDate(ak.created_at)}</Text>
-                {ak.due_date && (
-                  <Text style={styles.homeworkDue}>{t('due_date')} {fmtDate(ak.due_date)}</Text>
-                )}
-                <Text style={styles.homeworkSubCount}>{subCount} {t('submissions')}</Text>
-              </View>
-              <View style={styles.homeworkCardRight}>
-                {isPendingSetup ? (
-                  <View style={styles.statusBadgeAmber}>
-                    <Text style={styles.statusBadgeAmberText}>{t('needs_setup')}</Text>
-                  </View>
-                ) : !hasScheme ? (
-                  <View style={styles.statusBadgeAmber}>
-                    <Text style={styles.statusBadgeAmberText}>Add Scheme</Text>
-                  </View>
-                ) : hasGraded ? (
+            <>
+              {previewKeys.map(ak => {
+                const subCount = submCountByKey[ak.id] ?? 0;
+                const gradedCount = gradedCountByKey[ak.id] ?? 0;
+                const isPendingSetup = ak.status === 'pending_setup';
+                const hasScheme = ak.questions.length > 0;
+                const hasGraded = gradedCount > 0;
+                return (
                   <TouchableOpacity
-                    style={styles.viewGradingBtn}
-                    onPress={(e) => { e.stopPropagation(); onViewGrading(ak, cls); }}
+                    key={ak.id}
+                    style={[styles.homeworkCard, isPendingSetup && styles.homeworkCardAmber]}
+                    onPress={() => onHomeworkPress(ak, cls)}
+                    activeOpacity={0.75}
                   >
-                    <Text style={styles.viewGradingText}>{t('view_grading')}</Text>
+                    <View style={styles.homeworkCardLeft}>
+                      <Text style={styles.homeworkTitle}>{ak.title}</Text>
+                      <Text style={styles.homeworkMeta}>{t('created')} {fmtDate(ak.created_at)}</Text>
+                      {ak.due_date && (
+                        <Text style={styles.homeworkDue}>{t('due_date')} {fmtDate(ak.due_date)}</Text>
+                      )}
+                      <Text style={styles.homeworkSubCount}>{subCount} {t('submissions')}</Text>
+                    </View>
+                    <View style={styles.homeworkCardRight}>
+                      {isPendingSetup ? (
+                        <View style={styles.statusBadgeAmber}>
+                          <Text style={styles.statusBadgeAmberText}>{t('needs_setup')}</Text>
+                        </View>
+                      ) : !hasScheme ? (
+                        <View style={styles.statusBadgeAmber}>
+                          <Text style={styles.statusBadgeAmberText}>Add Scheme</Text>
+                        </View>
+                      ) : hasGraded ? (
+                        <TouchableOpacity
+                          style={styles.viewGradingBtn}
+                          onPress={(e) => { e.stopPropagation(); onViewGrading(ak, cls); }}
+                        >
+                          <Text style={styles.viewGradingText}>{t('view_grading')}</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.statusBadgeTeal}>
+                          <Text style={styles.statusBadgeTealText}>{t('ready_to_grade')}</Text>
+                        </View>
+                      )}
+                      <Text style={styles.homeworkChevron}>›</Text>
+                    </View>
                   </TouchableOpacity>
-                ) : (
-                  <View style={styles.statusBadgeTeal}>
-                    <Text style={styles.statusBadgeTealText}>{t('ready_to_grade')}</Text>
-                  </View>
-                )}
-                <Text style={styles.homeworkChevron}>›</Text>
-              </View>
-            </TouchableOpacity>
+                );
+              })}
+              {hiddenCount > 0 && (
+                <TouchableOpacity style={styles.moreLink} onPress={() => onCardPress(cls)}>
+                  <Text style={styles.moreLinkText}>+ {hiddenCount} more</Text>
+                </TouchableOpacity>
+              )}
+              {allKeys.length === 0 && (
+                <TouchableOpacity style={styles.addHomeworkBtn} onPress={() => onAddHomework(cls)}>
+                  <Ionicons name="add-circle-outline" size={16} color={COLORS.teal500} />
+                  <Text style={styles.addHomeworkText}>{t('add_homework')}</Text>
+                </TouchableOpacity>
+              )}
+            </>
           );
-        })}
-        <TouchableOpacity style={styles.addHomeworkBtn} onPress={() => onAddHomework(cls)}>
-          <Ionicons name="add-circle-outline" size={16} color={COLORS.teal500} />
-          <Text style={styles.addHomeworkText}>{t('add_homework')}</Text>
-        </TouchableOpacity>
+        })()}
+        {answerKeys.filter(k => k.open_for_submission === true).length > 0 && (
+          <TouchableOpacity style={styles.addHomeworkBtn} onPress={() => onAddHomework(cls)}>
+            <Ionicons name="add-circle-outline" size={16} color={COLORS.teal500} />
+            <Text style={styles.addHomeworkText}>{t('add_homework')}</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -495,6 +517,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 4,
   },
   addHomeworkText: { fontSize: 13, color: COLORS.teal500, fontWeight: '600' },
+  moreLink: { paddingVertical: 8, paddingHorizontal: 4 },
+  moreLinkText: { fontSize: 13, color: COLORS.teal500, fontWeight: '600' },
 
   // ── Inbox banner ─────────────────────────────────────────────────────────────
   inboxBanner: {
