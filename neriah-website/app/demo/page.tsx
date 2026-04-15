@@ -1212,8 +1212,9 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 28 }}>
         {/* Teacher */}
         {highlight === 'teacher' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.05em' }}>← Teacher</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 2 }}>
+            <ChevronLeft size={13} color={C.teal} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.05em' }}>Teacher</span>
           </div>
         )}
         <button
@@ -1238,8 +1239,9 @@ function WelcomeScreen({ onTeacher, onSignIn, highlight }: { onTeacher: () => vo
 
         {/* Student */}
         {highlight === 'student' && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 2 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, letterSpacing: '0.05em' }}>Student →</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginBottom: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, letterSpacing: '0.05em' }}>Student</span>
+            <ChevronLeft size={13} color={C.amber} style={{ transform: 'rotate(180deg)' }} />
           </div>
         )}
         <button
