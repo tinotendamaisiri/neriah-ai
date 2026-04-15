@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, make_response, request
@@ -24,32 +25,43 @@ from shared.sms_client import send_otp as _dispatch_otp
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint("auth", __name__)
 
+# ─── Phone validation ────────────────────────────────────────────────────────
+
+_PHONE_RULES: dict[str, tuple[int, int]] = {
+    "+263": (9, 9),   "+27": (9, 9),    "+260": (9, 9),   "+265": (9, 9),
+    "+255": (9, 9),   "+254": (9, 9),   "+256": (9, 9),   "+233": (9, 9),
+    "+234": (10, 10), "+267": (8, 8),   "+258": (9, 9),   "+251": (9, 9),
+    "+1": (10, 10),   "+44": (10, 10),  "+91": (10, 10),
+}
+
+
+def _validate_phone(phone: str) -> tuple[bool, str]:
+    """Validate E.164 phone number. Returns (ok, error_message)."""
+    if not phone:
+        return False, "Phone number is required"
+    if not phone.startswith("+"):
+        return False, "Phone must start with + country code"
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) < 7:
+        return False, "Phone number too short"
+    if len(digits) > 15:
+        return False, "Phone number too long (max 15 digits)"
+    # Check country-specific rules
+    for code, (mn, mx) in _PHONE_RULES.items():
+        prefix = code[1:]
+        if digits.startswith(prefix):
+            subscriber = digits[len(prefix):]
+            if len(subscriber) < mn:
+                return False, f"Phone too short for {code} — need {mn} digits after code"
+            if len(subscriber) > mx:
+                return False, f"Phone too long for {code} — max {mx} digits after code"
+            return True, ""
+    return True, ""
+
 _OTP_SEND_LIMIT = 3
 _OTP_VERIFY_LIMIT = 3
 _IP_LIMIT = 10
 _WINDOW = 600  # 10 minutes in seconds
-
-
-import re as _re
-
-# ── Phone validation ─────────────────────────────────────────────────────────
-
-_PHONE_RE = _re.compile(r'^\+[1-9]\d{7,14}$')
-
-def _validate_phone(phone: str) -> tuple[bool, str]:
-    """Validate E.164 phone number. Returns (valid, error_message)."""
-    if not phone:
-        return False, "Phone number is required"
-    if not phone.startswith('+'):
-        return False, "Phone must include country code (e.g. +263771234567)"
-    if not _PHONE_RE.match(phone):
-        digits = _re.sub(r'\D', '', phone[1:])
-        if len(digits) < 8:
-            return False, "Phone number too short"
-        if len(digits) > 14:
-            return False, "Phone number too long"
-        return False, "Invalid phone number format"
-    return True, ""
 
 
 def _rl_headers(limit: int, remaining: int, reset_ts: float) -> dict:

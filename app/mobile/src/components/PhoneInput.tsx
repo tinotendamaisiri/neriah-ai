@@ -86,9 +86,11 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  // Strip non-digits immediately so raw text stays clean
+  // Strip non-digits and enforce max digit count strictly
   const handleLocalChange = (text: string) => {
     const digitsOnly = text.replace(/\D/g, '');
+    // Hard limit: never accept more than expectedDigits (+ 1 for leading zero tolerance)
+    if (digitsOnly.replace(/^0/, '').length > expectedDigits) return;
     setLocalNumber(digitsOnly);
     onChangePhone(buildE164(country.dial, digitsOnly));
   };
