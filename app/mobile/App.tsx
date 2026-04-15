@@ -291,7 +291,7 @@ function StudentTabs() {
           const icons: Partial<Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap>> = {
             StudentHome: 'home-outline',
             StudentSubmit: 'document-text-outline',
-            StudentTutor: 'chatbubble-ellipses-outline',
+            StudentTutor: 'sparkles-outline',
             StudentResults: 'checkmark-circle-outline',
           };
           return <Ionicons name={icons[route.name] ?? 'ellipse-outline'} size={size} color={color} />;
