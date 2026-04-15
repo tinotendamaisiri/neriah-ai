@@ -6284,111 +6284,6 @@ function StudentTutorScreen({
     { label: 'Help me prepare for exams', icon: <GraduationCap size={15} color={C.teal} /> },
   ];
 
-  // Previously started with welcomeMsg — now replaced:
-  const _unused_welcomeMsg: Msg = {
-    id:      'welcome',
-    role:    'ai',
-    content: `Hi ${firstName}! I'm your AI tutor powered by Gemma 4. Ask me anything about Chapter 5 Maths, or send a photo of a problem you're stuck on.`,
-    ts:      Date.now(),
-  };
-
-  const [messages,  setMessages]  = useState<TutorMessage[]>([welcomeMsg]);
-  const [input,     setInput]     = useState('');
-  const [typing,    setTyping]    = useState(false);
-  const [dotPhase,  setDotPhase]  = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const demoIdxRef     = useRef(0);
-  const [tutorCameraOpen, setTutorCameraOpen] = useState(false);
-
-  // Cycle typing dots
-  useEffect(() => {
-    if (!typing) return;
-    const t = setInterval(() => setDotPhase(p => (p + 1) % 4), 400);
-    return () => clearInterval(t);
-  }, [typing]);
-
-  // Auto-scroll on new messages or typing indicator
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, typing]);
-
-  async function sendMessage(text: string, imageBase64?: string, imageMimeType?: string) {
-    if (!text.trim() && !imageBase64) return;
-
-    const userMsg: TutorMessage = {
-      id:   `u-${Date.now()}`,
-      role: 'user',
-      content: text.trim(),
-      imageBase64,
-      imageMimeType,
-      ts: Date.now(),
-    };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setTyping(true);
-
-    // Build last-6-message history for context
-    const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }));
-
-    let aiText: string | null = null;
-
-    // Try real API first
-    if (demoToken) {
-      const res = await demoFetch('/tutor/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          message:         text.trim(),
-          history,
-          student_name:    studentName,
-          subject:         'Mathematics',
-          education_level: 'Form 2',
-          ...(imageBase64   ? { image_data: imageBase64 }   : {}),
-          ...(imageMimeType ? { media_type: imageMimeType }  : {}),
-        }),
-      }, demoToken);
-      if (res) {
-        aiText = res?.response ?? res?.message ?? res?.text ?? res?.reply ?? null;
-      }
-    }
-
-    // Fallback with simulated delay
-    if (!aiText) {
-      await new Promise(r => setTimeout(r, 1400));
-      aiText = DEMO_TUTOR_RESPONSES[demoIdxRef.current % DEMO_TUTOR_RESPONSES.length];
-      demoIdxRef.current += 1;
-    }
-
-    setTyping(false);
-    const aiMsg: TutorMessage = {
-      id:      `a-${Date.now()}`,
-      role:    'ai',
-      content: aiText,
-      ts:      Date.now(),
-    };
-    setMessages(prev => [...prev, aiMsg]);
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input);
-    }
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    e.target.value = '';
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      const b64     = dataUrl.split(',')[1];
-      sendMessage(input || 'Can you help me with this problem?', b64, f.type || 'image/jpeg');
-      setInput('');
-    };
-    reader.readAsDataURL(f);
-  }
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg, position: 'relative' }}>
       {/* Header */}
@@ -8343,7 +8238,7 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
               </div>
             </>
           ) : (
-            <div style={rowS} onClick={() => setPinModal('set')}>
+            <div style={rowS} onClick={() => setPinModal('setup')}>
               <span style={rowLbl}>Set PIN</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
             </div>
           )}
