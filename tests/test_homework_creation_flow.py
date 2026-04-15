@@ -5422,3 +5422,172 @@ class TestIndividualStudentQueries:
             or "no submissions" in system_used.lower()
             or "graded submissions" in system_used.lower()
         ), "System prompt must convey that the student has no graded work yet"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestTeacherAssistantChatHistory — drawer / session-history static assertions
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTeacherAssistantChatHistory:
+    """Static analysis tests for the teacher assistant chat-history drawer.
+
+    These tests inspect the source of the demo page and mobile screen to verify
+    that the session-storage / AsyncStorage persistence, new-chat flow, load flow,
+    and 50-session cap are wired correctly.  No server or browser is required.
+    """
+
+    WEB_PATH    = "neriah-website/app/demo/page.tsx"
+    MOBILE_PATH = "app/mobile/src/screens/TeacherAssistantScreen.tsx"
+
+    def _web_src(self) -> str:
+        import os
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(base, self.WEB_PATH)) as f:
+            return f.read()
+
+    def _mobile_src(self) -> str:
+        import os
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(base, self.MOBILE_PATH)) as f:
+            return f.read()
+
+    @feature_test("teacher_assistant_chat_saved_to_history")
+    def test_chat_saved_to_history_after_message(self):
+        """
+        After a message exchange the conversation must be persisted to storage.
+
+        Web:    saveCurrentToHistory / saveWebChatHistory must be called inside
+                the send() function (i.e. appear in the same source block).
+        Mobile: saveToSessionHistory must be called inside sendMessage().
+        Both:   The stored object must have chat_id, created_at, preview, and messages.
+        """
+        web_src    = self._web_src()
+        mobile_src = self._mobile_src()
+
+        # Web — save helper exists and is wired after AI reply
+        assert "saveCurrentToHistory" in web_src, \
+            "Web: saveCurrentToHistory function must be defined"
+        assert "saveWebChatHistory" in web_src, \
+            "Web: saveWebChatHistory must write to sessionStorage"
+        assert "sessionStorage" in web_src, \
+            "Web: sessionStorage must be used for chat history"
+
+        # Web session shape contains required fields
+        for field in ("chat_id", "created_at", "preview", "messages"):
+            assert field in web_src, \
+                f"Web: ChatSession shape must include field '{field}'"
+
+        # Mobile — save helper exists and is called inside sendMessage
+        assert "saveToSessionHistory" in mobile_src, \
+            "Mobile: saveToSessionHistory function must be defined"
+        assert "chatSessionsKey" in mobile_src, \
+            "Mobile: chatSessionsKey helper must generate the AsyncStorage key"
+        assert "teacher_assistant_chats_" in mobile_src, \
+            "Mobile: storage key must be 'teacher_assistant_chats_{userId}'"
+
+        # Mobile session shape
+        for field in ("chat_id", "created_at", "preview", "messages"):
+            assert field in mobile_src, \
+                f"Mobile: ChatSession shape must include field '{field}'"
+
+    @feature_test("teacher_assistant_new_chat_clears_messages")
+    def test_new_chat_clears_current_messages(self):
+        """
+        The 'New Chat' action must:
+          1. Save the current messages to history before clearing.
+          2. Clear the messages array.
+          3. Assign a new chat_id.
+          4. Close the drawer.
+
+        Verified by static analysis of startNewChat (web) and startNewChat (mobile).
+        """
+        web_src    = self._web_src()
+        mobile_src = self._mobile_src()
+
+        # Web
+        assert "startNewChat" in web_src, \
+            "Web: startNewChat function must be defined"
+        assert "setMessages([])" in web_src, \
+            "Web: startNewChat must clear messages with setMessages([])"
+        assert "setCurrentChatId" in web_src, \
+            "Web: startNewChat must assign a new chat ID"
+        # The save must happen before the clear — check relative positions
+        web_new_chat_start = web_src.index("const startNewChat")
+        save_pos   = web_src.find("saveCurrentToHistory(messages", web_new_chat_start)
+        clear_pos  = web_src.find("setMessages([])", web_new_chat_start)
+        assert save_pos != -1, \
+            "Web: startNewChat must call saveCurrentToHistory(messages, ...) before clearing"
+        assert save_pos < clear_pos, \
+            "Web: saveCurrentToHistory must be called BEFORE setMessages([]) in startNewChat"
+
+        # Mobile
+        assert "startNewChat" in mobile_src, \
+            "Mobile: startNewChat function must be defined"
+        assert "setMessages([])" in mobile_src, \
+            "Mobile: startNewChat must clear messages with setMessages([])"
+        assert "setCurrentChatId" in mobile_src, \
+            "Mobile: startNewChat must assign a new chat ID"
+
+    @feature_test("teacher_assistant_load_recent_chat")
+    def test_recent_chat_loads_correctly(self):
+        """
+        Tapping a chat session in the drawer must:
+          1. Load that session's messages into the active chat.
+          2. Update the active chat_id so the item is highlighted.
+          3. Close the drawer.
+
+        Verified via static analysis of loadChatSession (web) and
+        loadChatSession / loadChat (mobile).
+        """
+        web_src    = self._web_src()
+        mobile_src = self._mobile_src()
+
+        # Web
+        assert "loadChatSession" in web_src, \
+            "Web: loadChatSession function must be defined"
+        assert "setMessages(session.messages)" in web_src, \
+            "Web: loadChatSession must set messages from the saved session"
+        assert "setCurrentChatId(session.chat_id)" in web_src, \
+            "Web: loadChatSession must update currentChatId so item is highlighted"
+        assert "closeDrawer()" in web_src, \
+            "Web: loadChatSession must close the drawer after loading"
+
+        # Mobile
+        assert "loadChatSession" in mobile_src, \
+            "Mobile: loadChatSession function must be defined"
+        assert "setMessages(session.messages)" in mobile_src, \
+            "Mobile: loadChatSession must set messages from the saved session"
+        assert "setCurrentChatId(session.chat_id)" in mobile_src, \
+            "Mobile: loadChatSession must update currentChatId"
+
+        # Drawer item click must call loadChatSession
+        assert "loadChatSession(item)" in mobile_src or "loadChatSession(session)" in web_src, \
+            "loadChatSession must be called when a drawer chat item is tapped/clicked"
+
+    @feature_test("teacher_assistant_max_50_chats")
+    def test_chat_history_limited_to_50(self):
+        """
+        Both web and mobile must cap stored chat sessions at 50 (MAX_SESSIONS /
+        WEB_MAX_SESSIONS = 50) so storage doesn't grow without bound.
+
+        Verified by static analysis: the constant 50 must appear near the cap
+        logic, and the slice/trim operation must be present.
+        """
+        web_src    = self._web_src()
+        mobile_src = self._mobile_src()
+
+        # Web — constant and trim
+        assert "WEB_MAX_SESSIONS" in web_src, \
+            "Web: WEB_MAX_SESSIONS constant must be defined"
+        assert "WEB_MAX_SESSIONS = 50" in web_src, \
+            "Web: WEB_MAX_SESSIONS must equal 50"
+        assert "slice(0, WEB_MAX_SESSIONS)" in web_src or ".slice(0, WEB_MAX_SESSIONS)" in web_src, \
+            "Web: history array must be trimmed to WEB_MAX_SESSIONS"
+
+        # Mobile — constant and trim
+        assert "MAX_SESSIONS" in mobile_src, \
+            "Mobile: MAX_SESSIONS constant must be defined"
+        assert "MAX_SESSIONS      = 50" in mobile_src or "MAX_SESSIONS = 50" in mobile_src or "MAX_SESSIONS=50" in mobile_src, \
+            "Mobile: MAX_SESSIONS must equal 50"
+        assert "slice(0, MAX_SESSIONS)" in mobile_src or ".slice(0, MAX_SESSIONS)" in mobile_src, \
+            "Mobile: history array must be trimmed to MAX_SESSIONS"

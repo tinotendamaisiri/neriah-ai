@@ -3840,10 +3840,110 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {/* ── Chat History Drawer ── */}
+      {showDrawer && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={closeDrawer}
+            style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 40 }}
+          />
+          {/* Slide-in panel */}
+          <div style={{
+            position: 'absolute', top: 0, bottom: 0, left: 0,
+            width: '80%', background: C.white, zIndex: 50,
+            display: 'flex', flexDirection: 'column',
+            boxShadow: '4px 0 20px rgba(0,0,0,0.18)',
+            animation: 'slideInDrawer 0.25s ease-out',
+          }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drawer header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '14px 16px', borderBottom: `1px solid ${C.g200}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/images/icon-transparent.png"
+                  style={{ width: 26, height: 26, filter: 'invert(29%) sepia(69%) saturate(456%) hue-rotate(147deg) brightness(90%) contrast(91%)' }}
+                  alt="Neriah" />
+                <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Neriah AI</span>
+              </div>
+              <button onClick={closeDrawer}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: C.g500 }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* New Chat button */}
+            <div style={{ padding: '14px 16px 8px' }}>
+              <button onClick={startNewChat}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  background: C.teal, border: 'none', borderRadius: 10,
+                  padding: '10px 14px', color: C.white, fontSize: 14,
+                  fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                <Plus size={18} color={C.white} />
+                New Chat
+              </button>
+            </div>
+
+            {/* Recent Chats label */}
+            <div style={{ padding: '8px 16px 4px', fontSize: 11, fontWeight: 700,
+              color: C.g400, letterSpacing: '0.08em' }}>
+              RECENT CHATS
+            </div>
+
+            {/* Chat list */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {chatHistory.slice(0, WEB_MAX_DISPLAY).length === 0 ? (
+                <div style={{ padding: '24px 16px', fontSize: 13, color: C.g400, textAlign: 'center' }}>
+                  No recent chats
+                </div>
+              ) : (
+                chatHistory.slice(0, WEB_MAX_DISPLAY).map(session => (
+                  <div key={session.chat_id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '12px 16px', cursor: 'pointer',
+                      borderBottom: `1px solid ${C.g100}`,
+                      background: session.chat_id === currentChatId ? C.primaryLight : 'none',
+                      transition: 'background 0.12s' }}
+                    onClick={() => loadChatSession(session)}
+                    onMouseEnter={e => { if (session.chat_id !== currentChatId) (e.currentTarget as HTMLDivElement).style.background = C.g50; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = session.chat_id === currentChatId ? C.primaryLight : 'none'; }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: C.text,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {session.preview}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>
+                        {webRelativeTime(session.created_at)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteChatSession(session.chat_id); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer',
+                        padding: 4, display: 'flex', opacity: 0.5, flexShrink: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}
+                    >
+                      <Trash2 size={14} color={C.g500} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       <style>{`
         @keyframes aiPulse {
           0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
           40% { transform: scale(1.2); opacity: 1; }
+        }
+        @keyframes slideInDrawer {
+          from { transform: translateX(-100%); }
+          to   { transform: translateX(0); }
         }
       `}</style>
     </div>
