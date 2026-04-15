@@ -272,6 +272,30 @@ def _class_performance_data(class_id: str) -> str:
         return "Performance data unavailable."
 
 
+def _extract_weak_topics(marks: list[dict], top_n: int = 5) -> list[str]:
+    """
+    Scan verdict data on mark documents to find the most commonly-missed topics.
+    Verdicts are a list of dicts with at minimum: question_text (or question),
+    correct (bool), and optionally topic.
+    Falls back to empty list if no verdict data is present.
+    """
+    miss_count: dict[str, int] = {}
+    for m in marks:
+        for v in m.get("verdicts") or []:
+            if v.get("correct"):
+                continue
+            topic = (
+                v.get("topic")
+                or v.get("question_text")
+                or v.get("question")
+                or ""
+            ).strip()
+            if topic and len(topic) < 120:  # ignore overly long question strings
+                miss_count[topic] = miss_count.get(topic, 0) + 1
+    sorted_topics = sorted(miss_count, key=lambda t: miss_count[t], reverse=True)
+    return sorted_topics[:top_n]
+
+
 def get_teacher_context_data(
     teacher_id: str,
     class_id: str | None = None,
@@ -280,84 +304,192 @@ def get_teacher_context_data(
     """
     Fetch structured class and student data from Firestore for a teacher.
 
-    Returns a dict with:
-      has_data         — bool, False when teacher has no classes yet
-      classes          — list of {id, name, education_level, student_count, homework_count}
-      total_students   — int
-      overall_average  — float | None (only when include_marks=True)
-      performance      — str summary (only when include_marks=True and class_id given)
+    Returns:
+      {
+        "has_data": bool,
+        "classes": [
+          {
+            "name": str,
+            "subject": str,
+            "education_level": str,
+            "student_count": int,
+            "homework_count": int,
+            "average_score": float | None,      # only when include_marks=True
+            "submission_rate": str | None,       # e.g. "28/32", only when include_marks=True
+            "top_students": list[str],           # "Name (pct%)", only when include_marks=True
+            "struggling_students": list[str],    # "Name (pct%)", only when include_marks=True
+            "weak_topics": list[str],            # only when include_marks=True
+          }
+        ],
+        "total_students": int,
+        "overall_average": float | None,         # only when include_marks=True
+      }
+
+    Returns {"has_data": False, "message": "No class data yet"} when teacher has no classes.
     """
     try:
         # ── Fetch classes ─────────────────────────────────────────────────────
-        filters: list = [("teacher_id", "==", teacher_id)]
+        cls_filters: list = [("teacher_id", "==", teacher_id)]
         if class_id:
-            filters.append(("id", "==", class_id))
-        classes_raw = query("classes", filters) or []
+            cls_filters.append(("id", "==", class_id))
+        classes_raw = query("classes", cls_filters) or []
 
         if not classes_raw:
-            return {"has_data": False, "classes": [], "total_students": 0}
+            return {
+                "has_data": False,
+                "message": "No class data yet",
+                "classes": [],
+                "total_students": 0,
+            }
 
         class_summaries: list[dict] = []
         total_students = 0
+        all_averages: list[float] = []
 
         for cls in classes_raw:
             cid = cls.get("id") or cls.get("class_id", "")
             if not cid:
                 continue
 
-            # ── Count students ────────────────────────────────────────────────
+            # ── Students ──────────────────────────────────────────────────────
             students_raw = query("students", [("class_id", "==", cid)]) or []
             student_count = len(students_raw)
             total_students += student_count
 
-            # ── Count homework (answer_keys) ──────────────────────────────────
+            # ── Homework (answer_keys) ────────────────────────────────────────
             hw_raw = query("answer_keys", [("class_id", "==", cid)]) or []
             homework_count = len(hw_raw)
+            subject = (hw_raw[0].get("subject") if hw_raw else None) or cls.get("subject") or ""
 
-            class_summaries.append({
-                "id":              cid,
+            summary: dict = {
                 "name":            cls.get("name") or cid,
+                "subject":         subject,
                 "education_level": cls.get("education_level") or "Unknown",
                 "student_count":   student_count,
                 "homework_count":  homework_count,
-            })
+            }
+
+            # ── Performance marks (optional) ──────────────────────────────────
+            if include_marks:
+                marks = query(
+                    "marks",
+                    [("class_id", "==", cid), ("approved", "==", True)],
+                    order_by="timestamp",
+                    direction="DESCENDING",
+                ) or []
+
+                if marks:
+                    scores = [m.get("percentage", 0.0) for m in marks if m.get("percentage") is not None]
+                    avg = round(sum(scores) / len(scores), 1) if scores else None
+
+                    # Student-level aggregation
+                    by_sid: dict[str, list[float]] = {}
+                    by_name: dict[str, str] = {}
+                    for m in marks:
+                        sid = m.get("student_id", "?")
+                        by_sid.setdefault(sid, []).append(m.get("percentage", 0.0))
+                        if sid not in by_name:
+                            by_name[sid] = m.get("student_name") or sid
+                    student_avgs = {
+                        sid: round(sum(ps) / len(ps), 1)
+                        for sid, ps in by_sid.items() if ps
+                    }
+                    sorted_students = sorted(student_avgs.items(), key=lambda x: x[1], reverse=True)
+
+                    submitted_count = len(set(m.get("student_id") for m in marks))
+                    submission_rate = f"{submitted_count}/{student_count}"
+
+                    top = [
+                        f"{by_name.get(s, s)} ({pct}%)"
+                        for s, pct in sorted_students[:3]
+                    ]
+                    struggling = [
+                        f"{by_name.get(s, s)} ({pct}%)"
+                        for s, pct in sorted_students[-3:]
+                        if pct < 50
+                    ]
+                    weak_topics = _extract_weak_topics(marks)
+
+                    summary.update({
+                        "average_score":        avg,
+                        "submission_rate":      submission_rate,
+                        "top_students":         top,
+                        "struggling_students":  struggling,
+                        "weak_topics":          weak_topics,
+                    })
+                    if avg is not None:
+                        all_averages.append(avg)
+                else:
+                    summary.update({
+                        "average_score":        None,
+                        "submission_rate":      f"0/{student_count}",
+                        "top_students":         [],
+                        "struggling_students":  [],
+                        "weak_topics":          [],
+                    })
+
+            class_summaries.append(summary)
+
+        overall_avg = round(sum(all_averages) / len(all_averages), 1) if all_averages else None
 
         result: dict = {
-            "has_data":      True,
-            "classes":       class_summaries,
+            "has_data":       True,
+            "classes":        class_summaries,
             "total_students": total_students,
         }
-
-        # ── Optional: fetch performance marks ─────────────────────────────────
-        if include_marks and class_id:
-            result["performance"] = _class_performance_data(class_id)
-        elif include_marks and class_summaries:
-            # Aggregate across all classes if no specific class selected
-            all_perf = [_class_performance_data(c["id"]) for c in class_summaries]
-            result["performance"] = "\n\n".join(all_perf)
+        if include_marks:
+            result["overall_average"] = overall_avg
 
         return result
 
     except Exception:
         logger.warning("teacher_assistant: get_teacher_context_data failed", exc_info=True)
-        return {"has_data": False, "classes": [], "total_students": 0}
+        return {"has_data": False, "message": "No class data yet", "classes": [], "total_students": 0}
 
 
-def _format_teacher_context(ctx: dict) -> str:
-    """Format get_teacher_context_data result into a prompt-injectable string."""
+_NO_DATA_GUIDANCE = (
+    "I don't have enough data yet to analyze your class performance. "
+    "This could be because:\n"
+    "- No homework has been assigned yet\n"
+    "- No students have submitted work\n"
+    "- No submissions have been graded\n\n"
+    "Once your students submit and you grade their work, "
+    "I'll be able to give you detailed insights."
+)
+
+
+def _format_teacher_context(ctx: dict, needs_marks: bool) -> str:
+    """
+    Format get_teacher_context_data result for system prompt injection.
+    Uses JSON for rich data (when marks included) or compact text for basic context.
+    """
     if not ctx.get("has_data"):
+        if needs_marks:
+            return _NO_DATA_GUIDANCE
         return "The teacher has no classes set up yet."
 
-    lines = [f"Total students across all classes: {ctx['total_students']}"]
-    for cls in ctx.get("classes", []):
-        lines.append(
-            f"- Class: {cls['name']} ({cls['education_level']}) | "
-            f"{cls['student_count']} students | {cls['homework_count']} homework assignments"
+    if needs_marks:
+        # Full JSON injection so the model can reference specific names and numbers
+        payload = {
+            "classes":         ctx.get("classes", []),
+            "total_students":  ctx.get("total_students", 0),
+            "overall_average": ctx.get("overall_average"),
+        }
+        return (
+            "Here is the teacher's real class data from Neriah:\n"
+            f"{json.dumps(payload, indent=2)}\n\n"
+            "Use this data to answer the teacher's question with specific insights. "
+            "Reference actual student names, scores, and topics when relevant."
         )
 
-    if ctx.get("performance"):
-        lines.append(f"\nPerformance data:\n{ctx['performance']}")
-
+    # Basic context (no marks) — compact text to save tokens
+    lines = [f"Total students across all classes: {ctx['total_students']}"]
+    for cls in ctx.get("classes", []):
+        parts = [f"Class: {cls['name']} ({cls['education_level']})"]
+        if cls.get("subject"):
+            parts.append(f"Subject: {cls['subject']}")
+        parts.append(f"{cls['student_count']} students | {cls['homework_count']} homework assignments")
+        lines.append(" | ".join(parts))
     return "\n".join(lines)
 
 
@@ -507,7 +639,7 @@ def teacher_assistant():
     # ── Teacher class context: injected for ALL message types ─────────────────
     needs_marks = action_type == "class_performance" or is_performance_query(message)
     teacher_ctx = get_teacher_context_data(teacher_id, class_id=class_id, include_marks=needs_marks)
-    ctx_text = _format_teacher_context(teacher_ctx)
+    ctx_text = _format_teacher_context(teacher_ctx, needs_marks)
     logger.info(
         "teacher_assistant: class context injected (has_data=%s, include_marks=%s)",
         teacher_ctx.get("has_data"), needs_marks,

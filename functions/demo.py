@@ -580,27 +580,20 @@ DEMO_CLASS_CONTEXT = {
     "has_data": True,
     "classes": [
         {
-            "id":              "demo-class-001",
-            "name":            "Form 2A",
-            "education_level": "Form 2",
-            "student_count":   28,
-            "homework_count":  5,
-        },
-        {
-            "id":              "demo-class-002",
-            "name":            "Form 3B",
-            "education_level": "Form 3",
-            "student_count":   31,
-            "homework_count":  3,
+            "name":                "Form 2A",
+            "subject":             "Mathematics",
+            "education_level":     "Form 2",
+            "student_count":       3,
+            "homework_count":      2,
+            "average_score":       72.5,
+            "submission_rate":     "2/3",
+            "top_students":        ["Tendai Moyo (89%)", "Rudo Chikwanda (78%)"],
+            "struggling_students": ["Farai Dube (51%)"],
+            "weak_topics":         ["quadratic equations", "fractions"],
         },
     ],
-    "total_students": 59,
-    "performance": (
-        "Form 2A — Class average: 74.0%\n"
-        "Total submissions: 112\n"
-        "Top students: Tendai Moyo, Chido Ndlovu, Farai Gumbo\n"
-        "Students below 50%: Blessing Chivanda, Rutendo Makoni"
-    ),
+    "total_students":  3,
+    "overall_average": 72.5,
 }
 
 _DEMO_ASSISTANT_RESPONSES: dict = {

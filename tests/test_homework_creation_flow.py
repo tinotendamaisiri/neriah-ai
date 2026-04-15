@@ -4710,15 +4710,22 @@ class TestTeacherAssistantContextInjection:
     _STUDENTS = [
         {"id": "s1", "class_id": CLASS_ID, "first_name": "Tendai", "surname": "Moyo"},
         {"id": "s2", "class_id": CLASS_ID, "first_name": "Chido",  "surname": "Ndlovu"},
+        {"id": "s3", "class_id": CLASS_ID, "first_name": "Farai",  "surname": "Dube"},
     ]
     _MARKS = [
-        {"student_id": "s1", "class_id": CLASS_ID, "percentage": 88.0,
+        {"student_id": "s1", "class_id": CLASS_ID, "percentage": 89.0,
          "student_name": "Tendai Moyo", "approved": True, "timestamp": "2026-01-01"},
-        {"student_id": "s2", "class_id": CLASS_ID, "percentage": 42.0,
+        {"student_id": "s2", "class_id": CLASS_ID, "percentage": 78.0,
          "student_name": "Chido Ndlovu", "approved": True, "timestamp": "2026-01-01"},
+        {"student_id": "s3", "class_id": CLASS_ID, "percentage": 34.0,
+         "student_name": "Farai Dube", "approved": True, "timestamp": "2026-01-01",
+         "verdicts": [
+             {"question": "Solve x²+5x+6=0", "correct": False, "topic": "quadratic equations"},
+             {"question": "1/2 + 1/4 = ?",   "correct": False, "topic": "fractions"},
+         ]},
     ]
     _ANSWER_KEYS = [
-        {"id": "ak1", "class_id": CLASS_ID},
+        {"id": "ak1", "class_id": CLASS_ID, "subject": "Mathematics"},
     ]
 
     @pytest.fixture(scope="module")
@@ -4749,17 +4756,26 @@ class TestTeacherAssistantContextInjection:
             return self._MARKS
         return []
 
-    @feature_test("teacher_assistant_fetches_real_class_data")
+    # ── Test 1: fetches real class data ───────────────────────────────────────
+
+    @feature_test("teacher_assistant_pulls_class_data")
     def test_teacher_assistant_fetches_real_class_data(self, client, auth_headers):
         """
-        POST /api/teacher/assistant must call get_teacher_context_data and inject
-        the formatted class list into the system prompt that reaches the model.
+        Mock Firestore with 1 class and 3 students with marks.
+        POST /api/teacher/assistant with message="How is my class performing?"
+        Assert system prompt includes class name and student data (rich JSON path).
         """
         captured_system: list[str] = []
 
         def fake_call_model(system, history, message, image_bytes=None):
             captured_system.append(system)
-            return "Here is some advice on fractions."
+            return json.dumps({
+                "summary": "Form 2B average is 67%.",
+                "top_students": ["Tendai Moyo (89%)"],
+                "struggling_students": ["Farai Dube (34%)"],
+                "weak_topics": ["quadratic equations"],
+                "recommendations": ["More drill"],
+            })
 
         with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
              patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
@@ -4776,8 +4792,8 @@ class TestTeacherAssistantContextInjection:
                 "/api/teacher/assistant",
                 headers=auth_headers,
                 json={
-                    "message": "How can I teach fractions better?",
-                    "action_type": "chat",
+                    "message": "How is my class performing?",
+                    "action_type": "class_performance",
                     "curriculum": "ZIMSEC",
                     "level": "Form 2",
                     "class_id": CLASS_ID,
@@ -4787,16 +4803,24 @@ class TestTeacherAssistantContextInjection:
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert captured_system, "Model was never called — no system prompt captured"
         system_used = captured_system[0]
+        # System prompt must contain the class section header
         assert "TEACHER'S CLASS DATA" in system_used, \
             "System prompt must contain TEACHER'S CLASS DATA section"
+        # Because this is a performance query, rich JSON must be injected
         assert "Form 2B" in system_used, \
-            "System prompt must mention the teacher's class name"
+            "System prompt must mention the teacher's class name from Firestore"
+        # Student data (from marks) should be referenced
+        assert "Tendai Moyo" in system_used or "89" in system_used, \
+            "System prompt must include student names or scores from Firestore marks"
 
-    @feature_test("teacher_assistant_handles_no_data")
+    # ── Test 2: graceful no-data response ────────────────────────────────────
+
+    @feature_test("teacher_assistant_no_data_graceful")
     def test_teacher_assistant_handles_no_data(self, client, auth_headers):
         """
-        When the teacher has no classes in Firestore, the assistant must still
-        respond (not 500) and the system prompt should note no classes are set up.
+        Mock Firestore returning empty classes.
+        POST /api/teacher/assistant with "How are my students doing?"
+        Assert response tells teacher there is no data yet and suggests next steps.
         """
         captured_system: list[str] = []
 
@@ -4819,21 +4843,32 @@ class TestTeacherAssistantContextInjection:
                 "/api/teacher/assistant",
                 headers=auth_headers,
                 json={
-                    "message": "What are my class results?",
-                    "action_type": "chat",
+                    "message": "How are my students doing?",
+                    "action_type": "class_performance",
                 },
             )
 
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert captured_system, "Model was never called"
-        assert "no classes" in captured_system[0].lower() or "TEACHER'S CLASS DATA" in captured_system[0], \
-            "System prompt must include TEACHER'S CLASS DATA even when teacher has no classes"
+        system_used = captured_system[0]
+        # System prompt must tell the model there is no data + suggest next steps
+        assert "TEACHER'S CLASS DATA" in system_used, \
+            "TEACHER'S CLASS DATA section must always be present"
+        assert (
+            "no homework" in system_used.lower()
+            or "no class" in system_used.lower()
+            or "no data" in system_used.lower()
+            or "submitted" in system_used.lower()
+        ), "No-data guidance must suggest assigning homework or grading submissions"
 
-    @feature_test("teacher_class_context_injected_for_all_messages")
+    # ── Test 3: context injected for ALL action types ─────────────────────────
+
+    @feature_test("teacher_assistant_context_always_injected")
     def test_class_context_injected_for_all_messages(self, client, auth_headers):
         """
-        Class context must be injected regardless of action_type — not just for
-        class_performance. Test with action_type='chat' (free-form question).
+        Mock Firestore with class data.
+        POST /api/teacher/assistant with action_type='chat' (non-performance).
+        Assert Gemma prompt includes teacher's class name and education level.
         """
         systems_seen: list[str] = []
 
@@ -4856,7 +4891,7 @@ class TestTeacherAssistantContextInjection:
                 "/api/teacher/assistant",
                 headers=auth_headers,
                 json={
-                    "message": "Give me a fun lesson idea for teaching decimals.",
+                    "message": "Create a quiz on fractions",
                     "action_type": "chat",
                     "class_id": CLASS_ID,
                 },
@@ -4864,31 +4899,56 @@ class TestTeacherAssistantContextInjection:
 
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert systems_seen, "Model was never called"
-        assert "TEACHER'S CLASS DATA" in systems_seen[0], \
+        system_used = systems_seen[0]
+        # Class name must appear even for non-performance action types
+        assert "TEACHER'S CLASS DATA" in system_used, \
             "Class context must be injected for non-performance action types too"
+        assert "Form 2B" in system_used, \
+            "Class name from Firestore must appear in system prompt for all message types"
 
-    @feature_test("performance_keywords_trigger_full_data_fetch")
-    def test_performance_keywords_trigger_full_marks_fetch(self, client, auth_headers):
+    # ── Test 4: keyword detection — direct unit test ───────────────────────────
+
+    @feature_test("teacher_assistant_performance_keyword_detection")
+    def test_performance_keywords_trigger_full_data_fetch(self):
         """
-        When the message contains a performance keyword (e.g. 'struggling'),
-        get_teacher_context_data must be called with include_marks=True so that
-        the class performance summary is included in the system prompt.
+        Direct unit test of is_performance_query().
+        'how is my class performing' → True (performance query, full marks fetch).
+        'create a quiz on fractions' → False (no full marks fetch needed).
+        Also verify get_teacher_context_data is called with include_marks=True
+        for performance queries when the endpoint handles a real request.
         """
-        systems_seen: list[str] = []
+        from functions.teacher_assistant import is_performance_query
 
-        def fake_call_model(system, history, message, image_bytes=None):
-            systems_seen.append(system)
-            return json.dumps({
-                "summary": "Class average 65%",
-                "top_students": ["Tendai"],
-                "struggling_students": ["Chido"],
-                "weak_topics": ["algebra"],
-                "recommendations": ["More practice"],
-            })
+        # Positive cases — keyword present
+        assert is_performance_query("how is my class performing") is True, \
+            "is_performance_query must return True for 'performing'"
+        assert is_performance_query("Which students are struggling?") is True, \
+            "is_performance_query must return True for 'struggling'"
+        assert is_performance_query("What are the average marks?") is True, \
+            "is_performance_query must return True for 'average'"
+        assert is_performance_query("Show me the grades for this term") is True, \
+            "is_performance_query must return True for 'grades'"
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
-             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
-             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+        # Negative cases — no performance keyword
+        assert is_performance_query("create a quiz on fractions") is False, \
+            "is_performance_query must return False for a quiz creation request"
+        assert is_performance_query("Give me lesson notes on photosynthesis") is False, \
+            "is_performance_query must return False for a lesson-notes request"
+
+        # Verify include_marks=True is passed for performance queries at endpoint level
+        include_marks_calls: list[bool] = []
+
+        real_gtcd = __import__(
+            "functions.teacher_assistant", fromlist=["get_teacher_context_data"]
+        ).get_teacher_context_data
+
+        def capturing_gtcd(teacher_id, class_id=None, include_marks=False):
+            include_marks_calls.append(include_marks)
+            return {"has_data": False, "message": "No class data yet", "classes": [], "total_students": 0}
+
+        with patch("functions.teacher_assistant.get_teacher_context_data", side_effect=capturing_gtcd), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "S", "token_version": 1}), \
+             patch("functions.teacher_assistant._call_model", return_value="ok"), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
              patch("functions.teacher_assistant.get_user_context", return_value={}), \
              patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
@@ -4897,20 +4957,22 @@ class TestTeacherAssistantContextInjection:
              patch("shared.guardrails.log_ai_interaction"), \
              patch("functions.teacher_assistant.upsert"):
 
-            resp = client.post(
-                "/api/teacher/assistant",
-                headers=auth_headers,
-                json={
-                    "message": "Which students are struggling the most this term?",
-                    "action_type": "class_performance",
-                    "class_id": CLASS_ID,
-                },
-            )
+            from main import app as flask_app
+            flask_app.config["TESTING"] = True
+            from shared.auth import create_jwt
+            token = create_jwt(TEACHER_ID, "teacher", 1)
+            headers = {"Authorization": f"Bearer {token}"}
 
-        assert resp.status_code == 200, resp.get_data(as_text=True)
-        assert systems_seen, "Model was never called"
-        system_used = systems_seen[0]
-        # Performance keywords or class_performance action type must trigger marks data
-        assert "CLASS AVERAGE" in system_used.upper() or "PERFORMANCE DATA" in system_used.upper() \
-               or "65%" in system_used or "class average" in system_used.lower(), \
-            "System prompt must include marks/performance data for performance queries"
+            with flask_app.test_client() as c:
+                c.post(
+                    "/api/teacher/assistant",
+                    headers=headers,
+                    json={
+                        "message": "how is my class performing this term?",
+                        "action_type": "chat",
+                    },
+                )
+
+        assert include_marks_calls, "get_teacher_context_data was never called"
+        assert include_marks_calls[0] is True, \
+            "Performance query must call get_teacher_context_data with include_marks=True"
