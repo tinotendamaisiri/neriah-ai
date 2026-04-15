@@ -21,6 +21,7 @@ import { getStudentSubmissions, withdrawSubmission } from '../services/api';
 import { StudentSubmission, StudentRootStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import AIStatusDot from '../components/AIStatusDot';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -106,10 +107,16 @@ export default function StudentResultsScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Results</Text>
-        <Text style={styles.headerSub}>
-          {gradedCount} graded · {pendingCount} pending
-        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>My Results</Text>
+          <Text style={styles.headerSub}>
+            {gradedCount} graded · {pendingCount} pending
+          </Text>
+        </View>
+        <TouchableOpacity style={styles.avatarCircle} onPress={() => (navigation as any).navigate('StudentSettings')}>
+          <Text style={styles.avatarInitial}>{(user?.first_name ?? 'S')[0].toUpperCase()}</Text>
+          <AIStatusDot />
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -213,7 +220,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 56,
     paddingBottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
+  avatarCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
   headerTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
   headerSub: { color: COLORS.teal100, fontSize: 13, marginTop: 4 },
   listContent: { padding: 16, paddingBottom: 40 },

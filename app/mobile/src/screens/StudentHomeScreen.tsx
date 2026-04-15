@@ -128,14 +128,14 @@ export default function StudentHomeScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
-          <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-        </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.greeting}>Homework</Text>
           <Text style={styles.subGreeting}>Hello, {firstName}</Text>
         </View>
-        <AIStatusDot />
+        <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
+          <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
+          <AIStatusDot />
+        </TouchableOpacity>
       </View>
 
       {/* Assignments */}

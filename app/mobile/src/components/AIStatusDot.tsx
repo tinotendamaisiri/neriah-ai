@@ -1,77 +1,33 @@
 // src/components/AIStatusDot.tsx
-// Real-time AI inference status indicator.
+// Tiny status dot — sits on the top-right corner of the avatar circle.
 //
-// States (update live when network changes):
-//   Blue  + "Cloud AI"        — online, using Gemma 4 26B via Vertex AI
-//   Green + "On-device AI"    — offline, LiteRT E4B/E2B model loaded
-//   Gray  + "Offline — queued"— offline, no model loaded
+// Lime green (#22C55E) = online (Cloud AI via Vertex)
+// Red (#EF4444)        = offline
 //
-// Uses useAIRouter() from router.ts so the dot re-renders whenever
-// network connectivity changes — no manual refresh needed.
+// Positioned absolute — parent must have overflow visible or be the avatar View.
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { useAIRouter } from '../services/router';
 
-// ── State → visual mapping ────────────────────────────────────────────────────
-
-const CLOUD_COLOR    = '#3B82F6'; // blue
-const ONDEVICE_COLOR = '#22C55E'; // green
-const OFFLINE_COLOR  = '#9CA3AF'; // gray
-
-interface DotConfig {
-  color: string;
-  label: string;
-}
-
-function getDotConfig(isOnline: boolean, loadedModel: string | null): DotConfig {
-  if (isOnline)     return { color: CLOUD_COLOR,    label: 'Cloud AI' };
-  if (loadedModel)  return { color: ONDEVICE_COLOR, label: 'On-device AI' };
-  return              { color: OFFLINE_COLOR,  label: 'Offline \u2014 queued' };
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-/**
- * Small status pill that shows the current AI inference route.
- * Place in a screen header — it updates automatically when connectivity changes.
- */
 export default function AIStatusDot() {
-  const { isOnline, loadedModel } = useAIRouter();
-  const { color, label } = getDotConfig(isOnline, loadedModel);
+  const { isOnline } = useAIRouter();
+  const color = isOnline ? '#22C55E' : '#EF4444';
 
   return (
-    <View style={styles.pill}>
-      <View style={[styles.dot, { backgroundColor: color }]} />
-      <Text style={[styles.label, { color }]}>{label}</Text>
-    </View>
+    <View style={[styles.dot, { backgroundColor: color }]} />
   );
 }
 
 const styles = StyleSheet.create({
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    // Subtle shadow so it floats cleanly over any header background
-    shadowColor: '#000',
-    shadowOpacity: 0.07,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
-  },
   dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.1,
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#0D7377', // matches teal header background
   },
 });

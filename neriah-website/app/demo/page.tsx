@@ -5344,21 +5344,18 @@ function StudentHomeScreen({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
-      {/* Header: [avatar] — Homework — [Cloud AI dot] */}
-      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 16, paddingBottom: 14, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div
-          onClick={onSettings}
-          style={{ width: 38, height: 38, borderRadius: 19, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
-        >
-          <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>{firstName[0]}</span>
-        </div>
-        <div style={{ flex: 1, textAlign: 'center' }}>
+      {/* Header: title left — avatar right with status dot */}
+      <div style={{ background: C.teal, paddingInline: 20, paddingTop: 16, paddingBottom: 14, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+        <div style={{ flex: 1 }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Homework</div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 2 }}>Hello, {firstName}</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          <div style={{ width: 7, height: 7, borderRadius: 4, background: C.green400 }} />
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>Cloud AI</span>
+        <div
+          onClick={onSettings}
+          style={{ width: 38, height: 38, borderRadius: 19, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, position: 'relative' }}
+        >
+          <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>{firstName[0]}</span>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.teal}` }} />
         </div>
       </div>
 
@@ -5852,9 +5849,18 @@ function StudentResultsScreen({
 
   return (
     <Screen style={{ background: C.bg }}>
-      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24 }}>
-        <div style={{ marginBottom: 14 }}><BackButton label="Back" onClick={onBack} /></div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 16 }}>My Submissions</div>
+      {/* Header with avatar */}
+      <div style={{ background: C.teal, paddingInline: 20, paddingTop: 14, paddingBottom: 12, display: 'flex', alignItems: 'center' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginRight: 8 }}><ChevronLeft size={20} color={C.white} /></button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>My Results</div>
+        </div>
+        <div style={{ width: 34, height: 34, borderRadius: 17, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', flexShrink: 0 }}>
+          <span style={{ color: C.white, fontSize: 14, fontWeight: 700 }}>S</span>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.teal}` }} />
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: '18px 16px', paddingBottom: 24, overflowY: 'auto' }}>
 
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
