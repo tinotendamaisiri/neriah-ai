@@ -8158,9 +8158,6 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
             <span style={{ fontSize: 14, color: C.g500 }}>Class</span>
             <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Form 2A — Mathematics</span>
           </div>
-          <div style={rowS} onClick={() => setNameModal(true)}>
-            <span style={rowLbl}>Change Name</span><span style={{ fontSize: 18, color: C.teal }}>›</span>
-          </div>
           {pinActive ? (
             <>
               <div style={rowS} onClick={() => setPinModal('change')}>

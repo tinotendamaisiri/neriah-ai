@@ -59,6 +59,23 @@ export default function StudentSettingsScreen() {
     });
   }, [isFocused]);
 
+  // ── Class name fetch ───────────────────────────────────────────────────────
+  const [classDisplay, setClassDisplay] = useState('');
+  useEffect(() => {
+    if (!user?.class_id) return;
+    (async () => {
+      try {
+        const { getClassDetail } = await import('../services/api');
+        const cls = await getClassDetail(user.class_id!);
+        const parts = [cls.name];
+        if (cls.subject) parts.push(cls.subject);
+        setClassDisplay(parts.join(' — '));
+      } catch {
+        setClassDisplay(user.class_name ?? user.class_id ?? '—');
+      }
+    })();
+  }, [user?.class_id]);
+
   // ── Change Name modal ─────────────────────────────────────────────────────
   const [nameModal, setNameModal] = useState(false);
   const [editFirst, setEditFirst] = useState(user?.first_name ?? '');
@@ -219,13 +236,8 @@ export default function StudentSettingsScreen() {
         <Text style={s.sectionTitle}>Account</Text>
         <View style={s.card}>
           <Row label="School" value={user?.school ?? '—'} />
-          <Row label="Class" value={user?.class_name ?? user?.class_id ?? '—'} />
+          <Row label="Class" value={classDisplay || '—'} />
           <View style={s.divider} />
-
-          <TouchableOpacity style={s.settingsRow} onPress={() => { setEditFirst(user?.first_name ?? ''); setEditSurname(user?.surname ?? ''); setNameModal(true); }}>
-            <Text style={s.settingsRowLabel}>Change Name</Text>
-            <Text style={s.chevron}>›</Text>
-          </TouchableOpacity>
 
           <TouchableOpacity style={s.settingsRow} onPress={() => setJoinModal(true)}>
             <Text style={s.settingsRowLabel}>{user?.class_id ? 'Change Class' : 'Join Class'}</Text>

@@ -200,6 +200,11 @@ export const deleteClass = async (class_id: string): Promise<void> => {
   await client.delete(`/classes/${class_id}`);
 };
 
+export const getClassDetail = async (class_id: string): Promise<Class> => {
+  const res: AxiosResponse<Class> = await client.get(`/classes/${class_id}`);
+  return res.data;
+};
+
 export const getClassJoinInfo = async (code: string): Promise<ClassJoinInfo> => {
   const res = await client.get(`/classes/join/${code.toUpperCase()}`);
   return res.data;
