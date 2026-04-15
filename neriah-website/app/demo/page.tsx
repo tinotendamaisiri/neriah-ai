@@ -5359,7 +5359,7 @@ function StudentHomeScreen({
           <div style={{ textAlign: 'center', padding: 20, color: C.g500, fontSize: 12 }}>Loading...</div>
         ) : assignments.length === 0 ? (
           <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 28, textAlign: 'center' }}>
-            <FileText size={32} color={C.g300} style={{ marginBottom: 10 }} />
+            <FileText size={32} color={C.g400} style={{ marginBottom: 10 }} />
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>No assignments yet</div>
             <div style={{ fontSize: 12, color: C.g500 }}>Your teacher has not assigned any homework yet.</div>
           </div>
@@ -5738,7 +5738,7 @@ function StudentSubmitScreen({
                 <div style={{ textAlign: 'center', padding: 30, color: C.g500, fontSize: 13 }}>Loading questions...</div>
               ) : questionsData.length === 0 && !questionPaperText ? (
                 <div style={{ textAlign: 'center', padding: 30 }}>
-                  <FileText size={36} color={C.g300} />
+                  <FileText size={36} color={C.g400} />
                   <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 10 }}>No question paper available</div>
                   <div style={{ fontSize: 12, color: C.g500, marginTop: 4 }}>Contact your teacher for the assignment details.</div>
                 </div>
