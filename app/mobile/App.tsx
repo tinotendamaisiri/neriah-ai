@@ -78,6 +78,7 @@ import GradingResultsScreen from './src/screens/GradingResultsScreen';
 import GradingDetailScreen from './src/screens/GradingDetailScreen';
 import TeacherClassAnalyticsScreen from './src/screens/TeacherClassAnalyticsScreen';
 import TeacherStudentAnalyticsScreen from './src/screens/TeacherStudentAnalyticsScreen';
+import HomeworkAnalyticsScreen from './src/screens/HomeworkAnalyticsScreen';
 import TeacherAssistantScreen from './src/screens/TeacherAssistantScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
 import TermsOfServiceScreen from './src/screens/TermsOfServiceScreen';
@@ -251,6 +252,11 @@ function TeacherNavigator() {
         options={{ headerShown: false }}
       />
       <TeacherStack.Screen
+        name="HomeworkAnalytics"
+        component={HomeworkAnalyticsScreen}
+        options={{ headerShown: false }}
+      />
+      <TeacherStack.Screen
         name="TeacherStudentAnalytics"
         component={TeacherStudentAnalyticsScreen}
         options={{ headerShown: false }}
@@ -331,7 +337,7 @@ function StudentNavigator() {
       <StudentRootStack.Screen
         name="StudentCamera"
         component={StudentCameraScreen}
-        options={{ headerShown: true, title: 'Capture Pages' }}
+        options={{ headerShown: true, title: 'Capture Pages', headerBackTitleVisible: false }}
       />
       <StudentRootStack.Screen
         name="StudentPreview"
