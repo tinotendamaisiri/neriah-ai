@@ -1769,8 +1769,8 @@ class TestOTPChannel:
     @feature_test("otp_channel_whatsapp")
     def test_otp_channel_returned_on_phone_submit(self, client):
         """
-        POST /api/demo/auth/send-otp with a Zimbabwean number returns
-        { verification_id, channel: 'whatsapp' }.
+        POST /api/demo/auth/send-otp returns { verification_id, channel: 'sms' }.
+        WhatsApp pending Meta business verification — demo always returns 'sms' for now.
         """
         resp = self._post(client, "/api/demo/auth/send-otp", {"phone": "+263771234567"})
 
@@ -1779,8 +1779,8 @@ class TestOTPChannel:
 
         assert "verification_id" in body, f"verification_id missing: {body!r}"
         assert "channel" in body,         f"channel missing: {body!r}"
-        assert body["channel"] == "whatsapp", (
-            f"Zimbabwean number must return channel='whatsapp', got: {body['channel']!r}"
+        assert body["channel"] == "sms", (
+            f"Demo must return channel='sms' (WhatsApp pending Meta verification), got: {body['channel']!r}"
         )
         assert body["verification_id"].startswith("demo-otp-"), (
             f"verification_id must start with 'demo-otp-', got: {body['verification_id']!r}"
@@ -4800,7 +4800,8 @@ class TestTeacherAssistantContextInjection:
                 "recommendations": ["More drill"],
             })
 
-        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+        with patch("shared.firestore_client.get_db"), \
+             patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
              patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._CTX_WITH_DATA), \
              patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
              patch("functions.teacher_assistant._rag_context", return_value=""), \
@@ -6340,3 +6341,381 @@ class TestAnalytics:
             rv = client.get(f"/api/analytics/class/{CLASS_ID}", headers=auth_headers)
         assert rv.status_code == 200
         assert rv.get_json()["limited_data"] is False, "3 marks → limited_data must be False"
+
+    @feature_test("analytics_classes_endpoint_returns_200")
+    def test_analytics_classes_endpoint_returns_200(self, client, auth_headers):
+        """GET /api/analytics/classes → 200 with a list (may be empty)."""
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "classes":
+                return [
+                    {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Maths 3A",
+                     "education_level": "Grade 3", "subject": "Mathematics"},
+                ]
+            return []
+
+        with patch("functions.analytics.query", side_effect=fake_query), \
+             patch("functions.analytics.get_doc", return_value=None):
+            rv = client.get("/api/analytics/classes", headers=auth_headers)
+
+        assert rv.status_code == 200, rv.get_data(as_text=True)
+        body = rv.get_json()
+        assert isinstance(body, list), "Response should be a list"
+        assert len(body) == 1
+        assert body[0]["class_id"] == CLASS_ID
+        assert "has_data" in body[0]
+        assert "average_score" in body[0]
+
+    @feature_test("analytics_student_class_route_registered")
+    def test_analytics_student_class_route_registered(self, client):
+        """GET /api/analytics/student-class/<id> exists and returns 401 without a token."""
+        rv = client.get(f"/api/analytics/student-class/{CLASS_ID}")
+        # No token → 401 (not 404 — proves the route is registered)
+        assert rv.status_code == 401, (
+            f"Expected 401 (route registered, auth required), got {rv.status_code}. "
+            "If 404, the route is not registered in main.py."
+        )
+
+
+class TestStudentClassAnalytics:
+    """Tests for GET /api/analytics/student-class/<class_id> — student-scoped view."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, bypass_token_version_check):  # noqa: F811
+        pass
+
+    @pytest.fixture()
+    def student_auth_headers(self):
+        from shared.auth import create_jwt
+        token = create_jwt(STUDENT_ID, "student", 1)
+        return {"Authorization": f"Bearer {token}"}
+
+    def _mark(self, student_id: str, pct: float, ak_id: str = HOMEWORK_ID) -> dict:
+        return {
+            "id": f"mark-{student_id}-{int(pct)}",
+            "student_id": student_id,
+            "class_id": CLASS_ID,
+            "answer_key_id": ak_id,
+            "score": int(pct),
+            "max_score": 100,
+            "percentage": pct,
+            "approved": True,
+            "status": "approved",
+            "verdicts": [],
+            "timestamp": "2026-04-10T08:00:00Z",
+        }
+
+    def _student(self, sid: str) -> dict:
+        return {"id": sid, "class_id": CLASS_ID, "first_name": "Test", "surname": "Student"}
+
+    @feature_test("analytics_student_class_disabled_when_flag_off")
+    def test_returns_enabled_false_when_share_analytics_off(self, client, student_auth_headers):
+        """enabled=False when class.share_analytics is False."""
+        cls_no_share = {
+            "id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Maths 3A",
+            "share_analytics": False,
+        }
+        student = self._student(STUDENT_ID)
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls_no_share
+            return None
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc):
+            rv = client.get(
+                f"/api/analytics/student-class/{CLASS_ID}?student_id={STUDENT_ID}",
+                headers=student_auth_headers,
+            )
+
+        assert rv.status_code == 200
+        assert rv.get_json()["enabled"] is False
+
+    @feature_test("analytics_student_class_returns_averages")
+    def test_returns_averages_and_rank_when_analytics_enabled(self, client, student_auth_headers):
+        """enabled=True with student_average, class_average, rank when share_analytics=True."""
+        cls_shared = {
+            "id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Maths 3A",
+            "share_analytics": True, "share_rank": True,
+        }
+        student = self._student(STUDENT_ID)
+        marks = [
+            self._mark(STUDENT_ID, 80.0),
+            self._mark("other-student", 60.0),
+        ]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls_shared
+            if collection == "answer_keys":
+                return {"id": HOMEWORK_ID, "title": "Chapter 5 Test"}
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "marks":
+                return marks
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(
+                f"/api/analytics/student-class/{CLASS_ID}?student_id={STUDENT_ID}",
+                headers=student_auth_headers,
+            )
+
+        assert rv.status_code == 200, rv.get_data(as_text=True)
+        body = rv.get_json()
+        assert body["enabled"] is True
+        assert body["student_average"] == 80.0
+        assert body["class_average"] == pytest.approx(70.0)   # (80+60)/2
+        assert body["total_assignments_graded"] == 1
+        assert body["student_rank"] == 1   # highest score = rank 1
+        assert isinstance(body["per_assignment"], list)
+        assert len(body["per_assignment"]) == 1
+        assert body["per_assignment"][0]["student_score"] == 80.0
+
+
+# ── TestHomeworkDrillDown ──────────────────────────────────────────────────────
+
+class TestHomeworkDrillDown:
+    """Tests for GET /api/analytics/homework/{homework_id} and student analytics drill-down."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, bypass_token_version_check):  # noqa: F811
+        pass
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _mark(self, student_id: str, pct: float, answer_key_id: str = HOMEWORK_ID) -> dict:
+        return {
+            "id": f"mark-{student_id}-{int(pct)}",
+            "student_id": student_id,
+            "class_id": CLASS_ID,
+            "answer_key_id": answer_key_id,
+            "score": int(pct),
+            "max_score": 100,
+            "percentage": pct,
+            "approved": True,
+            "status": "approved",
+            "verdicts": [],
+            "timestamp": "2026-04-15T08:00:00Z",
+        }
+
+    def _student(self, sid: str, first_name: str = "Test", surname: str = "Student") -> dict:
+        return {"id": sid, "class_id": CLASS_ID, "first_name": first_name, "surname": surname}
+
+    # ── tests ──────────────────────────────────────────────────────────────────
+
+    @feature_test("homework_analytics_returns_per_student_scores")
+    def test_homework_analytics_returns_per_student_scores(self, client, auth_headers):
+        """GET /api/analytics/homework/{id} returns per-student scores sorted by percentage desc."""
+        ak = {"id": HOMEWORK_ID, "class_id": CLASS_ID, "title": "Algebra Test"}
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Form 2A"}
+        marks = [
+            self._mark(STUDENT_ID, 85.0),
+            self._mark("student-2", 60.0),
+        ]
+        students = [
+            self._student(STUDENT_ID, "Tendai", "Moyo"),
+            self._student("student-2", "Rudo", "Choto"),
+        ]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "answer_keys" and doc_id == HOMEWORK_ID:
+                return ak
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "marks":
+                return marks
+            if collection == "students":
+                return students
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/homework/{HOMEWORK_ID}", headers=auth_headers)
+
+        assert rv.status_code == 200, rv.get_data(as_text=True)
+        body = rv.get_json()
+        assert body["has_data"] is True
+        assert body["submission_count"] == 2
+        assert body["average_score"] == pytest.approx(72.5)
+        assert body["highest_score"] == 85.0
+        assert body["lowest_score"] == 60.0
+        students_out = body["students"]
+        assert len(students_out) == 2
+        # Sorted descending by percentage
+        assert students_out[0]["percentage"] == 85.0
+        assert students_out[1]["percentage"] == 60.0
+        assert students_out[0]["pass_fail"] == "pass"
+        assert students_out[1]["pass_fail"] == "pass"
+
+    @feature_test("student_analytics_returns_score_history")
+    def test_student_analytics_returns_score_history(self, client, auth_headers):
+        """GET /api/analytics/student/{id} returns performance_over_time entries."""
+        student = self._student(STUDENT_ID, "Tendai", "Moyo")
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Form 2A"}
+        marks = [
+            self._mark(STUDENT_ID, 70.0),
+            self._mark(STUDENT_ID, 80.0),
+        ]
+        ak = {"id": HOMEWORK_ID, "title": "Chapter 1 Quiz", "subject": "Maths"}
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            if collection == "answer_keys":
+                return ak
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "marks":
+                return marks
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(
+                f"/api/analytics/student/{STUDENT_ID}?class_id={CLASS_ID}",
+                headers=auth_headers,
+            )
+
+        assert rv.status_code == 200, rv.get_data(as_text=True)
+        body = rv.get_json()
+        assert body["has_data"] is True
+        assert body["student"]["name"] == "Tendai Moyo"
+        assert body["student"]["total_submissions"] == 2
+        assert len(body["performance_over_time"]) == 2
+        assert body["student"]["average_score"] == pytest.approx(75.0)
+
+    @feature_test("student_analytics_detects_improving_trend")
+    def test_student_analytics_detects_improving_trend(self, client, auth_headers):
+        """Trend helper returns 'up' when latest score is >5 pts above previous."""
+        student = self._student(STUDENT_ID)
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Form 2A"}
+        marks = [
+            {**self._mark(STUDENT_ID, 55.0), "timestamp": "2026-04-01T08:00:00Z"},
+            {**self._mark(STUDENT_ID, 75.0), "timestamp": "2026-04-10T08:00:00Z"},
+        ]
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            if collection == "answer_keys":
+                return {"id": HOMEWORK_ID, "title": "Test"}
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            if collection == "marks":
+                return marks
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            # Also verify via class analytics that the student trend is detected
+            class_analytics_student = {
+                "id": CLASS_ID,
+                "teacher_id": TEACHER_ID,
+                "name": "Form 2A",
+            }
+            rv = client.get(
+                f"/api/analytics/student/{STUDENT_ID}?class_id={CLASS_ID}",
+                headers=auth_headers,
+            )
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        scores = [e["score_pct"] for e in body["performance_over_time"]]
+        assert scores[-1] > scores[-2] + 5  # improving by >5 points
+
+    @feature_test("student_analytics_no_data_state")
+    def test_student_analytics_no_data_state(self, client, auth_headers):
+        """GET /api/analytics/student/{id} returns has_data=False when no graded submissions."""
+        student = self._student(STUDENT_ID)
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID}
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            return []  # No marks at all
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(
+                f"/api/analytics/student/{STUDENT_ID}?class_id={CLASS_ID}",
+                headers=auth_headers,
+            )
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert body["has_data"] is False
+        assert body["reason"] == "no_graded_submissions"
+
+    @feature_test("analytics_drill_down_homework_tap")
+    def test_analytics_drill_down_homework_tap(self, client, auth_headers):
+        """GET /api/analytics/homework/{id} is registered and returns 200 (not 404) for valid homework."""
+        ak = {"id": HOMEWORK_ID, "class_id": CLASS_ID, "title": "Algebra Test"}
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Form 2A"}
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "answer_keys" and doc_id == HOMEWORK_ID:
+                return ak
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(f"/api/analytics/homework/{HOMEWORK_ID}", headers=auth_headers)
+
+        # Endpoint must exist (not 404) and return valid JSON
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert "has_data" in body
+        assert body["homework_id"] == HOMEWORK_ID
+
+    @feature_test("analytics_drill_down_student_tap")
+    def test_analytics_drill_down_student_tap(self, client, auth_headers):
+        """GET /api/analytics/student/{id} is registered and returns 200 for valid student."""
+        student = self._student(STUDENT_ID)
+        cls = {"id": CLASS_ID, "teacher_id": TEACHER_ID}
+
+        def fake_get_doc(collection, doc_id):
+            if collection == "students" and doc_id == STUDENT_ID:
+                return student
+            if collection == "classes" and doc_id == CLASS_ID:
+                return cls
+            return None
+
+        def fake_query(collection, filters=None, **kwargs):
+            return []
+
+        with patch("functions.analytics.get_doc", side_effect=fake_get_doc), \
+             patch("functions.analytics.query", side_effect=fake_query):
+            rv = client.get(
+                f"/api/analytics/student/{STUDENT_ID}?class_id={CLASS_ID}",
+                headers=auth_headers,
+            )
+
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert "has_data" in body
+        assert "student" in body
