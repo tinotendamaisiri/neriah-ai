@@ -53,6 +53,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ─── Upload limits ────────────────────────────────────────────────────────────
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+_ALLOWED_UPLOAD_EXTENSIONS: frozenset[str] = frozenset({
+    "jpg", "jpeg", "png", "webp", "heic", "heif",
+    "pdf", "docx", "doc", "txt",
+})
+
+_ALLOWED_MEDIA_TYPES: frozenset[str] = frozenset(_MEDIA_TYPE_EXT.keys())
+
+
+def _validate_upload(file_bytes: bytes, filename: str) -> str | None:
+    """
+    Return an error string if the upload fails basic validation, else None.
+    Checks file size and extension whitelist.
+    """
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        return f"File too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        return f"Unsupported file type '.{ext}'. Allowed: images, PDF, DOCX, TXT."
+    return None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _teacher_owns_class(teacher_id: str, class_id: str) -> bool:
@@ -256,6 +280,9 @@ def create_answer_key():
     if file and file.filename:
         file_bytes = file.read()
         filename = (file.filename or "upload").lower()
+        upload_err = _validate_upload(file_bytes, filename)
+        if upload_err:
+            return jsonify({"error": upload_err}), 400
         qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
             file_bytes, filename, input_type, education_level, subject, user_ctx,
         )
@@ -276,10 +303,14 @@ def create_answer_key():
 
     elif not is_multipart and file_data_b64:
         # Base64 JSON path — mobile sends file as base64 string + media_type
+        if media_type and media_type not in _ALLOWED_MEDIA_TYPES:
+            return jsonify({"error": f"Unsupported media type '{media_type}'."}), 400
         try:
             file_bytes = base64.b64decode(file_data_b64)
         except Exception:
             return jsonify({"error": "Invalid base64 in file_data"}), 400
+        if len(file_bytes) > _MAX_UPLOAD_BYTES:
+            return jsonify({"error": f"File too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)"}), 400
         ext = _MEDIA_TYPE_EXT.get(media_type, "bin")
         filename = f"upload.{ext}"
         qs_from_file, extracted_title_or_text, file_err = _questions_from_file(

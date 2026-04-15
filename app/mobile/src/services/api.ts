@@ -44,8 +44,6 @@ const client: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-console.log('[API] Base URL:', client.defaults.baseURL);
-
 client.interceptors.request.use(async (config) => {
   const token = await SecureStore.getItemAsync(JWT_STORAGE_KEY);
   if (token) {
@@ -482,6 +480,11 @@ export const getTeacherStudentAnalytics = async (
   class_id: string,
 ): Promise<TeacherStudentAnalyticsData> => {
   const res = await client.get(`/analytics/student/${student_id}`, { params: { class_id } });
+  return res.data;
+};
+
+export const getHomeworkAnalytics = async (homework_id: string): Promise<any> => {
+  const res = await client.get(`/analytics/homework/${homework_id}`);
   return res.data;
 };
 

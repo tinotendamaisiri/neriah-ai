@@ -70,13 +70,11 @@ export default function TeacherRegisterScreen() {
   const [customSchool, setCustomSchool] = useState('');
 
   const fetchSchools = async () => {
-    console.log('[SchoolPicker] Fetching schools from /api/schools');
     try {
       const r = await getSchools();
-      console.log('[SchoolPicker] Response:', JSON.stringify(r).slice(0, 300));
       setSchools(Array.isArray(r) ? r : []);
-    } catch (err) {
-      console.log('[SchoolPicker] Fetch error:', err);
+    } catch {
+      // Non-critical — user can type school name manually
     }
   };
 
@@ -87,10 +85,8 @@ export default function TeacherRegisterScreen() {
   const openSchoolModal = () => {
     // Re-fetch if schools list is empty (e.g. mount fetch failed)
     if (schools.length === 0) {
-      console.log('[SchoolPicker] schools empty on modal open — retrying fetch');
       fetchSchools();
     }
-    console.log('[SchoolPicker] Opening modal, schools loaded:', schools.length);
     setSchoolModalVisible(true);
   };
 
@@ -105,7 +101,6 @@ export default function TeacherRegisterScreen() {
           s.province.toLowerCase().includes(q),
         )
       : schools;
-    console.log('[SchoolPicker] Filter query:', JSON.stringify(q), '| matched:', filtered.length, '/', schools.length);
     const cityMap: Record<string, School[]> = {};
     filtered.forEach(s => {
       if (!cityMap[s.city]) cityMap[s.city] = [];
@@ -165,22 +160,14 @@ export default function TeacherRegisterScreen() {
         ...(title ? { title } : {}),
         ...(schoolId ? { school_id: schoolId } : { school_name: schoolNameVal }),
       };
-      console.log('[Register] Sending:', JSON.stringify({
-        first_name: fn, surname: sn, phone: ph,
-        school: schoolId ? `id:${schoolId}` : `name:${schoolNameVal}`,
-      }));
       const res = await requestRegisterOtp(payload);
       navigation.navigate('OTP', {
         phone: ph,
         verification_id: res.verification_id,
         ...(res.debug_otp ? { debug_otp: res.debug_otp } : {}),
+        ...(res.channel   ? { channel:   res.channel   } : {}),
       });
     } catch (err: any) {
-      console.log('[Register] Error:', JSON.stringify({
-        message: err?.message,
-        status: err?.response?.status,
-        data: err?.response?.data,
-      }));
       const status = err?.response?.status;
       const isAlreadyRegistered =
         status === 409 ||

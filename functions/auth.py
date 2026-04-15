@@ -12,7 +12,6 @@ from shared.auth import (
     generate_otp,
     hash_otp,
     hash_pin,
-    require_auth,
     require_role,
     verify_otp_hash,
     verify_pin,
@@ -385,7 +384,8 @@ def auth_resend_otp():
 
 @auth_bp.get("/auth/me")
 def auth_me():
-    user_id, role, err = require_auth(request)
+    # require_role validates token_version against Firestore to enforce revocation.
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -464,7 +464,7 @@ def auth_recover():
 
 @auth_bp.post("/auth/pin/set")
 def auth_pin_set():
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -479,7 +479,7 @@ def auth_pin_set():
 
 @auth_bp.post("/auth/pin/verify")
 def auth_pin_verify():
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -505,7 +505,7 @@ def auth_pin_verify():
 
 @auth_bp.delete("/auth/pin")
 def auth_pin_delete():
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -518,7 +518,7 @@ def auth_pin_delete():
 @auth_bp.post("/auth/profile/request-otp")
 def auth_profile_request_otp():
     """Send OTP to a phone number for profile update verification. Requires valid JWT."""
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -552,7 +552,7 @@ def auth_profile_request_otp():
 @auth_bp.post("/auth/terms-accept")
 def auth_terms_accept():
     """Record that the teacher has accepted the current terms version. JWT required, no OTP."""
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 
@@ -571,7 +571,7 @@ def auth_terms_accept():
 @auth_bp.patch("/auth/me")
 def auth_update_me():
     """Update teacher profile. Requires valid JWT + OTP verification."""
-    user_id, _, err = require_auth(request)
+    user_id, err = require_role(request, "teacher")
     if err:
         return jsonify({"error": err}), 401
 

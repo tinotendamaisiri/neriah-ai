@@ -20,7 +20,7 @@ import logging
 import os
 
 import functions_framework
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request as flask_request
 
 from functions.analytics import analytics_bp
 from functions.answer_keys import answer_keys_bp, homework_bp
@@ -49,6 +49,57 @@ logger = logging.getLogger(__name__)
 # ─── Flask app ────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
+
+# ─── CORS ─────────────────────────────────────────────────────────────────────
+# Allow requests from the web dashboard and the demo site only.
+# Mobile clients (React Native) do not use CORS, so they are unaffected.
+# Wildcard (*) is intentionally not used — only known origins are allowed.
+
+_ALLOWED_ORIGINS = {
+    "https://neriah.ai",
+    "https://www.neriah.ai",
+    "https://neriah.africa",
+    "https://www.neriah.africa",
+    "http://localhost:3000",   # local Next.js dev
+    "http://localhost:5173",   # local Vite dev
+}
+
+
+@app.after_request
+def add_cors_headers(response):
+    origin = flask_request.headers.get("Origin", "")
+    if origin in _ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization, X-Requested-With"
+        )
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        )
+        response.headers["Vary"] = "Origin"
+    return response
+
+
+@app.route("/api/<path:path>", methods=["OPTIONS"])
+@app.route("/api", methods=["OPTIONS"])
+def handle_preflight(path=""):
+    """Handle CORS preflight requests."""
+    response = app.make_default_options_response()
+    origin = flask_request.headers.get("Origin", "")
+    if origin in _ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization, X-Requested-With"
+        )
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        )
+        response.headers["Access-Control-Max-Age"] = "3600"
+        response.headers["Vary"] = "Origin"
+    return response
+
 
 _API = "/api"
 app.register_blueprint(auth_bp,        url_prefix=_API)
