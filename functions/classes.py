@@ -88,59 +88,104 @@ def delete_class(class_id: str):
     return jsonify({"message": "deleted"}), 200
 
 
+def _classes_for_school_name(school_name: str) -> list[dict]:
+    """
+    Return classes whose teacher is at the given school.
+
+    Avoids querying classes by school_id (requires a Firestore composite index
+    that may not exist).  Instead we:
+      1. Scan teachers whose school_name matches (exact, then case-insensitive).
+      2. For each matching teacher fetch their classes by teacher_id — which uses
+         the existing (teacher_id, created_at) composite index.
+    """
+    sn = school_name.strip()
+    if not sn:
+        return []
+
+    # Exact match first (fast path)
+    teachers = query("teachers", [("school_name", "==", sn)])
+
+    # Case-insensitive fallback — scan all teachers and filter in Python.
+    # Acceptable because there are O(hundreds) of teachers in this dataset.
+    if not teachers:
+        all_teachers = query("teachers", [])
+        sn_lower = sn.lower()
+        teachers = [
+            t for t in all_teachers
+            if (t.get("school_name") or t.get("school_id") or "").lower() == sn_lower
+        ]
+
+    if not teachers:
+        return []
+
+    # Fetch classes for each teacher using the existing composite index
+    seen: set[str] = set()
+    results: list[dict] = []
+    for t in teachers:
+        teacher_classes = query(
+            "classes",
+            [("teacher_id", "==", t["id"])],
+            order_by="created_at",
+        )
+        for cls in teacher_classes:
+            cid = cls.get("id", "")
+            if cid not in seen:
+                seen.add(cid)
+                # Embed teacher name so the mobile UI doesn't need an extra fetch
+                cls_out = {
+                    "id": cid,
+                    "name": cls.get("name", ""),
+                    "education_level": cls.get("education_level", ""),
+                    "subject": cls.get("subject"),
+                    "teacher": {
+                        "first_name": t.get("first_name") or "",
+                        "surname":    t.get("surname")     or "",
+                    },
+                }
+                results.append(cls_out)
+
+    return results
+
+
 @classes_bp.get("/classes/school/<school_id>")
 def classes_by_school(school_id: str):
-    """Public — list classes for a school so students can pick one at registration."""
+    """
+    Public — list classes for a school by school_id.
+
+    Resolves the school_id to a human-readable name, then delegates to the
+    name-based helper (avoids a missing Firestore composite index on school_id).
+    """
     logger.debug("[classes] GET /classes/school/%s", school_id)
-    if not school_id or not school_id.strip():
+    sid = (school_id or "").strip()
+    if not sid:
         return jsonify({"error": "school_id is required"}), 400
 
-    sid = school_id.strip()
-    # No order_by here — composite index (school_id, created_at) may not exist.
-    # Sort in Python after fetching.
-    results = query("classes", [("school_id", "==", sid)])
+    # Resolve school_id → school name using the seed list
+    from functions.schools import _SEED_SCHOOLS
+    seed = next((s for s in _SEED_SCHOOLS if s["id"] == sid), None)
+    school_name = seed["name"] if seed else sid
 
-    if not results:
-        # Fallback: find teachers at this school, then fetch their classes.
-        # This covers classes created before school_id was stamped on the class document.
-        teachers_at_school = query("teachers", [("school_id", "==", sid)])
-        for t in teachers_at_school:
-            teacher_classes = query("classes", [("teacher_id", "==", t["id"])])
-            results.extend(teacher_classes)
+    out = _classes_for_school_name(school_name)
+    logger.info("[classes] Returning %d classes for school_id=%s", len(out), sid)
+    return jsonify(out), 200
 
-    if not results:
-        logger.info("[classes] No classes found for school_id=%s", sid)
-        return jsonify([]), 200
 
-    # Deduplicate (a class might appear twice if school_id field was already set)
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for c in results:
-        cid = c.get("id", "")
-        if cid not in seen:
-            seen.add(cid)
-            unique.append(c)
-    results = sorted(unique, key=lambda c: c.get("created_at", ""))
+@classes_bp.get("/classes/by-school")
+def classes_by_school_name():
+    """
+    Public — list classes for a school by school name (query param).
+    Used by mobile and web student registration to show available classes.
 
-    # Attach teacher name to each class so the mobile UI can display it
-    teacher_cache: dict[str, dict | None] = {}
-    out = []
-    for cls in results:
-        teacher_id = cls.get("teacher_id", "")
-        if teacher_id not in teacher_cache:
-            teacher_cache[teacher_id] = get_doc("teachers", teacher_id) if teacher_id else None
-        teacher = teacher_cache[teacher_id]
-        out.append({
-            "id": cls["id"],
-            "name": cls.get("name", ""),
-            "education_level": cls.get("education_level", ""),
-            "subject": cls.get("subject"),
-            "teacher": {
-                "first_name": teacher.get("first_name") or teacher.get("name", "").split()[0] if teacher else "",
-                "surname": teacher.get("surname") or (teacher.get("name", "").split()[-1] if teacher and " " in teacher.get("name", "") else "") if teacher else "",
-            },
-        })
-    logger.info("[classes] Returning %d classes for school_id=%s", len(out), school_id)
+    GET /api/classes/by-school?school=Chiredzi+High+School
+    """
+    school = (request.args.get("school") or "").strip()
+    logger.debug("[classes] GET /classes/by-school school=%r", school)
+
+    if not school:
+        return jsonify({"error": "school query parameter is required"}), 400
+
+    out = _classes_for_school_name(school)
+    logger.info("[classes] /classes/by-school returning %d classes for school=%r", len(out), school)
     return jsonify(out), 200
 
 

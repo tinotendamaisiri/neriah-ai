@@ -6758,23 +6758,38 @@ _CLASS_AT_SCHOOL_2 = {
 
 
 class TestClassesBySchool:
-    """Tests for GET /api/classes/school/<school_id> — student registration class list."""
+    """Tests for GET /api/classes/school/<school_id> — student registration class list.
+
+    The endpoint resolves school_id → school_name (via seed list), then delegates to
+    _classes_for_school_name which:
+      1. queries teachers by school_name (exact match)
+      2. falls back to a full teacher scan + Python case-insensitive filter
+      3. fetches classes by teacher_id for each matched teacher
+    Teacher name is embedded in the result; no separate get_doc call needed.
+    """
 
     @feature_test("classes_by_school_found")
     def test_classes_by_school_returns_classes(self, client):
-        """Returns all classes for a school with teacher names attached."""
+        """Returns classes for a school with teacher names embedded."""
+        # school_id not in seed list → falls back to using it as school_name.
+        # Exact school_name query returns nothing (teacher stores school_id, not school_name),
+        # so the full-scan fallback runs and matches via the school_id field in Python.
         def fake_query(collection, filters=None, **kwargs):
+            filt = filters or []
+            if collection == "teachers":
+                # Exact school_name match → nothing
+                if any(f[0] == "school_name" for f in filt):
+                    return []
+                # Full scan (no filters) → return teacher
+                return [_TEACHER_AT_SCHOOL]
             if collection == "classes":
-                return [_CLASS_AT_SCHOOL_1, _CLASS_AT_SCHOOL_2]
+                # Classes by teacher_id
+                if any(f[0] == "teacher_id" and f[2] == TEACHER_ID2 for f in filt):
+                    return [_CLASS_AT_SCHOOL_1, _CLASS_AT_SCHOOL_2]
+                return []
             return []
 
-        def fake_get_doc(collection, doc_id):
-            if collection == "teachers" and doc_id == TEACHER_ID2:
-                return _TEACHER_AT_SCHOOL
-            return None
-
-        with patch("functions.classes.query", side_effect=fake_query), \
-             patch("functions.classes.get_doc", side_effect=fake_get_doc):
+        with patch("functions.classes.query", side_effect=fake_query):
             rv = client.get(f"/api/classes/school/{SCHOOL_ID}")
 
         assert rv.status_code == 200
@@ -6783,47 +6798,40 @@ class TestClassesBySchool:
         assert len(data) == 2
         names = {c["name"] for c in data}
         assert names == {"Form 2A", "Form 3B"}
-        # Teacher name is attached
+        # Teacher name is embedded directly
         assert data[0]["teacher"]["first_name"] == "Tatenda"
         assert data[0]["teacher"]["surname"] == "Moyo"
-        # Each class has required fields
         for c in data:
             assert "id" in c
             assert "name" in c
             assert "education_level" in c
             assert "teacher" in c
 
-    @feature_test("classes_by_school_fallback_via_teacher")
-    def test_classes_by_school_fallback_when_no_school_id_on_class(self, client):
-        """Fallback: if classes have no school_id field, find via teacher lookup."""
-        # Old-style classes: no school_id field stored on them
-        old_class = {k: v for k, v in _CLASS_AT_SCHOOL_1.items() if k != "school_id"}
-
-        call_count = {"n": 0}
+    @feature_test("classes_by_school_case_insensitive")
+    def test_classes_by_school_case_insensitive(self, client):
+        """Case-insensitive match: teacher has school_name='Chiredzi High School',
+        request sends 'chiredzi high school' (lowercase)."""
+        teacher = {**_TEACHER_AT_SCHOOL, "school_name": "Chiredzi High School"}
+        cls = {**_CLASS_AT_SCHOOL_1}
 
         def fake_query(collection, filters=None, **kwargs):
             filt = filters or []
-            if collection == "classes":
-                # First call: school_id == SCHOOL_ID → no results (old classes have no field)
-                if any(f[0] == "school_id" for f in filt):
-                    return []
-                # Second call: teacher_id == TEACHER_ID2 → return old class
-                if any(f[0] == "teacher_id" for f in filt):
-                    return [old_class]
-                return []
             if collection == "teachers":
-                # Fallback teacher lookup
-                return [_TEACHER_AT_SCHOOL]
+                # Exact school_name match with lowercase → nothing
+                if any(f[0] == "school_name" for f in filt):
+                    return []
+                # Full scan → return teacher (stored with title-case name)
+                return [teacher]
+            if collection == "classes":
+                if any(f[0] == "teacher_id" for f in filt):
+                    return [cls]
+                return []
             return []
 
-        def fake_get_doc(collection, doc_id):
-            if collection == "teachers" and doc_id == TEACHER_ID2:
-                return _TEACHER_AT_SCHOOL
-            return None
-
-        with patch("functions.classes.query", side_effect=fake_query), \
-             patch("functions.classes.get_doc", side_effect=fake_get_doc):
-            rv = client.get(f"/api/classes/school/{SCHOOL_ID}")
+        # school_id resolves to itself (not in seed list).
+        # Use the by-school-name endpoint directly for clarity.
+        with patch("functions.classes.query", side_effect=fake_query):
+            rv = client.get("/api/classes/by-school?school=chiredzi+high+school")
 
         assert rv.status_code == 200
         data = rv.get_json()
@@ -6832,7 +6840,7 @@ class TestClassesBySchool:
 
     @feature_test("classes_by_school_not_found")
     def test_classes_by_school_empty(self, client):
-        """Returns 200 with empty list when no classes exist for the school."""
+        """Returns 200 with empty list when no teachers or classes match the school."""
         def fake_query(collection, filters=None, **kwargs):
             return []
 
