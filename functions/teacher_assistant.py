@@ -350,6 +350,15 @@ def get_teacher_context_data(
                 "education_level": cls.get("education_level") or "Unknown",
                 "student_count":   student_count,
                 "homework_count":  homework_count,
+                # Lightweight roster for name-matching — id + names only
+                "students_raw": [
+                    {
+                        "id":         s.get("id", ""),
+                        "first_name": s.get("first_name", ""),
+                        "surname":    s.get("surname", ""),
+                    }
+                    for s in students
+                ],
             }
 
             # ── 4. Fetch marks and compute stats (optional) ───────────────────
@@ -447,6 +456,131 @@ _NO_DATA_GUIDANCE = (
     "Once your students submit and you grade their work, "
     "I'll be able to give you detailed insights."
 )
+
+# ── Student name detection ────────────────────────────────────────────────────
+
+def _edit_distance(a: str, b: str) -> int:
+    """Standard Levenshtein edit distance."""
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    dp = list(range(len(b) + 1))
+    for ca in a:
+        ndp = [dp[0] + 1]
+        for j, cb in enumerate(b):
+            ndp.append(min(dp[j] + (ca != cb), dp[j + 1] + 1, ndp[j] + 1))
+        dp = ndp
+    return dp[-1]
+
+
+def extract_student_name_from_message(
+    message: str, known_students: list[dict]
+) -> dict | None:
+    """
+    Check if the teacher's message references a specific student.
+    Tries exact full-name match, then first/surname match, then fuzzy (edit-distance ≤ 1).
+    Returns the matched student dict or None.
+    """
+    msg = message.lower()
+
+    for student in known_students:
+        first   = student.get("first_name", "").strip().lower()
+        surname = student.get("surname", "").strip().lower()
+        full    = f"{first} {surname}".strip()
+
+        if full and full in msg:
+            return student
+        if first and first in msg:
+            return student
+        if surname and surname in msg:
+            return student
+
+        # Fuzzy: any word in the message within edit-distance 1 of first or surname
+        for word in msg.split():
+            if len(word) >= 4:
+                if (first  and _edit_distance(word, first)   <= 1) or \
+                   (surname and _edit_distance(word, surname) <= 1):
+                    return student
+
+    return None
+
+
+def get_student_performance_data(student_id: str) -> dict:
+    """
+    Fetch a single student's profile and graded marks directly from Firestore.
+    Returns a structured dict ready for prompt injection.
+    """
+    try:
+        db = get_db()
+
+        # ── Student profile ───────────────────────────────────────────────────
+        snap = db.collection("students").document(student_id).get()
+        if not snap.exists:
+            return {"has_data": False, "message": "Student not found"}
+        student = snap.to_dict()
+        student.setdefault("id", snap.id)
+        student_name = f"{student.get('first_name', '')} {student.get('surname', '')}".strip()
+
+        # ── Approved marks ────────────────────────────────────────────────────
+        marks: list[dict] = []
+        for doc in db.collection("marks").where(
+            filter=FieldFilter("student_id", "==", student_id)
+        ).where(
+            filter=FieldFilter("approved", "==", True)
+        ).stream():
+            marks.append(doc.to_dict())
+
+        if not marks:
+            return {
+                "has_data":    False,
+                "student_name": student_name,
+                "message":     f"No graded submissions yet for {student_name}",
+            }
+
+        # Sort chronologically for trend analysis
+        marks.sort(key=lambda m: m.get("created_at") or m.get("timestamp") or "")
+
+        scores = [m.get("percentage", 0.0) for m in marks if m.get("percentage") is not None]
+        average = round(sum(scores) / len(scores), 1) if scores else 0.0
+        highest = max(scores) if scores else 0.0
+        lowest  = min(scores) if scores else 0.0
+
+        if len(scores) >= 2:
+            trend = "improving" if scores[-1] > scores[0] else \
+                    "declining"  if scores[-1] < scores[0] else "stable"
+        else:
+            trend = "stable"
+
+        # Weak topics from incorrect verdicts
+        weak_topics = _extract_weak_topics(marks)
+
+        # Recent submission history (last 5)
+        history: list[dict] = []
+        for m in marks[-5:]:
+            history.append({
+                "homework_title": m.get("homework_title") or m.get("title") or "Assignment",
+                "score":          f"{m.get('total_score', 0)}/{m.get('max_score', 0)}",
+                "percentage":     m.get("percentage", 0.0),
+                "date":           (m.get("created_at") or m.get("timestamp") or "")[:10],
+            })
+
+        return {
+            "has_data":         True,
+            "student_name":     student_name,
+            "class_name":       student.get("class_name") or student.get("class_id", ""),
+            "average_score":    average,
+            "highest_score":    highest,
+            "lowest_score":     lowest,
+            "trend":            trend,
+            "submission_count": len(marks),
+            "weak_topics":      weak_topics,
+            "recent_history":   history,
+        }
+
+    except Exception:
+        logger.warning("teacher_assistant: get_student_performance_data failed", exc_info=True)
+        return {"has_data": False, "message": "Could not fetch student data"}
 
 
 def _format_teacher_context(ctx: dict, needs_marks: bool) -> str:
@@ -636,6 +770,38 @@ def teacher_assistant():
         teacher_ctx.get("has_data"), needs_marks,
     )
     system += f"\n\nTEACHER'S CLASS DATA:\n{ctx_text}"
+
+    # ── Individual student lookup ─────────────────────────────────────────────
+    # Build a flat roster of all students across all classes so name-matching works
+    all_students: list[dict] = []
+    for cls in teacher_ctx.get("classes", []):
+        all_students.extend(cls.get("students_raw", []))
+
+    matched_student = extract_student_name_from_message(message, all_students)
+    if matched_student:
+        student_data = get_student_performance_data(matched_student["id"])
+        logger.info(
+            "teacher_assistant: student lookup triggered for student_id=%s has_data=%s",
+            matched_student["id"], student_data.get("has_data"),
+        )
+        if student_data.get("has_data"):
+            system += (
+                f"\n\nINDIVIDUAL STUDENT DATA — {student_data['student_name']}:\n"
+                f"- Average score: {student_data['average_score']}%\n"
+                f"- Highest score: {student_data['highest_score']}%\n"
+                f"- Lowest score:  {student_data['lowest_score']}%\n"
+                f"- Trend: {student_data['trend']}\n"
+                f"- Submissions completed: {student_data['submission_count']}\n"
+                f"- Weak topics: {', '.join(student_data['weak_topics']) or 'None identified yet'}\n"
+                f"- Recent history: {json.dumps(student_data['recent_history'])}\n\n"
+                "Use this real data to answer the teacher's question about this student."
+            )
+        else:
+            system += (
+                f"\n\nINDIVIDUAL STUDENT DATA — {student_data.get('student_name', matched_student.get('first_name', 'this student'))}:\n"
+                f"{student_data.get('message', 'No graded work yet for this student.')}\n"
+                "Suggest the teacher grades this student's submissions to unlock insights."
+            )
 
     # ── File attachment handling ───────────────────────────────────────────────
     image_bytes: bytes | None = None

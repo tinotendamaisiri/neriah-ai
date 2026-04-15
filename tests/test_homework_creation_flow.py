@@ -5156,3 +5156,269 @@ class TestTeacherAssistantNoHardcodedData:
             "Result must include a message field explaining there is no data"
         assert result["classes"] == [], \
             "classes list must be empty when Firestore is empty"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUITE — Individual student performance queries
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestIndividualStudentQueries:
+    """
+    Verify that name detection, per-student Firestore fetch, and prompt injection
+    all work correctly for individual-student performance questions.
+    """
+
+    _STUDENT_TENDAI = {"id": "s1", "first_name": "Tendai", "surname": "Moyo"}
+    _STUDENT_TATENDA = {"id": "s2", "first_name": "Tatenda", "surname": "Chiwanda"}
+    _STUDENT_FARAI   = {"id": "s3", "first_name": "Farai",   "surname": "Dube"}
+
+    _MARKS_IMPROVING = [
+        {"percentage": 45.0, "student_id": "s1", "approved": True,
+         "created_at": "2026-01-01", "total_score": 9,  "max_score": 20,
+         "homework_title": "HW1", "verdicts": []},
+        {"percentage": 55.0, "student_id": "s1", "approved": True,
+         "created_at": "2026-02-01", "total_score": 11, "max_score": 20,
+         "homework_title": "HW2", "verdicts": []},
+        {"percentage": 70.0, "student_id": "s1", "approved": True,
+         "created_at": "2026-03-01", "total_score": 14, "max_score": 20,
+         "homework_title": "HW3", "verdicts": [
+             {"correct": False, "topic": "quadratic equations"},
+         ]},
+    ]
+
+    def _make_firestore_mark_docs(self, marks):
+        docs = []
+        for i, m in enumerate(marks):
+            d = MagicMock()
+            d.id = f"mark-{i}"
+            d.to_dict.return_value = dict(m)
+            docs.append(d)
+        return docs
+
+    def _make_student_snap(self, student):
+        snap = MagicMock()
+        snap.exists = True
+        snap.id = student["id"]
+        snap.to_dict.return_value = {
+            "first_name": student["first_name"],
+            "surname":    student["surname"],
+            "class_id":   "demo-class-1",
+        }
+        return snap
+
+    # ── name extraction — direct unit tests ──────────────────────────────────
+
+    @feature_test("student_name_extraction_exact_match")
+    def test_student_name_extraction_exact(self):
+        """Full name in message → matched student returned."""
+        from functions.teacher_assistant import extract_student_name_from_message
+        students = [self._STUDENT_TENDAI, self._STUDENT_FARAI]
+        result = extract_student_name_from_message(
+            "How is Tendai Moyo performing this term?", students
+        )
+        assert result is not None, "Should match when full name is in message"
+        assert result["id"] == "s1", "Should return the correct student dict"
+
+    @feature_test("student_name_extraction_no_match")
+    def test_student_name_extraction_no_match(self):
+        """Generic class question → no student matched."""
+        from functions.teacher_assistant import extract_student_name_from_message
+        students = [self._STUDENT_TENDAI, self._STUDENT_FARAI]
+        result = extract_student_name_from_message(
+            "How is the whole class doing this term?", students
+        )
+        assert result is None, "Generic class question must not match any student"
+
+    @feature_test("teacher_assistant_fuzzy_student_name")
+    def test_teacher_assistant_fuzzy_matches_student_name(self):
+        """
+        Student in DB: 'Tatenda Chiwanda'.
+        Message: 'How is Tatenda doing?' — first name exact match.
+        Also test that a 1-char typo in the surname still matches.
+        """
+        from functions.teacher_assistant import extract_student_name_from_message
+        students = [self._STUDENT_TATENDA]
+
+        # Exact first name
+        result = extract_student_name_from_message("How is Tatenda doing?", students)
+        assert result is not None, "First-name-only match must work"
+        assert result["id"] == "s2"
+
+        # 1-char typo in surname ('Chiwandas' vs 'Chiwanda')
+        result2 = extract_student_name_from_message(
+            "Tell me about Chiwandas performance", students
+        )
+        assert result2 is not None, "Fuzzy match within edit-distance 1 must work"
+        assert result2["id"] == "s2"
+
+    # ── get_student_performance_data — direct unit test ───────────────────────
+
+    @feature_test("teacher_assistant_student_trend")
+    def test_teacher_assistant_reports_student_trend(self):
+        """
+        Student has 3 marks: 45%, 55%, 70% (chronologically improving).
+        Assert trend='improving' and scores are correct.
+        """
+        from functions.teacher_assistant import get_student_performance_data
+
+        mark_docs = self._make_firestore_mark_docs(self._MARKS_IMPROVING)
+        marks_query = MagicMock()
+        marks_query.where.return_value = marks_query
+        marks_query.stream.return_value = mark_docs
+
+        student_snap = self._make_student_snap(self._STUDENT_TENDAI)
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value.document.return_value.get.return_value = student_snap
+        mock_db.collection.return_value.where.return_value = marks_query
+
+        with patch("functions.teacher_assistant.get_db", return_value=mock_db):
+            result = get_student_performance_data("s1")
+
+        assert result["has_data"] is True, "has_data must be True when marks exist"
+        assert result["trend"] == "improving", \
+            f"Trend must be 'improving' for 45→55→70, got '{result['trend']}'"
+        assert result["average_score"] == round((45 + 55 + 70) / 3, 1), \
+            "average_score must be calculated from real marks"
+        assert result["highest_score"] == 70.0
+        assert result["lowest_score"]  == 45.0
+        assert result["submission_count"] == 3
+
+    # ── HTTP endpoint — student name triggers individual lookup ───────────────
+
+    @pytest.fixture(scope="module")
+    def app(self):
+        from main import app as flask_app
+        flask_app.config["TESTING"] = True
+        return flask_app
+
+    @pytest.fixture(scope="module")
+    def client(self, app):
+        return app.test_client()
+
+    @pytest.fixture(scope="module")
+    def auth_headers(self):
+        from shared.auth import create_jwt
+        token = create_jwt(TEACHER_ID, "teacher", 1)
+        return {"Authorization": f"Bearer {token}"}
+
+    _RICH_CTX = {
+        "has_data": True,
+        "classes": [{
+            "name": "Form 2B", "education_level": "Form 2",
+            "student_count": 1, "homework_count": 1,
+            "students_raw": [{"id": "s1", "first_name": "Tendai", "surname": "Moyo"}],
+        }],
+        "total_classes": 1,
+        "total_students": 1,
+    }
+
+    @feature_test("teacher_assistant_individual_student_query")
+    def test_teacher_assistant_responds_to_student_name_query(self, client, auth_headers):
+        """
+        POST /api/teacher/assistant with message="How is Tendai performing?".
+        Assert get_student_performance_data is called and Tendai's data is in the system prompt.
+        """
+        captured_system: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            captured_system.append(system)
+            return "Tendai is improving steadily."
+
+        student_perf = {
+            "has_data": True,
+            "student_name": "Tendai Moyo",
+            "average_score": 67.0,
+            "highest_score": 70.0,
+            "lowest_score":  45.0,
+            "trend": "improving",
+            "submission_count": 3,
+            "weak_topics": ["quadratic equations"],
+            "recent_history": [],
+        }
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+             patch("functions.teacher_assistant.get_teacher_context_data", return_value=self._RICH_CTX), \
+             patch("functions.teacher_assistant.get_student_performance_data", return_value=student_perf), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={"message": "How is Tendai performing?", "action_type": "chat"},
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_system, "Model must be called"
+        system_used = captured_system[0]
+        assert "INDIVIDUAL STUDENT DATA" in system_used, \
+            "System prompt must include INDIVIDUAL STUDENT DATA section"
+        assert "Tendai Moyo" in system_used, \
+            "Student name must appear in system prompt"
+        assert "67.0" in system_used or "67" in system_used, \
+            "Average score must appear in system prompt"
+
+    @feature_test("teacher_assistant_student_no_submissions")
+    def test_teacher_assistant_handles_student_with_no_submissions(self, client, auth_headers):
+        """
+        Student exists but has no marks.
+        POST with message="How is Farai doing?".
+        Assert system prompt says no graded work yet and suggests grading.
+        """
+        captured_system: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            captured_system.append(system)
+            return "Farai has not submitted any graded work yet."
+
+        ctx_with_farai = {
+            "has_data": True,
+            "classes": [{
+                "name": "Form 2B", "education_level": "Form 2",
+                "student_count": 1, "homework_count": 1,
+                "students_raw": [{"id": "s3", "first_name": "Farai", "surname": "Dube"}],
+            }],
+            "total_classes": 1,
+            "total_students": 1,
+        }
+        no_data_result = {
+            "has_data": False,
+            "student_name": "Farai Dube",
+            "message": "No graded submissions yet for Farai Dube",
+        }
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+             patch("functions.teacher_assistant.get_teacher_context_data", return_value=ctx_with_farai), \
+             patch("functions.teacher_assistant.get_student_performance_data", return_value=no_data_result), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={"message": "How is Farai doing?", "action_type": "chat"},
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_system, "Model must be called"
+        system_used = captured_system[0]
+        assert "INDIVIDUAL STUDENT DATA" in system_used, \
+            "Individual student section must appear even when no marks exist"
+        assert (
+            "no graded" in system_used.lower()
+            or "no submissions" in system_used.lower()
+            or "graded submissions" in system_used.lower()
+        ), "System prompt must convey that the student has no graded work yet"
