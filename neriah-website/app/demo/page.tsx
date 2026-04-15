@@ -958,37 +958,53 @@ function WebCameraModal({ open, onCapture, onClose }: WebCameraModalProps) {
 }
 
 // ── Country list for phone input ──────────────────────────────────────────────
-interface PhoneCountry { flag: string; name: string; dialCode: string; }
+interface PhoneCountry { flag: string; name: string; dialCode: string; code: string; }
 const PHONE_COUNTRIES: PhoneCountry[] = [
-  { flag: '🇿🇼', name: 'Zimbabwe',       dialCode: '+263' },
-  { flag: '🇿🇦', name: 'South Africa',   dialCode: '+27'  },
-  { flag: '🇿🇲', name: 'Zambia',         dialCode: '+260' },
-  { flag: '🇲🇼', name: 'Malawi',         dialCode: '+265' },
-  { flag: '🇹🇿', name: 'Tanzania',       dialCode: '+255' },
-  { flag: '🇰🇪', name: 'Kenya',          dialCode: '+254' },
-  { flag: '🇺🇬', name: 'Uganda',         dialCode: '+256' },
-  { flag: '🇬🇭', name: 'Ghana',          dialCode: '+233' },
-  { flag: '🇳🇬', name: 'Nigeria',        dialCode: '+234' },
-  { flag: '🇧🇼', name: 'Botswana',       dialCode: '+267' },
-  { flag: '🇳🇦', name: 'Namibia',        dialCode: '+264' },
-  { flag: '🇲🇿', name: 'Mozambique',     dialCode: '+258' },
-  { flag: '🇷🇼', name: 'Rwanda',         dialCode: '+250' },
-  { flag: '🇪🇹', name: 'Ethiopia',       dialCode: '+251' },
-  { flag: '🇸🇳', name: 'Senegal',        dialCode: '+221' },
-  { flag: '🇨🇮', name: "Côte d'Ivoire",  dialCode: '+225' },
-  { flag: '🇨🇩', name: 'DRC',            dialCode: '+243' },
-  { flag: '🇦🇴', name: 'Angola',         dialCode: '+244' },
-  { flag: '🇹🇳', name: 'Tunisia',        dialCode: '+216' },
-  { flag: '🇪🇬', name: 'Egypt',          dialCode: '+20'  },
-  { flag: '🇲🇦', name: 'Morocco',        dialCode: '+212' },
-  { flag: '🇩🇿', name: 'Algeria',        dialCode: '+213' },
-  { flag: '🇺🇸', name: 'United States',  dialCode: '+1'   },
-  { flag: '🇬🇧', name: 'United Kingdom', dialCode: '+44'  },
-  { flag: '🇮🇳', name: 'India',          dialCode: '+91'  },
-  { flag: '🇨🇳', name: 'China',          dialCode: '+86'  },
-  { flag: '🇦🇺', name: 'Australia',      dialCode: '+61'  },
-  { flag: '🇨🇦', name: 'Canada',         dialCode: '+1'   },
+  { flag: '🇿🇼', name: 'Zimbabwe',       dialCode: '+263', code: 'ZW' },
+  { flag: '🇿🇦', name: 'South Africa',   dialCode: '+27',  code: 'ZA' },
+  { flag: '🇿🇲', name: 'Zambia',         dialCode: '+260', code: 'ZM' },
+  { flag: '🇲🇼', name: 'Malawi',         dialCode: '+265', code: 'MW' },
+  { flag: '🇹🇿', name: 'Tanzania',       dialCode: '+255', code: 'TZ' },
+  { flag: '🇰🇪', name: 'Kenya',          dialCode: '+254', code: 'KE' },
+  { flag: '🇺🇬', name: 'Uganda',         dialCode: '+256', code: 'UG' },
+  { flag: '🇬🇭', name: 'Ghana',          dialCode: '+233', code: 'GH' },
+  { flag: '🇳🇬', name: 'Nigeria',        dialCode: '+234', code: 'NG' },
+  { flag: '🇧🇼', name: 'Botswana',       dialCode: '+267', code: 'BW' },
+  { flag: '🇳🇦', name: 'Namibia',        dialCode: '+264', code: 'NA' },
+  { flag: '🇲🇿', name: 'Mozambique',     dialCode: '+258', code: 'MZ' },
+  { flag: '🇷🇼', name: 'Rwanda',         dialCode: '+250', code: 'RW' },
+  { flag: '🇪🇹', name: 'Ethiopia',       dialCode: '+251', code: 'ET' },
+  { flag: '🇸🇳', name: 'Senegal',        dialCode: '+221', code: 'SN' },
+  { flag: '🇨🇮', name: "Côte d'Ivoire",  dialCode: '+225', code: 'CI' },
+  { flag: '🇨🇩', name: 'DRC',            dialCode: '+243', code: 'CD' },
+  { flag: '🇦🇴', name: 'Angola',         dialCode: '+244', code: 'AO' },
+  { flag: '🇹🇳', name: 'Tunisia',        dialCode: '+216', code: 'TN' },
+  { flag: '🇪🇬', name: 'Egypt',          dialCode: '+20',  code: 'EG' },
+  { flag: '🇲🇦', name: 'Morocco',        dialCode: '+212', code: 'MA' },
+  { flag: '🇩🇿', name: 'Algeria',        dialCode: '+213', code: 'DZ' },
+  { flag: '🇺🇸', name: 'United States',  dialCode: '+1',   code: 'US' },
+  { flag: '🇬🇧', name: 'United Kingdom', dialCode: '+44',  code: 'GB' },
+  { flag: '🇮🇳', name: 'India',          dialCode: '+91',  code: 'IN' },
+  { flag: '🇨🇳', name: 'China',          dialCode: '+86',  code: 'CN' },
+  { flag: '🇦🇺', name: 'Australia',      dialCode: '+61',  code: 'AU' },
+  { flag: '🇨🇦', name: 'Canada',         dialCode: '+1',   code: 'CA' },
 ];
+
+// Timezone → ISO country code for the most common African/common timezones
+const TZ_TO_CODE: Record<string, string> = {
+  'Africa/Harare': 'ZW', 'Africa/Johannesburg': 'ZA', 'Africa/Lusaka': 'ZM',
+  'Africa/Blantyre': 'MW', 'Africa/Dar_es_Salaam': 'TZ', 'Africa/Nairobi': 'KE',
+  'Africa/Kampala': 'UG', 'Africa/Accra': 'GH', 'Africa/Lagos': 'NG',
+  'Africa/Gaborone': 'BW', 'Africa/Windhoek': 'NA', 'Africa/Maputo': 'MZ',
+  'Africa/Kigali': 'RW', 'Africa/Addis_Ababa': 'ET', 'Africa/Dakar': 'SN',
+  'Africa/Abidjan': 'CI', 'Africa/Kinshasa': 'CD', 'Africa/Luanda': 'AO',
+  'Africa/Tunis': 'TN', 'Africa/Cairo': 'EG', 'Africa/Casablanca': 'MA',
+  'Africa/Algiers': 'DZ',
+  'America/New_York': 'US', 'America/Chicago': 'US', 'America/Denver': 'US',
+  'America/Los_Angeles': 'US', 'America/Toronto': 'CA', 'America/Vancouver': 'CA',
+  'Europe/London': 'GB', 'Asia/Kolkata': 'IN', 'Asia/Shanghai': 'CN',
+  'Australia/Sydney': 'AU',
+};
 
 // ── Shared: phone number input row ─────────────────────────────────────────────
 function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: string, dialCode: string) => void }) {
@@ -997,6 +1013,64 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
   const [search, setSearch]   = useState('');
   const numInputRef           = useRef<HTMLInputElement>(null);
   const containerRef          = useRef<HTMLDivElement>(null);
+
+  // Auto-detect country on mount: sessionStorage cache → IP → browser language → timezone → ZW
+  useEffect(() => {
+    // 1. Check sessionStorage cache first
+    try {
+      const cached = sessionStorage.getItem('detected_country');
+      if (cached) {
+        const { code } = JSON.parse(cached) as { code: string };
+        const match = PHONE_COUNTRIES.find(c => c.code === code);
+        if (match) { setCountry(match); return; }
+      }
+    } catch { /* ignore */ }
+
+    // 2. IP geolocation (primary — most reliable)
+    (async () => {
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        if (res.ok) {
+          const { country_code } = await res.json() as { country_code?: string };
+          if (country_code) {
+            const match = PHONE_COUNTRIES.find(c => c.code === country_code);
+            if (match) {
+              setCountry(match);
+              try { sessionStorage.setItem('detected_country', JSON.stringify({ code: country_code })); } catch { /* ignore */ }
+              return;
+            }
+          }
+        }
+      } catch { /* ignore — fall through */ }
+
+      // 3. Browser language fallback (e.g. "en-ZW" → "ZW")
+      try {
+        const lang = navigator.language || '';
+        const cc = lang.split('-')[1]?.toUpperCase();
+        if (cc) {
+          const match = PHONE_COUNTRIES.find(c => c.code === cc);
+          if (match) {
+            setCountry(match);
+            try { sessionStorage.setItem('detected_country', JSON.stringify({ code: cc })); } catch { /* ignore */ }
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+
+      // 4. Timezone fallback (e.g. "Africa/Harare" → "ZW")
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const cc = TZ_TO_CODE[tz];
+        if (cc) {
+          const match = PHONE_COUNTRIES.find(c => c.code === cc);
+          if (match) {
+            setCountry(match);
+            try { sessionStorage.setItem('detected_country', JSON.stringify({ code: cc })); } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore — Zimbabwe default stays */ }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdown on click outside
   useEffect(() => {

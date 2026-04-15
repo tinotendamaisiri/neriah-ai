@@ -4424,3 +4424,70 @@ class TestCountryCodeAndDeadButtons:
         # Regenerate button must be wired (has setRegen or similar non-trivial handler)
         assert "setRegen" in source, \
             "Regenerate button must be wired to setRegen — not a no-op"
+
+    @feature_test("country_detected_from_ip")
+    def test_country_detected_from_ip(self):
+        """
+        PhoneInputRow must contain a useEffect that fetches ipapi.co/json/ and
+        uses the returned country_code to select the matching country.
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # IP detection endpoint must be present
+        assert "ipapi.co/json/" in source, \
+            "PhoneInputRow must fetch 'https://ipapi.co/json/' for IP-based country detection"
+
+        # Must extract country_code from the response
+        assert "country_code" in source, \
+            "Must destructure 'country_code' from ipapi.co response"
+
+        # Must cache the result in sessionStorage
+        assert "sessionStorage.setItem" in source, \
+            "Detected country must be cached with sessionStorage.setItem"
+        assert "detected_country" in source, \
+            "Cache key must be 'detected_country'"
+
+        # Must read cache on mount before hitting the network
+        assert "sessionStorage.getItem" in source, \
+            "Must check sessionStorage.getItem('detected_country') before fetching"
+
+    @feature_test("country_detection_falls_back_gracefully")
+    def test_country_detection_falls_back_gracefully(self):
+        """
+        PhoneInputRow must implement all three fallback layers:
+        browser language (navigator.language), timezone (Intl.DateTimeFormat),
+        and the TZ_TO_CODE lookup table — so users without network still get
+        a sensible default instead of always seeing Zimbabwe.
+        """
+        import os
+        demo_path = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "neriah-website", "app", "demo", "page.tsx")
+        )
+        with open(demo_path, encoding="utf-8") as f:
+            source = f.read()
+
+        # Browser language fallback
+        assert "navigator.language" in source, \
+            "Must fall back to navigator.language for country detection"
+
+        # Timezone fallback
+        assert "Intl.DateTimeFormat" in source, \
+            "Must fall back to Intl.DateTimeFormat().resolvedOptions().timeZone"
+
+        # TZ_TO_CODE lookup table must exist and cover key African timezones
+        assert "TZ_TO_CODE" in source, \
+            "TZ_TO_CODE lookup table must exist for timezone → country code mapping"
+        for tz in ["Africa/Harare", "Africa/Nairobi", "Africa/Lagos", "Africa/Johannesburg"]:
+            assert tz in source, \
+                f"TZ_TO_CODE must include timezone '{tz}'"
+
+        # All three fallbacks must be wrapped in try/catch so no one failure breaks the others
+        import re
+        try_count = len(re.findall(r'\btry\b', source))
+        assert try_count >= 4, \
+            f"Expected at least 4 try blocks (one per fallback layer + sessionStorage), found {try_count}"
