@@ -6618,31 +6618,52 @@ function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => voi
 
         {/* Join button */}
         <button onClick={() => setJoinOpen(true)} style={{ marginTop: 16, width: '100%', background: C.teal, border: 'none', borderRadius: 12, padding: '13px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit' }}>
-          <Plus size={18} /><span>Join with Class Code</span>
+          <Plus size={18} /><span>Join a Class</span>
         </button>
       </div>
 
-      {/* Join modal */}
+      {/* Join modal — school search */}
       {joinOpen && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-          <div style={{ background: C.white, borderRadius: '20px 20px 0 0', width: '100%', padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ background: C.white, borderRadius: '20px 20px 0 0', width: '100%', maxHeight: '85%', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
               <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Join a Class</span>
-              <button onClick={() => { setJoinOpen(false); setJoinCode(''); setJoinInfo(null); setJoinErr(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: C.g500 }}>✕</button>
+              <button onClick={() => { setJoinOpen(false); setAvailClasses([]); setSearchedSchool(''); setShowCode(false); setJoinCode(''); setJoinInfo(null); setJoinErr(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: C.g500 }}>\u2715</button>
             </div>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 10 }}>Enter the 6-character code from your teacher</div>
-            <input type="text" value={joinCode} onChange={e => handleCodeChange(e.target.value)} placeholder="AB12CD" maxLength={6} style={{ width: '100%', border: `2px solid ${C.teal}`, borderRadius: 10, padding: '12px 14px', fontSize: 20, fontWeight: 700, letterSpacing: 4, textAlign: 'center', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
-            {joinErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10, textAlign: 'center' }}>{joinErr}</div>}
-            {joinInfo && (
-              <div style={{ marginTop: 12, background: C.teal50, borderRadius: 12, padding: 14, border: `1px solid ${C.teal100}` }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{joinInfo.name}</div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 24px' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.g500, marginTop: 16, marginBottom: 6 }}>School</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="text" value={school} onChange={e => setSchool(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { setSearching(true); setSearchedSchool(school); demoFetch(`/demo/classes/by-school?school=${encodeURIComponent(school)}`, {}, demoToken).then(data => { setAvailClasses(Array.isArray(data) ? data.filter((c: any) => !classes.some(ec => ec.class_id === c.id)) : []); }).finally(() => setSearching(false)); } }} placeholder="Type school name..." style={{ flex: 1, border: `1px solid ${C.g200}`, borderRadius: 10, padding: '10px 12px', fontSize: 14, outline: 'none', fontFamily: 'inherit' }} />
+                <button onClick={() => { setSearching(true); setSearchedSchool(school); demoFetch(`/demo/classes/by-school?school=${encodeURIComponent(school)}`, {}, demoToken).then(data => { setAvailClasses(Array.isArray(data) ? data.filter((c: any) => !classes.some(ec => ec.class_id === c.id)) : []); }).finally(() => setSearching(false)); }} style={{ background: C.teal, border: 'none', borderRadius: 10, padding: '0 14px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
               </div>
-            )}
-            {joinInfo && (
-              <button onClick={handleJoin} disabled={joining} style={{ marginTop: 16, width: '100%', background: joining ? C.g200 : C.teal, border: 'none', borderRadius: 12, padding: '14px 0', cursor: joining ? 'default' : 'pointer', color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit' }}>
-                {joining ? 'Joining...' : `Join ${joinInfo.name}`}
-              </button>
-            )}
+              {searching && <div style={{ textAlign: 'center', padding: 20, color: C.g500, fontSize: 13 }}>Searching...</div>}
+              {!searching && searchedSchool && availClasses.length === 0 && (
+                <div style={{ textAlign: 'center', padding: 20 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>No classes found at {searchedSchool}</div>
+                  <div style={{ fontSize: 12, color: C.g500, marginTop: 4 }}>Try a different school name or ask your teacher.</div>
+                </div>
+              )}
+              {availClasses.map((cls: any) => {
+                const tName = cls.teacher ? `${cls.teacher.first_name} ${cls.teacher.surname}`.trim() : '';
+                return (
+                  <div key={cls.id} style={{ display: 'flex', alignItems: 'center', padding: '14px 0', borderBottom: `1px solid ${C.g100}` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{cls.name}{cls.subject ? ` \u2014 ${cls.subject}` : ''}</div>
+                      <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>{tName}{cls.education_level ? ` \u00b7 ${cls.education_level}` : ''}</div>
+                    </div>
+                    <button onClick={async () => { setJoiningId(cls.id); await demoFetch('/demo/auth/student/join-class', { method: 'POST', body: JSON.stringify({ class_id: cls.id }) }, demoToken); setClasses(prev => [...prev, { class_id: cls.id, name: cls.name, subject: cls.subject ?? '', teacher_name: tName, school_name: searchedSchool }]); setJoinOpen(false); setJoiningId(null); }} disabled={joiningId === cls.id} style={{ background: joiningId === cls.id ? C.g200 : C.teal, border: 'none', borderRadius: 8, padding: '7px 14px', cursor: joiningId === cls.id ? 'default' : 'pointer', color: C.white, fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}>{joiningId === cls.id ? '...' : 'Join'}</button>
+                  </div>
+                );
+              })}
+              <button onClick={() => setShowCode(!showCode)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontSize: 13, fontWeight: 600, marginTop: 20, fontFamily: 'inherit' }}>{showCode ? 'Hide code input' : 'Have a join code? \u2192'}</button>
+              {showCode && (
+                <div style={{ marginTop: 10 }}>
+                  <input type="text" value={joinCode} onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); setJoinCode(v); setJoinErr(''); setJoinInfo(null); if (v.length === 6) { demoFetch('/demo/auth/student/lookup', { method: 'POST', body: JSON.stringify({ join_code: v }) }, demoToken).then(d => { if (d?.name) setJoinInfo({ name: d.name }); else setJoinErr('Class not found.'); }); } }} placeholder="AB12CD" maxLength={6} style={{ width: '100%', border: `2px solid ${C.teal}`, borderRadius: 10, padding: '10px 14px', fontSize: 18, fontWeight: 700, letterSpacing: 4, textAlign: 'center', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  {joinErr && <div style={{ color: C.red, fontSize: 13, marginTop: 8, textAlign: 'center' }}>{joinErr}</div>}
+                  {joinInfo && <button onClick={async () => { setJoining(true); await demoFetch('/demo/auth/student/join-class', { method: 'POST', body: JSON.stringify({ join_code: joinCode }) }, demoToken); setClasses(prev => [...prev, { class_id: joinCode, name: joinInfo.name, subject: '', teacher_name: '', school_name: '' }]); setJoinOpen(false); setJoining(false); }} disabled={joining} style={{ marginTop: 12, width: '100%', background: joining ? C.g200 : C.teal, border: 'none', borderRadius: 12, padding: '12px 0', cursor: joining ? 'default' : 'pointer', color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit' }}>{joining ? 'Joining...' : `Join ${joinInfo.name}`}</button>}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

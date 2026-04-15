@@ -946,12 +946,18 @@ def auth_student_join_class():
 
     body = request.get_json(silent=True) or {}
     join_code = (body.get("join_code") or "").strip().upper()
-    if not join_code:
-        return jsonify({"error": "join_code is required"}), 400
+    class_id = (body.get("class_id") or "").strip()
 
-    cls = query_single("classes", [("join_code", "==", join_code)])
+    if not join_code and not class_id:
+        return jsonify({"error": "join_code or class_id is required"}), 400
+
+    cls = None
+    if class_id:
+        cls = get_doc("classes", class_id)
+    if not cls and join_code:
+        cls = query_single("classes", [("join_code", "==", join_code)])
     if not cls:
-        return jsonify({"error": "Class not found. Check the code with your teacher."}), 404
+        return jsonify({"error": "Class not found. Check with your teacher."}), 404
 
     student = get_doc("students", student_id)
     if not student:
