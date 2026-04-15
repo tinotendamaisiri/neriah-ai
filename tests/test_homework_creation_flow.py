@@ -7519,3 +7519,39 @@ class TestPartialSchoolSearch:
 
         assert rv.status_code == 200
         assert rv.get_json()["class_name"] == "Form 2A"
+
+
+# ── School autocomplete search ───────────────────────────────────────────────
+
+class TestSchoolAutocomplete:
+    """Tests for GET /api/schools/search autocomplete endpoint."""
+
+    @feature_test("school_search_partial_returns_suggestions")
+    def test_partial_school_name_returns_matches(self, client):
+        """GET /api/schools/search?q=chi finds 'Chiredzi High School' from seed data."""
+        rv = client.get("/api/schools/search?q=chi")
+        assert rv.status_code == 200
+        schools = rv.get_json()["schools"]
+        assert any("Chiredzi" in s for s in schools)
+
+    @feature_test("school_search_min_2_chars")
+    def test_single_char_returns_empty(self, client):
+        """GET /api/schools/search?q=c returns empty (min 2 chars)."""
+        rv = client.get("/api/schools/search?q=c")
+        assert rv.status_code == 200
+        assert rv.get_json()["schools"] == []
+
+    @feature_test("school_search_case_insensitive")
+    def test_uppercase_query_matches(self, client):
+        """GET /api/schools/search?q=CHIREDZI matches 'Chiredzi High School'."""
+        rv = client.get("/api/schools/search?q=CHIREDZI")
+        assert rv.status_code == 200
+        schools = rv.get_json()["schools"]
+        assert any("Chiredzi" in s for s in schools)
+
+    @feature_test("school_search_no_match")
+    def test_nonexistent_school_returns_empty(self, client):
+        """GET /api/schools/search?q=xyznonexistent returns empty."""
+        rv = client.get("/api/schools/search?q=xyznonexistent")
+        assert rv.status_code == 200
+        assert rv.get_json()["schools"] == []

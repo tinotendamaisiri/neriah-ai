@@ -58,3 +58,40 @@ def list_schools():
         return jsonify(_SEED_SCHOOLS), 200
 
     return jsonify(results), 200
+
+
+@schools_bp.get("/schools/search")
+def search_schools():
+    """
+    Search schools by partial name match. Returns unique school names.
+
+    GET /api/schools/search?q=chiredzi → ["Chiredzi High School"]
+    """
+    from flask import request
+
+    q = (request.args.get("q") or "").strip().lower()
+    if len(q) < 2:
+        return jsonify({"schools": []}), 200
+
+    # Merge: seed list + Firestore teachers' school_name + Firestore schools collection
+    names: set[str] = set()
+
+    # Seed schools
+    for s in _SEED_SCHOOLS:
+        name = s.get("name", "")
+        if q in name.lower():
+            names.add(name)
+
+    # Teacher-registered schools (covers schools not in seed list)
+    try:
+        teachers = query("teachers", [])
+        for t in teachers:
+            sn = t.get("school_name") or ""
+            if sn and q in sn.lower():
+                names.add(sn)
+    except Exception:
+        pass
+
+    schools = sorted(names)[:10]
+    logger.debug("[schools] search q=%r → %d results", q, len(schools))
+    return jsonify({"schools": schools}), 200

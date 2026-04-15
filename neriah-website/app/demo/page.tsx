@@ -8338,63 +8338,67 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
         </div>
       )}
 
-      {/* Join a Class modal — name search */}
-      {joinModal && (
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
-          <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join a Class</span>
-              <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
-            </div>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Search by school or class name</div>
-            <input
-              value={joinCode}
-              onChange={e => setJoinCode(e.target.value)}
-              placeholder="e.g. Chiredzi or Form 2A"
-              autoFocus
-              style={{ ...inpS, marginBottom: 12 }}
-            />
-            {/* Demo grouped results */}
-            {joinCode.length >= 2 && (() => {
-              const q = joinCode.toLowerCase();
-              const demoData = [
-                { school: 'Chiredzi High School', classes: [
-                  { id: 'c1', name: 'Form 3B', subject: 'Science', teacher: 'Mrs Dube' },
-                  { id: 'c3', name: 'Form 2A', subject: 'Mathematics', teacher: 'Mr Maisiri' },
-                ]},
-                { school: 'Allan Wilson High School', classes: [
-                  { id: 'c2', name: 'Form 2B', subject: 'Mathematics', teacher: 'Mr Phiri' },
-                ]},
-              ];
-              const filtered = demoData.map(g => ({
-                ...g,
-                classes: g.classes.filter(c => g.school.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.subject.toLowerCase().includes(q)),
-              })).filter(g => g.classes.length > 0);
-              return filtered.length > 0 ? (
-                <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                  {filtered.map(g => (
-                    <div key={g.school}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: 8, marginBottom: 4 }}>{g.school}</div>
-                      {g.classes.map(c => (
-                        <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px', borderBottom: `1px solid ${C.bg}` }}>
-                          <div>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{c.name} — {c.subject}</div>
-                            <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{c.teacher}</div>
-                          </div>
-                          <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast(`Joined ${c.name} — ${c.subject} successfully!`); }} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 14px', color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Join</button>
-                        </div>
-                      ))}
+      {/* Join a Class modal — school autocomplete */}
+      {joinModal && (() => {
+        const q = joinCode.toLowerCase();
+        const demoSchools = ['Chiredzi High School', 'Churchill High School', 'Allan Wilson High School', 'Harare High School', 'Goromonzi High School'];
+        const suggestions = q.length >= 2 ? demoSchools.filter(s => s.toLowerCase().includes(q)) : [];
+        const demoClasses: Record<string, Array<{ id: string; name: string; subject: string; teacher: string }>> = {
+          'Chiredzi High School': [{ id: 'c1', name: 'Form 3B', subject: 'Science', teacher: 'Mrs Dube' }, { id: 'c3', name: 'Form 2A', subject: 'Mathematics', teacher: 'Mr Maisiri' }],
+          'Allan Wilson High School': [{ id: 'c2', name: 'Form 2B', subject: 'Mathematics', teacher: 'Mr Phiri' }],
+          'Harare High School': [{ id: 'c4', name: 'Form 1A', subject: 'English', teacher: 'Ms Nyathi' }],
+        };
+        const selectedClasses = joinToast ? [] : (demoClasses[joinCode] || []);
+        return (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
+            <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join a Class</span>
+                <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 13, color: C.g500, marginBottom: 8 }}>School</div>
+              <div style={{ position: 'relative' }}>
+                <input
+                  value={joinCode}
+                  onChange={e => setJoinCode(e.target.value)}
+                  placeholder="Start typing school name…"
+                  autoFocus
+                  style={inpS}
+                />
+                {suggestions.length > 0 && !demoClasses[joinCode] && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 20, maxHeight: 180, overflowY: 'auto' }}>
+                    {suggestions.map(s => (
+                      <div key={s} onClick={() => setJoinCode(s)} style={{ padding: '10px 12px', cursor: 'pointer', fontSize: 14, color: C.text, borderBottom: `1px solid ${C.bg}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 14, color: C.teal }}>🏫</span> {s}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {q.length >= 3 && suggestions.length === 0 && !demoClasses[joinCode] && (
+                <div style={{ fontSize: 12, color: C.g500, marginTop: 6 }}>No schools found — try a different name</div>
+              )}
+              {selectedClasses.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>{joinCode}</div>
+                  {selectedClasses.map(c => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px', borderBottom: `1px solid ${C.bg}` }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{c.name} — {c.subject}</div>
+                        <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{c.teacher}</div>
+                      </div>
+                      <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast(`Joined ${c.name} — ${c.subject}!`); }} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 14px', color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Join</button>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 14 }}>No schools or classes found.</div>
-              );
-            })()
-            )}
+              )}
+              {demoClasses[joinCode] !== undefined && selectedClasses.length === 0 && (
+                <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 14 }}>No classes at this school yet.</div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Student PIN modal */}
       {pinModal && (

@@ -126,6 +126,12 @@ export const getSchools = async (): Promise<School[]> => {
   return res.data;
 };
 
+/** Search schools by partial name (no auth required). */
+export const searchSchools = async (q: string): Promise<string[]> => {
+  const res = await client.get('/schools/search', { params: { q } });
+  return res.data?.schools ?? [];
+};
+
 /** Request an OTP for a new teacher registration. */
 export const requestRegisterOtp = async (payload: {
   phone: string;
