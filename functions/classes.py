@@ -83,6 +83,37 @@ def delete_class(class_id: str):
     return jsonify({"message": "deleted"}), 200
 
 
+@classes_bp.get("/classes/school/<school_id>")
+def classes_by_school(school_id: str):
+    """Public — list classes for a school so students can pick one at registration."""
+    logger.debug("[classes] GET /classes/school/%s", school_id)
+    if not school_id or not school_id.strip():
+        return jsonify({"error": "school_id is required"}), 400
+
+    results = query("classes", [("school_id", "==", school_id.strip())], order_by="created_at")
+    if not results:
+        logger.info("[classes] No classes found for school_id=%s", school_id)
+        return jsonify([]), 200
+
+    # Attach teacher name to each class so the mobile UI can display it
+    out = []
+    for cls in results:
+        teacher_id = cls.get("teacher_id", "")
+        teacher = get_doc("teachers", teacher_id) if teacher_id else None
+        out.append({
+            "id": cls["id"],
+            "name": cls.get("name", ""),
+            "education_level": cls.get("education_level", ""),
+            "subject": cls.get("subject"),
+            "teacher": {
+                "first_name": teacher.get("first_name") or teacher.get("name", "").split()[0] if teacher else "",
+                "surname": teacher.get("surname") or (teacher.get("name", "").split()[-1] if teacher and " " in teacher.get("name", "") else "") if teacher else "",
+            },
+        })
+    logger.info("[classes] Returning %d classes for school_id=%s", len(out), school_id)
+    return jsonify(out), 200
+
+
 @classes_bp.get("/classes/join/<code>")
 def class_join_info(code: str):
     cls = query_single("classes", [("join_code", "==", code.upper())])

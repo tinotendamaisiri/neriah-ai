@@ -158,14 +158,20 @@ export default function StudentRegisterScreen() {
   // ── Load classes for selected school ───────────────────────────────────────
   const loadClassesForSchool = async (school_id: string) => {
     if (!school_id) {
+      console.log('[StudentRegister] loadClassesForSchool: no school_id, skipping');
       setClasses([]);
       return;
     }
+    console.log('[StudentRegister] loadClassesForSchool: fetching classes for school_id=', school_id);
     setClassesLoading(true);
     try {
       const result = await getClassesBySchool(school_id);
+      console.log('[StudentRegister] loadClassesForSchool: got', result.length, 'classes', JSON.stringify(result));
       setClasses(result);
-    } catch {
+    } catch (err: any) {
+      const status = err?.status ?? err?.response?.status;
+      const msg = err?.message ?? err?.response?.data?.error ?? 'unknown error';
+      console.warn('[StudentRegister] loadClassesForSchool failed: status=', status, 'msg=', msg);
       setClasses([]);
     } finally {
       setClassesLoading(false);
@@ -204,6 +210,7 @@ export default function StudentRegisterScreen() {
         phone: phone.trim(),
         verification_id: res.verification_id,
         ...(res.debug_otp ? { debug_otp: res.debug_otp } : {}),
+        ...(res.channel   ? { channel:   res.channel   } : {}),
       });
     } catch (err: any) {
       const msg: string = err.message ?? err.response?.data?.error ?? '';

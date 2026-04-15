@@ -267,11 +267,12 @@ def _seed() -> dict:
         "role": "teacher", "token_version": 0, "created_at": now,
     })
 
-    # Class
+    # Class — join_code "NR2A01" is the demo code shown to students on-screen
     upsert("classes", DEMO_CLASS_ID, {
         "id": DEMO_CLASS_ID, "name": "Form 2A", "subject": "Mathematics",
         "curriculum": "ZIMSEC", "education_level": "form_2",
         "teacher_id": DEMO_TEACHER_ID, "school_id": DEMO_SCHOOL_ID,
+        "join_code": "NR2A01",
         "student_count": 1, "created_at": now,
     })
 
@@ -2193,3 +2194,79 @@ def demo_pin_remove():
     delete_doc(_PIN_COLLECTION, user_id)
     logger.info("[demo] PIN removed for user %s", user_id)
     return jsonify({"success": True, "pin_active": False}), 200
+
+
+# ── POST /api/demo/auth/student/lookup ────────────────────────────────────────
+
+@demo_bp.post("/demo/auth/student/lookup")
+def demo_student_lookup():
+    """
+    Demo version of student lookup by join code.
+    The demo always has one class (Form 2A, join code "NR2A01").
+    Normalises the code to uppercase before matching.
+
+    Body: { join_code: str }
+    Returns: { id, name, education_level, teacher_name, school_name, join_code }
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    body = request.get_json(silent=True) or {}
+    raw_code = (body.get("join_code") or "").strip()
+    logger.debug("[demo] student/lookup join_code=%r (raw)", raw_code)
+
+    if not raw_code:
+        return jsonify({"error": "join_code is required"}), 400
+
+    code = raw_code.upper()
+    logger.info("[demo] student/lookup normalised join_code=%s", code)
+
+    from shared.firestore_client import query_single as _query_single
+    cls = _query_single("classes", [("join_code", "==", code)])
+    if not cls:
+        # Fallback: accept the hardcoded demo class code even if join_code isn't
+        # stored on the Firestore document (seed data omits it).
+        if code in ("NR2A01", "DEMO"):
+            cls = {
+                "id": DEMO_CLASS_ID,
+                "name": "Form 2A",
+                "education_level": "form_2",
+                "subject": "Mathematics",
+                "teacher_id": DEMO_TEACHER_ID,
+                "school_id": DEMO_SCHOOL_ID,
+            }
+            logger.info("[demo] student/lookup using hardcoded fallback for join_code=%s", code)
+        else:
+            logger.info("[demo] student/lookup no class for join_code=%s", code)
+            return jsonify({"error": "No class found. Check the code and try again."}), 404
+
+    return jsonify({
+        "id": cls["id"],
+        "name": cls.get("name", "Form 2A"),
+        "education_level": cls.get("education_level", "form_2"),
+        "subject": cls.get("subject"),
+        "teacher_name": "Mr. Maisiri",
+        "school_name": "Greendale Primary School",
+        "join_code": code,
+    }), 200
+
+
+# ── GET /api/demo/classes/school/<school_id> ──────────────────────────────────
+
+@demo_bp.get("/demo/classes/school/<school_id>")
+def demo_classes_by_school(school_id: str):
+    """
+    Demo version of class list for a school.
+    Returns the single demo class (Form 2A) for any school ID.
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    logger.info("[demo] classes/school/%s", school_id)
+    return jsonify([{
+        "id": DEMO_CLASS_ID,
+        "name": "Form 2A",
+        "education_level": "form_2",
+        "subject": "Mathematics",
+        "teacher": {"first_name": "Mr", "surname": "Maisiri"},
+    }]), 200

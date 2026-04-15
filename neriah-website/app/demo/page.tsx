@@ -5106,13 +5106,22 @@ function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void 
     setLoading(true);
     setError('');
     try {
-      await demoFetch('/auth/student/lookup', {
+      await demoFetch('/demo/auth/student/lookup', {
         method: 'POST',
         body: JSON.stringify({ join_code: joinCode.trim().toUpperCase() }),
       });
-    } catch { /* proceed on error — demo fallback */ }
-    setLoading(false);
-    onJoined(`${firstName.trim()} ${surname.trim()}`);
+      setLoading(false);
+      onJoined(`${firstName.trim()} ${surname.trim()}`);
+    } catch (err: any) {
+      setLoading(false);
+      const msg: string = err?.error ?? err?.message ?? '';
+      if (msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('no class')) {
+        setError('No class found. Check the join code and try again.');
+      } else {
+        // Network / unknown error — still proceed so demo is never blocked
+        onJoined(`${firstName.trim()} ${surname.trim()}`);
+      }
+    }
   }
 
   const inp: React.CSSProperties = {

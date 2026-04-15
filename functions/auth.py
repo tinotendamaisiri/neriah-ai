@@ -17,7 +17,7 @@ from shared.auth import (
     verify_pin,
 )
 from shared.config import is_demo
-from shared.firestore_client import delete_doc, get_doc, query_single, upsert
+from shared.firestore_client import delete_doc, get_doc, query, query_single, upsert
 from shared.models import Teacher
 from shared.sms_client import send_otp as _dispatch_otp
 
@@ -687,6 +687,60 @@ def auth_update_me():
         resp_body["token"] = create_jwt(user_id, "teacher", updates["token_version"])
 
     return jsonify(resp_body), 200
+
+
+# ─── Student lookup (by join code) ───────────────────────────────────────────
+
+@auth_bp.post("/auth/student/lookup")
+def auth_student_lookup():
+    """
+    Public — find a class by join code so the student registration wizard
+    can confirm the code is valid before proceeding.
+
+    Body: { join_code: str }
+    Returns: { id, name, education_level, teacher_name, school_name }
+    """
+    body = request.get_json(silent=True) or {}
+    raw_code = (body.get("join_code") or "").strip()
+    logger.debug("[auth] student/lookup join_code=%r (raw)", raw_code)
+
+    if not raw_code:
+        return jsonify({"error": "join_code is required"}), 400
+
+    # Normalize: uppercase, strip whitespace — join codes are always stored uppercase
+    code = raw_code.upper()
+    logger.info("[auth] student/lookup normalised join_code=%s", code)
+
+    cls = query_single("classes", [("join_code", "==", code)])
+    if not cls:
+        logger.info("[auth] student/lookup no class found for join_code=%s", code)
+        return jsonify({"error": "No class found. Check the code and try again."}), 404
+
+    teacher_id = cls.get("teacher_id", "")
+    teacher = get_doc("teachers", teacher_id) if teacher_id else None
+    teacher_name = ""
+    if teacher:
+        teacher_name = teacher.get("name") or (
+            f"{teacher.get('first_name', '')} {teacher.get('surname', '')}".strip()
+        )
+
+    school_id = cls.get("school_id", "")
+    school = get_doc("schools", school_id) if school_id else None
+    school_name = (school or {}).get("name") or cls.get("school_name", "")
+
+    logger.info(
+        "[auth] student/lookup found class id=%s name=%r school=%r for join_code=%s",
+        cls["id"], cls.get("name"), school_name, code,
+    )
+    return jsonify({
+        "id": cls["id"],
+        "name": cls.get("name", ""),
+        "education_level": cls.get("education_level", ""),
+        "subject": cls.get("subject"),
+        "teacher_name": teacher_name,
+        "school_name": school_name,
+        "join_code": code,
+    }), 200
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
