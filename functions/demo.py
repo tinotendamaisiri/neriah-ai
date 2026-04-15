@@ -2341,6 +2341,37 @@ def demo_pin_remove():
     return jsonify({"success": True, "pin_active": False}), 200
 
 
+# ── GET /api/demo/auth/student/classes ─────────────────────────────────────────
+
+@demo_bp.get("/demo/auth/student/classes")
+def demo_student_classes():
+    """Return demo student's enrolled classes."""
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+    return jsonify({
+        "classes": [{
+            "class_id": DEMO_CLASS_ID,
+            "name": "Form 2A",
+            "subject": "Mathematics",
+            "education_level": "form_2",
+            "teacher_name": "Mr. Maisiri",
+            "school_name": "Harare High School",
+        }],
+        "active_class_id": DEMO_CLASS_ID,
+        "total": 1,
+    }), 200
+
+
+# ── DELETE /api/demo/auth/student/leave-class ─────────────────────────────────
+
+@demo_bp.delete("/demo/auth/student/leave-class")
+def demo_student_leave_class():
+    """Demo leave class — always succeeds."""
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+    return jsonify({"success": True, "remaining_classes": 0, "active_class_id": None}), 200
+
+
 # ── POST /api/demo/auth/student/lookup ────────────────────────────────────────
 
 @demo_bp.post("/demo/auth/student/lookup")

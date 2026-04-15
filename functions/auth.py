@@ -444,7 +444,7 @@ def auth_me():
 
     doc = get_doc("students", user_id)
     if doc:
-        return jsonify(_safe(doc)), 200
+        return jsonify(_safe_student(doc)), 200
 
     return jsonify({"error": "Not found"}), 404
 
@@ -981,6 +981,81 @@ def auth_student_join_class():
     }), 200
 
 
+# ─── Student class management ──────────────────────────────────────────────────
+
+@auth_bp.get("/auth/student/classes")
+def auth_student_classes():
+    """Return all classes the student is enrolled in, enriched with teacher/school."""
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    class_ids: list[str] = student.get("class_ids", [])
+    if not class_ids and student.get("class_id"):
+        class_ids = [student["class_id"]]
+
+    classes = []
+    for cid in class_ids:
+        cls = get_doc("classes", cid)
+        if not cls:
+            continue
+        teacher = get_doc("teachers", cls.get("teacher_id", "")) if cls.get("teacher_id") else None
+        classes.append({
+            "class_id": cid,
+            "name": cls.get("name", ""),
+            "subject": cls.get("subject", ""),
+            "education_level": cls.get("education_level", ""),
+            "teacher_name": f"{(teacher or {}).get('first_name', '')} {(teacher or {}).get('surname', '')}".strip() if teacher else "",
+            "school_name": (teacher or {}).get("school_name", ""),
+        })
+
+    return jsonify({
+        "classes": classes,
+        "active_class_id": student.get("class_id", ""),
+        "total": len(classes),
+    }), 200
+
+
+@auth_bp.delete("/auth/student/leave-class")
+def auth_student_leave_class():
+    """Remove a class from the student's enrollment."""
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    class_id = (body.get("class_id") or "").strip()
+    if not class_id:
+        return jsonify({"error": "class_id is required"}), 400
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    class_ids: list[str] = student.get("class_ids", [])
+    if not class_ids and student.get("class_id"):
+        class_ids = [student["class_id"]]
+
+    if class_id not in class_ids:
+        return jsonify({"error": "You are not enrolled in this class"}), 404
+
+    new_ids = [c for c in class_ids if c != class_id]
+    new_active = new_ids[0] if new_ids else None
+    upsert("students", student_id, {"class_ids": new_ids, "class_id": new_active})
+
+    # Decrement student count on the class
+    cls = get_doc("classes", class_id)
+    if cls:
+        upsert("classes", class_id, {"student_count": max(0, cls.get("student_count", 1) - 1)})
+
+    logger.info("[auth] student/%s left class %s, remaining=%d", student_id, class_id, len(new_ids))
+    return jsonify({"success": True, "remaining_classes": len(new_ids), "active_class_id": new_active}), 200
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 _SCHOOL_ID_MAP = {
@@ -1013,4 +1088,45 @@ def _safe(teacher: dict) -> dict:
     # Build display_name: "Mr Tinotenda Maisiri" or just "Tinotenda Maisiri"
     title = out.get("title") or ""
     out["display_name"] = f"{title} {out.get('name', '')}".strip()
+    return out
+
+
+def _safe_student(student: dict) -> dict:
+    """Enrich student profile with full class details for /auth/me."""
+    out = {k: v for k, v in student.items() if k not in ("pin_hash",)}
+    out.setdefault("role", "student")
+
+    # Build classes array with teacher + school info
+    class_ids: list[str] = out.get("class_ids", [])
+    if not class_ids and out.get("class_id"):
+        class_ids = [out["class_id"]]
+
+    classes = []
+    for cid in class_ids:
+        cls = get_doc("classes", cid)
+        if not cls:
+            continue
+        teacher = get_doc("teachers", cls.get("teacher_id", "")) if cls.get("teacher_id") else None
+        school_name = ""
+        if teacher:
+            sn = teacher.get("school_name") or ""
+            school_name = _SCHOOL_ID_MAP.get(sn, sn)
+        classes.append({
+            "class_id": cid,
+            "name": cls.get("name", ""),
+            "subject": cls.get("subject", ""),
+            "education_level": cls.get("education_level", ""),
+            "teacher_name": f"{(teacher or {}).get('first_name', '')} {(teacher or {}).get('surname', '')}".strip() if teacher else "",
+            "school_name": school_name,
+        })
+
+    out["classes"] = classes
+    out["class_ids"] = class_ids
+
+    # Set school/class_name from the primary class for backwards compat
+    primary = next((c for c in classes if c["class_id"] == out.get("class_id")), None)
+    if primary:
+        out.setdefault("school", primary["school_name"])
+        out["class_name"] = f"{primary['name']}{' — ' + primary['subject'] if primary['subject'] else ''}"
+
     return out

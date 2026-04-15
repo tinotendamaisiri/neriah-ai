@@ -254,10 +254,10 @@ export default function StudentSettingsScreen() {
           <Row label="Class" value={classDisplay || '—'} />
           <View style={s.divider} />
 
-          <TouchableOpacity style={s.settingsRow} onPress={() => setJoinModal(true)}>
+          <TouchableOpacity style={s.settingsRow} onPress={() => (navigation as any).navigate('ClassManagement')}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="add-circle-outline" size={18} color={COLORS.teal500} />
-              <Text style={s.settingsRowLabel}>Join Another Class</Text>
+              <Ionicons name="school-outline" size={18} color={COLORS.teal500} />
+              <Text style={s.settingsRowLabel}>My Classes</Text>
             </View>
             <Text style={s.chevron}>›</Text>
           </TouchableOpacity>

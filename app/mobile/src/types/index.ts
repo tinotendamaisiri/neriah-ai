@@ -427,4 +427,6 @@ export type StudentRootStackParamList = {
   SubmissionSuccess: { method: 'app' | 'whatsapp' | 'email' };
   Feedback: { mark_id: string; mark?: StudentMark };
   StudentAnalytics: { class_id: string };
+  ClassManagement: undefined;
+  SetPin: undefined;
 };

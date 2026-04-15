@@ -76,6 +76,7 @@ class Teacher(BaseModel):
 class Student(BaseModel):
     id: str = Field(default_factory=_uid)
     class_id: str
+    class_ids: list[str] = []
     first_name: str
     surname: str
     register_number: Optional[str] = None

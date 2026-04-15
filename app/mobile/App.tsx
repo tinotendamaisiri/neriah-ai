@@ -90,6 +90,7 @@ import StudentSubmitScreen from './src/screens/StudentSubmitScreen';
 import StudentResultsScreen from './src/screens/StudentResultsScreen';
 import StudentTutorScreen from './src/screens/StudentTutorScreen';
 import StudentSettingsScreen from './src/screens/StudentSettingsScreen';
+import ClassManagementScreen from './src/screens/ClassManagementScreen';
 import StudentCameraScreen from './src/screens/StudentCameraScreen';
 import StudentPreviewScreen from './src/screens/StudentPreviewScreen';
 import StudentConfirmScreen from './src/screens/StudentConfirmScreen';
@@ -365,6 +366,11 @@ function StudentNavigator() {
       <StudentRootStack.Screen
         name="SetPin"
         component={SetPinScreen}
+        options={{ headerShown: false }}
+      />
+      <StudentRootStack.Screen
+        name="ClassManagement"
+        component={ClassManagementScreen}
         options={{ headerShown: false }}
       />
     </StudentRootStack.Navigator>

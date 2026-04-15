@@ -492,7 +492,7 @@ function scoreBg(pct: number): string {
 }
 
 // Student phone screen type
-type SStudentScreen = 's-welcome' | 's-phone' | 's-otp' | 's-teacher' | 's-register' | 's-home' | 's-submit' | 's-capture' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings';
+type SStudentScreen = 's-welcome' | 's-phone' | 's-otp' | 's-teacher' | 's-register' | 's-home' | 's-submit' | 's-capture' | 's-success' | 's-results' | 's-feedback' | 's-tutor' | 's-settings' | 's-classes';
 
 interface TutorMessage {
   id:             string;
@@ -6503,6 +6503,127 @@ function StudentTutorScreen({
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// SCREEN: Student Class Management
+// ──────────────────────────────────────────────────────────────────────────────
+
+function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => void; demoToken: string | null }) {
+  type CItem = { class_id: string; name: string; subject: string; teacher_name: string; school_name: string };
+  const [classes, setClasses] = useState<CItem[]>([]);
+  const [activeId, setActiveId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinInfo, setJoinInfo] = useState<{ name: string } | null>(null);
+  const [joinErr, setJoinErr] = useState('');
+  const [joining, setJoining] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const data = await demoFetch('/demo/auth/student/classes', {}, demoToken);
+      if (data?.classes) { setClasses(data.classes); setActiveId(data.active_class_id ?? ''); }
+      setLoading(false);
+    })();
+  }, [demoToken]);
+
+  const handleLeave = async (cid: string, name: string) => {
+    if (!confirm(`Leave ${name}? You will lose access to its assignments and results.`)) return;
+    await demoFetch('/demo/auth/student/leave-class', { method: 'DELETE', body: JSON.stringify({ class_id: cid }) }, demoToken);
+    setClasses(prev => prev.filter(c => c.class_id !== cid));
+  };
+
+  const handleCodeChange = async (val: string) => {
+    const upper = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    setJoinCode(upper); setJoinErr(''); setJoinInfo(null);
+    if (upper.length === 6) {
+      const info = await demoFetch(`/demo/auth/student/lookup`, { method: 'POST', body: JSON.stringify({ join_code: upper }) }, demoToken);
+      if (info?.name) setJoinInfo({ name: info.name });
+      else setJoinErr('Class not found.');
+    }
+  };
+
+  const handleJoin = async () => {
+    setJoining(true);
+    const res = await demoFetch('/demo/auth/student/join-class', { method: 'POST', body: JSON.stringify({ join_code: joinCode }) }, demoToken);
+    if (res) {
+      setClasses(prev => [...prev, { class_id: res.class_id ?? joinCode, name: joinInfo?.name ?? 'Class', subject: '', teacher_name: '', school_name: '' }]);
+      setJoinOpen(false); setJoinCode(''); setJoinInfo(null);
+    } else { setJoinErr('Could not join.'); }
+    setJoining(false);
+  };
+
+  return (
+    <Screen style={{ background: C.bg }}>
+      {/* Header */}
+      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 14, paddingBottom: 12, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><ChevronLeft size={20} color={C.white} /></button>
+        <div style={{ flex: 1, textAlign: 'center', fontSize: 17, fontWeight: 800, color: C.white }}>My Classes</div>
+        <div style={{ width: 28 }} />
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40, color: C.g500 }}>Loading...</div>
+        ) : classes.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <GraduationCap size={40} color={C.g400} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 12 }}>No classes yet</div>
+            <div style={{ fontSize: 13, color: C.g500, marginTop: 4 }}>Join a class using a code from your teacher.</div>
+          </div>
+        ) : (
+          classes.map(c => {
+            const isActive = c.class_id === activeId;
+            return (
+              <div key={c.class_id} style={{ background: C.white, borderRadius: 12, border: `${isActive ? '1.5px' : '1px'} solid ${isActive ? C.teal : C.border}`, padding: '13px 14px', marginBottom: 10, display: 'flex', alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{c.name}</span>
+                    {isActive && <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.teal50, borderRadius: 6, padding: '2px 8px' }}>Active</span>}
+                  </div>
+                  {c.subject && <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>{c.subject}</div>}
+                  {c.teacher_name && <div style={{ fontSize: 12, color: C.g500, marginTop: 1 }}>{c.teacher_name}</div>}
+                  {c.school_name && <div style={{ fontSize: 12, color: C.g500, marginTop: 1 }}>{c.school_name}</div>}
+                </div>
+                <button onClick={() => handleLeave(c.class_id, c.name)} style={{ border: `1px solid ${C.red200}`, borderRadius: 8, padding: '5px 10px', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: C.red, fontFamily: 'inherit' }}>Leave</button>
+              </div>
+            );
+          })
+        )}
+
+        {/* Join button */}
+        <button onClick={() => setJoinOpen(true)} style={{ marginTop: 16, width: '100%', background: C.teal, border: 'none', borderRadius: 12, padding: '13px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit' }}>
+          <Plus size={18} /><span>Join with Class Code</span>
+        </button>
+      </div>
+
+      {/* Join modal */}
+      {joinOpen && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+          <div style={{ background: C.white, borderRadius: '20px 20px 0 0', width: '100%', padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Join a Class</span>
+              <button onClick={() => { setJoinOpen(false); setJoinCode(''); setJoinInfo(null); setJoinErr(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: C.g500 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, color: C.g500, marginBottom: 10 }}>Enter the 6-character code from your teacher</div>
+            <input type="text" value={joinCode} onChange={e => handleCodeChange(e.target.value)} placeholder="AB12CD" maxLength={6} style={{ width: '100%', border: `2px solid ${C.teal}`, borderRadius: 10, padding: '12px 14px', fontSize: 20, fontWeight: 700, letterSpacing: 4, textAlign: 'center', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            {joinErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10, textAlign: 'center' }}>{joinErr}</div>}
+            {joinInfo && (
+              <div style={{ marginTop: 12, background: C.teal50, borderRadius: 12, padding: 14, border: `1px solid ${C.teal100}` }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{joinInfo.name}</div>
+              </div>
+            )}
+            {joinInfo && (
+              <button onClick={handleJoin} disabled={joining} style={{ marginTop: 16, width: '100%', background: joining ? C.g200 : C.teal, border: 'none', borderRadius: 12, padding: '14px 0', cursor: joining ? 'default' : 'pointer', color: C.white, fontWeight: 700, fontSize: 15, fontFamily: 'inherit' }}>
+                {joining ? 'Joining...' : `Join ${joinInfo.name}`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </Screen>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Analytics (class overview)
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -8100,7 +8221,7 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics, onEditProfile }: { onBa
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Student Settings (web) — mirrors teacher settings layout
 // ──────────────────────────────────────────────────────────────────────────────
-function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: () => void; onResults?: () => void; studentName: string }) {
+function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }: { onBack: () => void; onResults?: () => void; onClasses?: () => void; studentName: string }) {
   const firstName = studentName.split(' ')[0];
   const surname = studentName.split(' ').slice(1).join(' ') || '';
   const initials = `${firstName[0] ?? ''}${surname[0] ?? ''}`.toUpperCase() || 'S';
@@ -8161,10 +8282,10 @@ function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: 
             <span style={{ fontSize: 14, color: C.g500 }}>Class</span>
             <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Form 2A — Mathematics</span>
           </div>
-          <div style={rowS} onClick={() => setJoinModal(true)}>
+          <div style={rowS} onClick={onClasses}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Plus size={16} color={C.teal} />
-              <span style={rowLbl}>Join Another Class</span>
+              <GraduationCap size={16} color={C.teal} />
+              <span style={rowLbl}>My Classes</span>
             </div>
             <span style={{ fontSize: 18, color: C.teal }}>›</span>
           </div>
@@ -8914,7 +9035,9 @@ export default function DemoPage() {
       case 's-home':
         return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} demoToken={demoToken} />;
       case 's-settings':
-        return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} onResults={() => setSScreen('s-results')} studentName={studentName} />;
+        return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} onResults={() => setSScreen('s-results')} onClasses={() => setSScreen('s-classes')} studentName={studentName} />;
+      case 's-classes':
+        return <StudentClassManagementScreen onBack={() => setSScreen('s-settings')} demoToken={demoToken} />;
       case 's-capture':
         return <CapturePagesWebScreen onBack={() => setSScreen('s-submit')} onDone={(count) => { setSubmissionFileName(`homework_${count}pages.jpg`); setHwInfo(h => ({ ...h, submission_count: h.submission_count + 1 })); triggerSync(); setSScreen('s-success'); }} />;
       case 's-submit':

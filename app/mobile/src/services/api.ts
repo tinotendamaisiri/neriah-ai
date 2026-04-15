@@ -544,6 +544,22 @@ export const joinClassByCode = async (join_code: string): Promise<{
   return res.data;
 };
 
+/** Get all classes the student is enrolled in. */
+export const getStudentClasses = async (): Promise<{
+  classes: Array<{ class_id: string; name: string; subject: string; education_level: string; teacher_name: string; school_name: string }>;
+  active_class_id: string;
+  total: number;
+}> => {
+  const res = await client.get('/auth/student/classes');
+  return res.data;
+};
+
+/** Leave a class. */
+export const leaveClass = async (class_id: string): Promise<{ success: boolean; remaining_classes: number; active_class_id: string | null }> => {
+  const res = await client.delete('/auth/student/leave-class', { data: { class_id } });
+  return res.data;
+};
+
 /** Delete student account. */
 export const deleteStudentAccount = async (studentId: string): Promise<void> => {
   await client.delete(`/auth/student/${studentId}`);
