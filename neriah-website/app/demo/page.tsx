@@ -1122,7 +1122,7 @@ function PhoneInputRow({ value, onChange }: { value: string; onChange: (digits: 
         inputMode="numeric"
         value={value}
         onChange={e => onChange(e.target.value.replace(/\D/g, ''), country.dialCode)}
-        placeholder="77 123 4567"
+        placeholder="771 234 567"
         style={{
           flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
           padding: '14px 12px', fontSize: 15, color: C.text, outline: 'none',
@@ -1570,7 +1570,7 @@ function OTPScreen({
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Teacher Register
 // ──────────────────────────────────────────────────────────────────────────────
-const TITLES = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof', 'Sir', 'Eng', 'Rev'];
+const TITLES = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof', 'Sir'];
 
 const ZW_SCHOOLS = [
   'Harare High School', 'Prince Edward School', 'St Georges College',
@@ -1588,9 +1588,11 @@ const ZW_SCHOOLS = [
 function SchoolPickerInline({
   value,
   onChange,
+  placeholder = 'Search for your school…',
 }: {
   value: string;
   onChange: (school: string) => void;
+  placeholder?: string;
 }) {
   const [query, setQuery]     = useState(value);
   const [open, setOpen]       = useState(false);
@@ -1666,7 +1668,7 @@ function SchoolPickerInline({
         <input
           ref={inputRef}
           type="text"
-          placeholder="Search your school…"
+          placeholder={placeholder}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); setCursor(-1); onChange(''); }}
           onFocus={() => setOpen(true)}
@@ -1752,7 +1754,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
     fontFamily: 'inherit', background: C.white,
   };
   const labelStyle: React.CSSProperties = {
-    fontSize: 14, fontWeight: 600, color: C.g900, marginTop: 10, marginBottom: 4, display: 'block',
+    fontSize: 13, fontWeight: 600, color: C.g900, marginTop: 8, marginBottom: 3, display: 'block',
   };
 
   const handleCreate = async () => {
@@ -1785,37 +1787,39 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
   };
 
   return (
-    <Screen style={{ padding: 20, paddingTop: 28 }}>
+    <Screen style={{ padding: '0 20px 16px', paddingTop: 16, overflowY: 'auto' }}>
       <div style={{ marginBottom: 20 }}>
         <BackButton label="Back" onClick={onSignIn} />
       </div>
 
-      {/* Icon badge */}
+      {/* Icon badge — 80×80, light teal rounded square, teal clipboard */}
       <div style={{
-        width: 64, height: 64, borderRadius: 18, background: C.teal50,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+        width: 80, height: 80, borderRadius: 20, background: C.primaryLight,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12,
       }}>
-        <ClipboardList size={30} color={C.teal} />
+        <ClipboardList size={36} color={C.teal} />
       </div>
 
-      <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 4 }}>Create teacher account</div>
-      <div style={{ fontSize: 13, color: C.g500, marginBottom: 24, lineHeight: 1.5 }}>Enter your details to get started.</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 2 }}>Create teacher account</div>
+      <div style={{ fontSize: 13, color: C.g500, marginBottom: 14, lineHeight: 1.5 }}>Enter your details to get started.</div>
 
-      {/* Title chips */}
+      {/* Title pills — outline style, teal border + text when selected */}
       <label style={labelStyle}>
         Title <span style={{ fontWeight: 400, color: C.g500 }}>(optional)</span>
       </label>
-      <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBlock: 4, paddingBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBlock: 2, paddingBottom: 6, marginBottom: 2 }}>
         {TITLES.map(t => (
           <button
             key={t}
             onClick={() => setTitle(prev => prev === t ? '' : t)}
             style={{
-              flexShrink: 0, paddingInline: 13, paddingBlock: 7, borderRadius: 20,
-              border: `1.5px solid ${title === t ? C.teal : C.g200}`,
-              background: title === t ? C.teal : C.white,
-              color: title === t ? C.white : C.g900,
-              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              flexShrink: 0,
+              padding: '8px 16px',
+              borderRadius: 999,
+              border: `1px solid ${title === t ? C.teal : C.g200}`,
+              background: C.white,
+              color: title === t ? C.teal : C.g900,
+              fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
               transition: 'all 0.12s',
             }}
           >
@@ -1850,20 +1854,20 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
 
       {/* School — searchable picker */}
       <label style={labelStyle}>School</label>
-      <SchoolPickerInline value={school} onChange={setSchool} />
+      <SchoolPickerInline value={school} onChange={setSchool} placeholder="Select your school" />
 
       {/* Error */}
       {error && (
-        <div style={{ color: C.red, fontSize: 13, marginTop: 8, fontWeight: 600 }}>{error}</div>
+        <div style={{ color: C.red, fontSize: 13, marginTop: 6, fontWeight: 600 }}>{error}</div>
       )}
 
-      {/* Create account button */}
+      {/* Create account button — full width, always visible */}
       <button
         onClick={handleCreate}
         disabled={loading}
         style={{
-          marginTop: 22, background: loading ? C.teal100 : C.teal,
-          border: 'none', borderRadius: 10, padding: 16,
+          marginTop: 16, background: loading ? C.teal100 : C.teal,
+          border: 'none', borderRadius: 10, padding: '14px 0',
           cursor: loading ? 'not-allowed' : 'pointer',
           color: C.white, fontWeight: 700, fontSize: 16, fontFamily: 'inherit',
           width: '100%', boxSizing: 'border-box', transition: 'background 0.15s',
@@ -1872,14 +1876,19 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
         {loading ? 'Creating account…' : 'Create account'}
       </button>
 
+      {/* Sign in link — centered */}
       <button
         onClick={onSignIn}
-        style={{ marginTop: 20, background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit', padding: 4 }}
+        style={{
+          marginTop: 12, background: 'none', border: 'none', cursor: 'pointer',
+          color: C.teal, fontWeight: 600, fontSize: 14, fontFamily: 'inherit',
+          padding: 4, width: '100%', textAlign: 'center',
+        }}
       >
-        Already have an account? Sign in
+        Already have an account? <span style={{ textDecoration: 'underline' }}>Sign in</span>
       </button>
 
-      <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 24 }}>
+      <div style={{ marginTop: 8, textAlign: 'center', fontSize: 12, color: C.g500, lineHeight: 1.6, paddingBottom: 16 }}>
         A 6-digit verification code will be sent to your phone.
       </div>
     </Screen>
