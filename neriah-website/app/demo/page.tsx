@@ -9,7 +9,7 @@ import {
   HelpCircle, Star, Inbox,
   Bot, Hand, X, AlertTriangle, XCircle, MailX,
   Users, BookOpen, Sparkles, Cloud, Zap,
-  MessageCircle, MessageSquare, ChevronLeft,
+  MessageCircle, MessageSquare, ChevronLeft, Menu, Plus, Trash2,
 } from 'lucide-react';
 
 import {
@@ -3303,6 +3303,50 @@ function _detectAction(text: string): AIActionType {
   return 'chat';
 }
 
+// ── Web chat history helpers ──────────────────────────────────────────────────
+const WEB_CHAT_KEY = 'teacher_assistant_chats';
+const WEB_MAX_SESSIONS = 50;
+const WEB_MAX_DISPLAY  = 20;
+
+interface WebChatSession {
+  chat_id:    string;
+  created_at: number;
+  messages:   AIChatMsg[];
+  preview:    string;
+}
+
+function webRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2)   return 'Just now';
+  if (mins < 60)  return `${mins}m ago`;
+  const hrs = Math.floor(diff / 3_600_000);
+  if (hrs < 24)   return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(diff / 86_400_000);
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
+
+function loadWebChatHistory(): WebChatSession[] {
+  try {
+    const raw = sessionStorage.getItem(WEB_CHAT_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveWebChatHistory(sessions: WebChatSession[]): void {
+  try { sessionStorage.setItem(WEB_CHAT_KEY, JSON.stringify(sessions)); } catch {}
+}
+
+function upsertWebChatSession(sessions: WebChatSession[], session: WebChatSession): WebChatSession[] {
+  const idx = sessions.findIndex(s => s.chat_id === session.chat_id);
+  let next = idx >= 0
+    ? sessions.map((s, i) => (i === idx ? session : s))
+    : [session, ...sessions];
+  if (next.length > WEB_MAX_SESSIONS) next = next.slice(0, WEB_MAX_SESSIONS);
+  return next;
+}
+
 function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const [curriculum, setCurriculum] = useState('ZIMSEC');
   const [level, setLevel]           = useState('All Levels');
@@ -3321,6 +3365,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const wordInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Drawer state ────────────────────────────────────────────────────────────
+  const [showDrawer, setShowDrawer]       = useState(false);
+  const [chatHistory, setChatHistory]     = useState<WebChatSession[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string>(() => `chat_${Date.now()}`);
+
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, typing]);
@@ -3328,6 +3377,49 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
+  };
+
+  // ── Drawer helpers ───────────────────────────────────────────────────────────
+  const openDrawer = () => {
+    setChatHistory(loadWebChatHistory());
+    setShowDrawer(true);
+  };
+
+  const closeDrawer = () => setShowDrawer(false);
+
+  const saveCurrentToHistory = (msgs: AIChatMsg[], chatId: string) => {
+    if (msgs.length === 0) return;
+    const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 40);
+    const sessions = loadWebChatHistory();
+    const existing = sessions.find(s => s.chat_id === chatId);
+    const session: WebChatSession = {
+      chat_id:    chatId,
+      created_at: existing ? existing.created_at : Date.now(),
+      messages:   msgs,
+      preview,
+    };
+    const updated = upsertWebChatSession(sessions, session);
+    saveWebChatHistory(updated);
+  };
+
+  const startNewChat = () => {
+    saveCurrentToHistory(messages, currentChatId);
+    const newId = `chat_${Date.now()}`;
+    setMessages([]);
+    setCurrentChatId(newId);
+    closeDrawer();
+  };
+
+  const loadChatSession = (session: WebChatSession) => {
+    setMessages(session.messages);
+    setCurrentChatId(session.chat_id);
+    closeDrawer();
+  };
+
+  const deleteChatSession = (chatId: string) => {
+    const sessions = loadWebChatHistory().filter(s => s.chat_id !== chatId);
+    saveWebChatHistory(sessions);
+    setChatHistory(sessions);
   };
 
   const readFileAsBase64 = (file: File): Promise<string> =>
@@ -3386,12 +3478,16 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
               preview: `${(data.questions as unknown[]).length} questions • ${totalMarks} marks` }
           : undefined;
         const chips = !isStructured ? ['Create Homework','Create a Quiz','Check class performance'] : undefined;
-        setMessages(prev => [...prev, {
-          id: String(Date.now()+1), role: 'assistant',
-          content: data.message ?? data.summary ?? data.overview ?? '',
-          card, chips, structured: isStructured ? data : undefined,
-          exportable, actionType: action,
-        }]);
+        setMessages(prev => {
+          const next = [...prev, {
+            id: String(Date.now()+1), role: 'assistant' as const,
+            content: data.message ?? data.summary ?? data.overview ?? '',
+            card, chips, structured: isStructured ? data : undefined,
+            exportable, actionType: action,
+          }];
+          saveCurrentToHistory(next, currentChatId);
+          return next;
+        });
       } else {
         setMessages(prev => [...prev, {
           id: String(Date.now()+1), role: 'assistant',
@@ -3446,12 +3542,12 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 14px', background: C.teal }}>
-        <button onClick={(e) => { e.stopPropagation(); onBack(); }}
+        <button onClick={(e) => { e.stopPropagation(); openDrawer(); }}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.white, padding: 4, display: 'flex' }}>
-          <ChevronLeft size={22} />
+          <Menu size={22} />
         </button>
         <span style={{ fontSize: 16, fontWeight: 700, color: C.white, letterSpacing: 0.3 }}>Neriah AI</span>
-        <button onClick={(e) => { e.stopPropagation(); setMessages([]); }}
+        <button onClick={(e) => { e.stopPropagation(); startNewChat(); }}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.white, padding: 4, display: 'flex' }}>
           <Pencil size={18} />
         </button>
@@ -3549,7 +3645,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                 {msg.role === 'assistant' && (
                   <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
-                    <img src="/icon.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
+                    <img src="/neriah-logo.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
                   </div>
                 )}
                 <div style={{ background: msg.role === 'user' ? C.teal : C.white,
@@ -3621,7 +3717,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <div style={{ width: 26, height: 26, borderRadius: 13, background: C.teal,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <img src="/icon.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
+                <img src="/neriah-logo.png" style={{ width: 15, height: 15, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
               </div>
               <div style={{ background: C.white, border: `1px solid ${C.g200}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
                 {[0,1,2].map(i => (
@@ -5645,7 +5741,7 @@ function StudentTutorScreen({
             <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
               {!isUser && (
                 <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-                  <img src="/icon.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
+                  <img src="/neriah-logo.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
                 </div>
               )}
               <div style={{
@@ -5682,7 +5778,7 @@ function StudentTutorScreen({
         {typing && (
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
             <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-              <img src="/icon.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
+              <img src="/neriah-logo.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
             </div>
             <div style={{
               background: C.white, borderRadius: '14px 14px 14px 4px', padding: '10px 14px',
