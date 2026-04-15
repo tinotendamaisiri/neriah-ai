@@ -5344,18 +5344,23 @@ function StudentHomeScreen({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
-      {/* Header: title left — avatar right with status dot */}
-      <div style={{ background: C.teal, paddingInline: 20, paddingTop: 16, paddingBottom: 14, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-        <div style={{ flex: 1 }}>
+      {/* Header: [spacer] — [center title] — [avatar right] */}
+      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 16, paddingBottom: 14, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+        <div style={{ flex: 1 }} />
+        <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Homework</div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 2 }}>Hello, {firstName}</div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 2 }}>
+            {(() => { const g = { en: 'Hello', sn: 'Mhoro', nd: 'Sawubona' }; return `${g.en}, ${firstName}`; })()}
+          </div>
         </div>
-        <div
-          onClick={onSettings}
-          style={{ width: 38, height: 38, borderRadius: 19, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, position: 'relative' }}
-        >
-          <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>{firstName[0]}</span>
-          <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.teal}` }} />
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+          <div
+            onClick={onSettings}
+            style={{ width: 38, height: 38, borderRadius: 19, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative' }}
+          >
+            <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>{firstName[0]}</span>
+            <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.teal}` }} />
+          </div>
         </div>
       </div>
 
@@ -6522,10 +6527,18 @@ function StudentTutorScreen({
 
 function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => void; demoToken: string | null }) {
   type CItem = { class_id: string; name: string; subject: string; teacher_name: string; school_name: string };
+  type AvailCls = { id: string; name: string; subject: string | null; education_level: string; teacher: { first_name: string; surname: string } };
   const [classes, setClasses] = useState<CItem[]>([]);
   const [activeId, setActiveId] = useState('');
   const [loading, setLoading] = useState(true);
   const [joinOpen, setJoinOpen] = useState(false);
+  const [school, setSchool] = useState('Harare High School');
+  const [availClasses, setAvailClasses] = useState<AvailCls[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchedSchool, setSearchedSchool] = useState('');
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+  // Code fallback
+  const [showCode, setShowCode] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinInfo, setJoinInfo] = useState<{ name: string } | null>(null);
   const [joinErr, setJoinErr] = useState('');

@@ -164,14 +164,17 @@ export default function StudentHomeScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
-          <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-        </TouchableOpacity>
+        <View style={{ flex: 1 }} />
         <View style={styles.headerCenter}>
           <Text style={styles.greeting}>{t('my_homework')}</Text>
-          <Text style={styles.subGreeting}>Hello, {firstName}</Text>
+          <Text style={styles.subGreeting}>{t('hello_name').replace('{name}', firstName)}</Text>
         </View>
-        <AIStatusDot />
+        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
+            <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
+            <AIStatusDot />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Class switcher (only if 2+ classes) */}
@@ -233,15 +236,15 @@ export default function StudentHomeScreen() {
               </View>
               {isSubmitted ? (
                 <View style={styles.submittedChip}>
-                  <Text style={styles.submittedChipText}>Submitted</Text>
+                  <Text style={styles.submittedChipText}>{t('submitted')}</Text>
                 </View>
               ) : isOpen ? (
                 <View style={styles.submitChip}>
-                  <Text style={styles.submitChipText}>Submit →</Text>
+                  <Text style={styles.submitChipText}>{t('submit')} →</Text>
                 </View>
               ) : (
                 <View style={styles.closedChip}>
-                  <Text style={styles.closedChipText}>Closed</Text>
+                  <Text style={styles.closedChipText}>{t('closed')}</Text>
                 </View>
               )}
             </TouchableOpacity>
