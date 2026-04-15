@@ -299,7 +299,7 @@ export default function StudentTutorScreen() {
       <View style={[styles.row, isUser ? styles.rowRight : styles.rowLeft]}>
         {!isUser && (
           <View style={styles.avatar}>
-            <Image source={require('../../assets/icon.png')} style={{ width: 17, height: 17, tintColor: 'white' }} resizeMode="contain" />
+            <Image source={require('../../assets/icon-transparent.png')} style={{ width: 17, height: 17, tintColor: 'white' }} resizeMode="contain" />
           </View>
         )}
         <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAI]}>

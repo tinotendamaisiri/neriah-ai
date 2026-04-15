@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -112,8 +113,25 @@ const DEFAULT_LEVEL: Record<string, string> = {
 
 // ── History helpers ───────────────────────────────────────────────────────────
 
-const historyKey = (userId: string) => `teacher_assistant_history_${userId}`;
-const MAX_HISTORY = 10; // messages kept in AsyncStorage
+const historyKey        = (userId: string) => `teacher_assistant_history_${userId}`;
+const chatSessionsKey   = (userId: string) => `teacher_assistant_chats_${userId}`;
+const MAX_HISTORY       = 10;  // messages in context window
+const MAX_SESSIONS      = 50;  // chat sessions stored
+const MAX_DISPLAY       = 20;  // sessions shown in drawer
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2)   return 'Just now';
+  if (mins < 60)  return `${mins}m ago`;
+  const hrs = Math.floor(diff / 3_600_000);
+  if (hrs < 24)   return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(diff / 86_400_000);
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -125,6 +143,13 @@ interface ChatMessage {
   structured?: Record<string, unknown>;
   exportable?: boolean;
   timestamp:   number;
+}
+
+interface ChatSession {
+  chat_id:    string;
+  created_at: number;
+  messages:   ChatMessage[];
+  preview:    string;
 }
 
 // ── Structured output card helpers ────────────────────────────────────────────
@@ -220,7 +245,7 @@ function TypingIndicator() {
   return (
     <View style={s.rowLeft}>
       <View style={s.avatar}>
-        <Image source={require('../../assets/icon.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
+        <Image source={require('../../assets/icon-transparent.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
       </View>
       <View style={s.bubbleLeft}>
         <View style={s.typingRow}>
@@ -301,6 +326,12 @@ export default function TeacherAssistantScreen() {
   const [showAttachSheet, setShowAttachSheet]   = useState(false);
   const [showInAppCamera, setShowInAppCamera]   = useState(false);
 
+  // ── Drawer state ──────────────────────────────────────────────────────────
+  const [showDrawer, setShowDrawer]         = useState(false);
+  const [chatHistory, setChatHistory]       = useState<ChatSession[]>([]);
+  const [currentChatId, setCurrentChatId]   = useState<string>(() => `chat_${Date.now()}`);
+  const drawerAnim = useRef(new Animated.Value(-SCREEN_WIDTH * 0.8)).current;
+
   const flatRef   = useRef<FlatList<ChatMessage>>(null);
   const userId    = user?.id ?? 'unknown';
 
@@ -332,12 +363,88 @@ export default function TeacherAssistantScreen() {
     AsyncStorage.setItem(historyKey(userId), JSON.stringify(msgs)).catch(() => {});
   }, [userId]);
 
-  // ── Clear history ─────────────────────────────────────────────────────────
-  const clearHistory = useCallback(() => {
+  // ── Save current chat to session history ─────────────────────────────────
+  const saveToSessionHistory = useCallback(async (msgs: ChatMessage[], chatId: string) => {
+    if (msgs.length === 0) return;
+    try {
+      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
+      let sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
+      const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 40);
+      const existing = sessions.findIndex(s => s.chat_id === chatId);
+      const session: ChatSession = {
+        chat_id:    chatId,
+        created_at: existing >= 0 ? sessions[existing].created_at : Date.now(),
+        messages:   msgs,
+        preview,
+      };
+      if (existing >= 0) {
+        sessions[existing] = session;
+      } else {
+        sessions = [session, ...sessions];
+      }
+      if (sessions.length > MAX_SESSIONS) {
+        sessions = sessions.slice(0, MAX_SESSIONS);
+      }
+      await AsyncStorage.setItem(chatSessionsKey(userId), JSON.stringify(sessions));
+      setChatHistory(sessions);
+    } catch {}
+  }, [userId]);
+
+  // ── Open drawer: load history then animate in ─────────────────────────────
+  const openDrawer = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
+      if (raw) setChatHistory(JSON.parse(raw));
+    } catch {}
+    setShowDrawer(true);
+    Animated.timing(drawerAnim, {
+      toValue: 0, duration: 250, useNativeDriver: true,
+    }).start();
+  }, [userId, drawerAnim]);
+
+  // ── Close drawer (animate out, then hide) ────────────────────────────────
+  const closeDrawer = useCallback(() => {
+    Animated.timing(drawerAnim, {
+      toValue: -SCREEN_WIDTH * 0.8, duration: 220, useNativeDriver: true,
+    }).start(() => setShowDrawer(false));
+  }, [drawerAnim]);
+
+  // ── Start a new chat (saves current first) ────────────────────────────────
+  const startNewChat = useCallback(async () => {
+    if (messages.length > 0) {
+      await saveToSessionHistory(messages, currentChatId);
+    }
+    const newId = `chat_${Date.now()}`;
     setMessages([]);
     setConversationId(undefined);
+    setCurrentChatId(newId);
     AsyncStorage.removeItem(historyKey(userId)).catch(() => {});
+    closeDrawer();
+  }, [messages, currentChatId, saveToSessionHistory, userId, closeDrawer]);
+
+  // ── Load a saved chat session ─────────────────────────────────────────────
+  const loadChatSession = useCallback((session: ChatSession) => {
+    setMessages(session.messages);
+    setCurrentChatId(session.chat_id);
+    setConversationId(undefined);
+    closeDrawer();
+  }, [closeDrawer]);
+
+  // ── Delete a chat session ─────────────────────────────────────────────────
+  const deleteChatSession = useCallback(async (chatId: string) => {
+    try {
+      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
+      let sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
+      sessions = sessions.filter(s => s.chat_id !== chatId);
+      await AsyncStorage.setItem(chatSessionsKey(userId), JSON.stringify(sessions));
+      setChatHistory(sessions);
+    } catch {}
   }, [userId]);
+
+  // ── Clear history ─────────────────────────────────────────────────────────
+  const clearHistory = useCallback(() => {
+    startNewChat();
+  }, [startNewChat]);
 
   // ── Close dropdowns ───────────────────────────────────────────────────────
   const closeDrops = () => { setShowCurrDrop(false); setShowLvlDrop(false); };
@@ -440,6 +547,7 @@ export default function TeacherAssistantScreen() {
       const updated = [...updatedWithUser, aiMsg];
       setMessages(updated);
       persistHistory(updated);
+      saveToSessionHistory(updated, currentChatId).catch(() => {});
     } catch (err: any) {
       const aiMsg: ChatMessage = {
         id:        String(Date.now() + 1),
@@ -453,7 +561,7 @@ export default function TeacherAssistantScreen() {
     } finally {
       setTyping(false);
     }
-  }, [typing, messages, curriculum, level, conversationId, persistHistory]);
+  }, [typing, messages, curriculum, level, conversationId, persistHistory, currentChatId, saveToSessionHistory]);
 
   // ── Export flow ───────────────────────────────────────────────────────────
   const handleExport = useCallback((msg: ChatMessage) => {
@@ -506,7 +614,7 @@ export default function TeacherAssistantScreen() {
       <View style={isUser ? s.rowRight : s.rowLeft}>
         {!isUser && (
           <View style={s.avatar}>
-            <Image source={require('../../assets/icon.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
+            <Image source={require('../../assets/icon-transparent.png')} style={{ width: 16, height: 16, tintColor: 'white' }} resizeMode="contain" />
           </View>
         )}
         <View style={{ maxWidth: '80%' }}>
@@ -595,7 +703,7 @@ export default function TeacherAssistantScreen() {
 
           {/* ── Header ── */}
           <View style={s.header}>
-            <TouchableOpacity style={s.hBtn} onPress={closeDrops}>
+            <TouchableOpacity style={s.hBtn} onPress={openDrawer}>
               <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
@@ -672,7 +780,7 @@ export default function TeacherAssistantScreen() {
               <View style={s.emptyHero}>
                 <View style={s.emptyIcon}>
                   <Image
-                    source={require('../../assets/icon.png')}
+                    source={require('../../assets/icon-transparent.png')}
                     style={{ width: 48, height: 48, tintColor: AI.teal }}
                     resizeMode="contain"
                   />
@@ -821,6 +929,81 @@ export default function TeacherAssistantScreen() {
 
       {/* Toast */}
       <Toast message={toastMsg} visible={toastVisible} />
+
+      {/* ── Chat History Drawer ── */}
+      {showDrawer && (
+        <Modal visible transparent animationType="none" onRequestClose={closeDrawer}>
+          {/* Backdrop */}
+          <TouchableOpacity
+            style={s.drawerBackdrop}
+            activeOpacity={1}
+            onPress={closeDrawer}
+          />
+          {/* Slide-in panel */}
+          <Animated.View style={[s.drawer, { transform: [{ translateX: drawerAnim }] }]}>
+            {/* Drawer header */}
+            <View style={s.drawerHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Image
+                  source={require('../../assets/icon-transparent.png')}
+                  style={{ width: 26, height: 26, tintColor: AI.teal }}
+                  resizeMode="contain"
+                />
+                <Text style={s.drawerTitle}>Neriah AI</Text>
+              </View>
+              <TouchableOpacity style={s.hBtn} onPress={closeDrawer}>
+                <Ionicons name="close-outline" size={24} color={AI.sub} />
+              </TouchableOpacity>
+            </View>
+
+            {/* New Chat button */}
+            <View style={s.drawerSection}>
+              <TouchableOpacity style={s.newChatBtn} onPress={startNewChat}>
+                <Ionicons name="add-outline" size={20} color={AI.userText} />
+                <Text style={s.newChatBtnTxt}>New Chat</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Recent Chats */}
+            <Text style={s.drawerSectionLabel}>RECENT CHATS</Text>
+            <FlatList
+              data={chatHistory.slice(0, MAX_DISPLAY)}
+              keyExtractor={s => s.chat_id}
+              contentContainerStyle={{ paddingBottom: 32 }}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <Text style={s.drawerEmpty}>No recent chats</Text>
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    s.drawerChatItem,
+                    item.chat_id === currentChatId && s.drawerChatItemActive,
+                  ]}
+                  onPress={() => loadChatSession(item)}
+                  onLongPress={() => deleteChatSession(item.chat_id)}
+                  delayLongPress={600}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.drawerChatPreview} numberOfLines={1}>
+                      {item.preview}
+                    </Text>
+                    <Text style={s.drawerChatTime}>
+                      {relativeTime(item.created_at)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => deleteChatSession(item.chat_id)}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={AI.sub} />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              )}
+            />
+          </Animated.View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -985,6 +1168,45 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
   },
   attachSheetLabel: { fontSize: 16, color: AI.text, fontWeight: '500' },
+
+  // Drawer
+  drawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  drawer: {
+    position: 'absolute', top: 0, bottom: 0, left: 0,
+    width: SCREEN_WIDTH * 0.8,
+    backgroundColor: AI.card,
+    shadowColor: '#000', shadowOffset: { width: 4, height: 0 },
+    shadowOpacity: 0.18, shadowRadius: 12, elevation: 12,
+  },
+  drawerHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
+  },
+  drawerTitle: { fontSize: 17, fontWeight: '700', color: AI.text },
+  drawerSection: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  drawerSectionLabel: {
+    fontSize: 11, fontWeight: '700', color: AI.sub,
+    letterSpacing: 0.8, paddingHorizontal: 16, paddingBottom: 6,
+  },
+  newChatBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: AI.teal, borderRadius: 12,
+    paddingHorizontal: 16, paddingVertical: 12,
+  },
+  newChatBtnTxt: { fontSize: 15, fontWeight: '600', color: AI.userText },
+  drawerChatItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
+  },
+  drawerChatItemActive: { backgroundColor: AI.chip },
+  drawerChatPreview: { fontSize: 14, color: AI.text, fontWeight: '500' },
+  drawerChatTime:    { fontSize: 12, color: AI.sub, marginTop: 2 },
+  drawerEmpty: { fontSize: 13, color: AI.sub, textAlign: 'center', paddingTop: 24 },
 
   // Toast
   toast: {
