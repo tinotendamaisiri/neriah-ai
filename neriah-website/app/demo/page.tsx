@@ -6793,13 +6793,18 @@ function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
               <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E4B</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 6 }}>
+                Works offline for:{' '}
+                <span style={{ color: C.g900, fontWeight: 600 }}>Homework Grading · Teacher Assistant</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Download to use Neriah AI without internet</div>
             </div>
             <div style={{ fontSize: 12, color: C.g500 }}>3.5 GB</div>
           </div>
           {/* Cloud-only badge */}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
             <Cloud size={13} color={C.g500} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web always uses Cloud AI</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
           </div>
 
           <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>
@@ -6916,13 +6921,18 @@ function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void;
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
               <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E2B</div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 6 }}>
+                Works offline for:{' '}
+                <span style={{ color: C.g900, fontWeight: 600 }}>Homework Marking · AI Tutoring</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>Download to use Neriah AI without internet</div>
             </div>
             <div style={{ fontSize: 12, color: C.g500 }}>2.5 GB</div>
           </div>
           {/* Cloud-only badge */}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
             <Cloud size={13} color={C.g500} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web always uses Cloud AI</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
           </div>
 
           <p style={{ fontSize: 13, color: C.g500, lineHeight: 1.6, margin: '0 0 14px' }}>

@@ -263,9 +263,11 @@ def _call_model(
     message: str,
     image_bytes: bytes | None = None,
 ) -> str:
-    """Route to Vertex AI or Ollama. Never raises."""
+    """Route to Vertex AI or Ollama (E4B). Never raises."""
     try:
-        if settings.INFERENCE_BACKEND == "vertex":
+        backend = settings.INFERENCE_BACKEND or "ollama"
+        logger.info("Teacher assistant using backend: %s", backend)
+        if backend == "vertex":
             from shared.gemma_client import _vertex_chat  # noqa: PLC0415
             return _vertex_chat(system, history, message, image_bytes)
         from shared.gemma_client import _ollama_chat  # noqa: PLC0415

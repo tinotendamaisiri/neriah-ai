@@ -280,7 +280,11 @@ export default function SettingsScreen() {
           modelCapability === 'cloud-only' ? styles.capabilityBadgeCloud : styles.capabilityBadgeCapable,
         ]}>
           <Ionicons
-            name={modelCapability === 'cloud-only' ? 'cloud-outline' : 'hardware-chip-outline'}
+            name={
+              modelCapability === 'cloud-only' ? 'cloud-outline'
+              : modelStatus === 'done' ? 'wifi-outline'
+              : 'hardware-chip-outline'
+            }
             size={14}
             color={modelCapability === 'cloud-only' ? COLORS.gray500 : COLORS.success}
             style={{ marginRight: 6 }}
@@ -290,7 +294,9 @@ export default function SettingsScreen() {
             modelCapability === 'cloud-only' ? styles.capabilityBadgeTextCloud : styles.capabilityBadgeTextCapable,
           ]}>
             {modelCapability === 'cloud-only'
-              ? 'Cloud only — upgrade device for offline AI'
+              ? 'Cloud only — grading and assistant require internet'
+              : modelStatus === 'done'
+              ? 'Neriah AI works offline'
               : 'This device supports on-device AI'}
           </Text>
         </View>
@@ -303,6 +309,20 @@ export default function SettingsScreen() {
               <Text style={styles.modelCardSubtitle}>
                 {modelVariant === 'e2b' ? 'Powered by Gemma 4 E2B' : 'Powered by Gemma 4 E4B'}
               </Text>
+              <View style={styles.capabilitiesRow}>
+                <Text style={styles.capabilitiesLabel}>Works offline for:</Text>
+                <View style={styles.capabilitiesChips}>
+                  <View style={styles.capabilityChip}>
+                    <Ionicons name="checkmark-circle-outline" size={13} color={COLORS.teal500} />
+                    <Text style={styles.capabilityChipText}>Homework Grading</Text>
+                  </View>
+                  <View style={styles.capabilityChip}>
+                    <Ionicons name="checkmark-circle-outline" size={13} color={COLORS.teal500} />
+                    <Text style={styles.capabilityChipText}>Teacher Assistant</Text>
+                  </View>
+                </View>
+                <Text style={styles.capabilitiesHint}>Download to use Neriah AI without internet</Text>
+              </View>
               <Text style={styles.modelCardSize}>
                 {modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '3.5 GB'}
               </Text>
@@ -649,7 +669,13 @@ const styles = StyleSheet.create({
   modelCardHeader: { flexDirection: 'row', alignItems: 'center' },
   modelCardName: { fontSize: 15, fontWeight: '700', color: COLORS.gray900 },
   modelCardSubtitle: { fontSize: 12, color: COLORS.gray500, marginTop: 1 },
-  modelCardSize: { fontSize: 13, color: COLORS.textLight, marginTop: 3 },
+  capabilitiesRow: { marginTop: 8 },
+  capabilitiesLabel: { fontSize: 11, color: COLORS.gray500, fontWeight: '600', marginBottom: 4 },
+  capabilitiesChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 4 },
+  capabilityChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  capabilityChipText: { fontSize: 12, color: COLORS.gray900, fontWeight: '500' },
+  capabilitiesHint: { fontSize: 11, color: COLORS.gray500 },
+  modelCardSize: { fontSize: 13, color: COLORS.textLight, marginTop: 6 },
   modelStatusBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   modelStatusDone: { backgroundColor: '#EBF9F1' },
   modelStatusActive: { backgroundColor: COLORS.teal50 },
