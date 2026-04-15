@@ -3623,8 +3623,8 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
         onClose={() => setCameraOpen(false)}
       />
 
-      {/* Input bar */}
-      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 10px', background: C.white, position: 'relative' }}
+      {/* Input bar — flush to bottom, no extra padding below the send row */}
+      <div style={{ borderTop: `1px solid ${C.g200}`, padding: '6px 12px 4px', background: C.white, position: 'relative' }}
         onClick={e => { e.stopPropagation(); setShowAttachMenu(false); }}>
         <p style={{ margin: '0 0 6px', fontSize: 11, color: C.g500, textAlign: 'center' }}>
           Neriah can make mistakes. Verify important info.
