@@ -210,15 +210,17 @@ export const getClassJoinInfo = async (code: string): Promise<ClassJoinInfo> => 
   return res.data;
 };
 
-/** Public: fetch all classes for a school by name (no auth required). */
-export const getClassesBySchool = async (school_name: string): Promise<Array<{
+/** Public: fetch classes for a school by name, optionally filtered by search term. */
+export const getClassesBySchool = async (school_name: string, search?: string): Promise<Array<{
   id: string;
   name: string;
   education_level: string;
   subject?: string;
   teacher: { first_name: string; surname: string };
 }>> => {
-  const res = await client.get('/classes/by-school', { params: { school: school_name } });
+  const params: Record<string, string> = { school: school_name };
+  if (search) params.search = search;
+  const res = await client.get('/classes/by-school', { params });
   return Array.isArray(res.data) ? res.data : [];
 };
 
@@ -536,11 +538,13 @@ export const updateStudentProfile = async (data: {
   return res.data;
 };
 
-/** Join a class by join code. */
-export const joinClassByCode = async (join_code: string): Promise<{
+/** Join a class by class_id or join_code. Sends class_id if value is longer than 6 chars. */
+export const joinClassByCode = async (idOrCode: string): Promise<{
   success: boolean; class_id: string; class_name: string; subject: string; message: string;
 }> => {
-  const res = await client.post('/auth/student/join-class', { join_code: join_code.toUpperCase() });
+  const isCode = idOrCode.length <= 6 && /^[A-Z0-9]+$/.test(idOrCode);
+  const body = isCode ? { join_code: idOrCode.toUpperCase() } : { class_id: idOrCode };
+  const res = await client.post('/auth/student/join-class', body);
   return res.data;
 };
 

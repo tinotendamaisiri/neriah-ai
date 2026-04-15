@@ -105,39 +105,44 @@ export default function StudentSettingsScreen() {
     }
   };
 
-  // ── Join class modal ──────────────────────────────────────────────────────
+  // ── Join class modal (name-based search) ───────────────────────────────────
   const [joinModal, setJoinModal] = useState(false);
-  const [joinCode, setJoinCode] = useState('');
-  const [classInfo, setClassInfo] = useState<{ name: string; teacher: { first_name: string; surname: string } } | null>(null);
-  const [lookingUp, setLookingUp] = useState(false);
+  const [joinSearch, setJoinSearch] = useState('');
+  const [joinResults, setJoinResults] = useState<Array<{ id: string; name: string; subject?: string; teacher?: { first_name: string; surname: string } }>>([]);
+  const [joinSearching, setJoinSearching] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
+  const joinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleCodeChange = async (text: string) => {
-    const upper = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    setJoinCode(upper);
+  const searchClasses = (query: string) => {
+    setJoinSearch(query);
     setJoinError('');
-    setClassInfo(null);
-    if (upper.length === 6) {
-      setLookingUp(true);
-      try { setClassInfo(await getClassJoinInfo(upper)); } catch { setJoinError('Class not found.'); }
-      finally { setLookingUp(false); }
-    }
+    if (joinTimerRef.current) clearTimeout(joinTimerRef.current);
+    if (query.trim().length < 2) { setJoinResults([]); return; }
+    joinTimerRef.current = setTimeout(async () => {
+      setJoinSearching(true);
+      try {
+        const { getClassesBySchool } = await import('../services/api');
+        const school = user?.school ?? '';
+        const results = await getClassesBySchool(school, query.trim());
+        setJoinResults(results.map(c => ({ id: c.id, name: c.name, subject: c.subject, teacher: c.teacher })));
+      } catch { setJoinResults([]); }
+      finally { setJoinSearching(false); }
+    }, 300);
   };
 
-  const handleJoin = async () => {
-    if (!joinCode || joinCode.length < 4) { setJoinError('Enter a valid join code.'); return; }
+  const handleJoinById = async (classId: string, className: string) => {
     setJoining(true);
     try {
       const { joinClassByCode } = await import('../services/api');
-      const res = await joinClassByCode(joinCode);
+      // joinClassByCode sends class_id when no join_code
+      const res = await joinClassByCode(classId);
       const display = [res.class_name, res.subject].filter(Boolean).join(' — ');
       setClassDisplay(display || res.class_name);
       Alert.alert('Joined!', res.message || `Joined ${res.class_name} successfully!`);
-      setJoinModal(false); setJoinCode(''); setClassInfo(null); setJoinError('');
+      setJoinModal(false); setJoinSearch(''); setJoinResults([]); setJoinError('');
     } catch (err: any) {
-      const msg = err?.message ?? err?.error ?? 'Could not join class.';
-      setJoinError(msg);
+      setJoinError(err?.message ?? 'Could not join class.');
     } finally { setJoining(false); }
   };
 
@@ -395,24 +400,44 @@ export default function StudentSettingsScreen() {
         <View style={m.overlay}>
           <View style={m.sheet}>
             <View style={m.header}>
-              <Text style={m.title}>Join Another Class</Text>
-              <TouchableOpacity onPress={() => { setJoinModal(false); setJoinCode(''); setClassInfo(null); setJoinError(''); }}><Text style={m.close}>✕</Text></TouchableOpacity>
+              <Text style={m.title}>Join a Class</Text>
+              <TouchableOpacity onPress={() => { setJoinModal(false); setJoinSearch(''); setJoinResults([]); setJoinError(''); }}><Text style={m.close}>✕</Text></TouchableOpacity>
             </View>
             <View style={m.body}>
-              <Text style={m.label}>Enter the 6-character class code from your teacher</Text>
-              <TextInput style={[m.input, { fontSize: 22, fontWeight: '700', letterSpacing: 4, textAlign: 'center', borderColor: COLORS.teal500, borderWidth: 2 }]} value={joinCode} onChangeText={handleCodeChange} placeholder="AB12CD" autoCapitalize="characters" maxLength={6} autoFocus />
-              {lookingUp && <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 12 }} />}
-              {joinError ? <Text style={{ color: COLORS.error, fontSize: 13, marginTop: 10, textAlign: 'center' }}>{joinError}</Text> : null}
-              {classInfo && (
-                <View style={{ marginTop: 14, backgroundColor: COLORS.teal50, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.teal100 }}>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text }}>{classInfo.name}</Text>
-                  <Text style={{ fontSize: 13, color: COLORS.gray500, marginTop: 4 }}>Teacher: {classInfo.teacher.first_name} {classInfo.teacher.surname}</Text>
+              <Text style={m.label}>Search for your class by name</Text>
+              <TextInput
+                style={m.input}
+                value={joinSearch}
+                onChangeText={searchClasses}
+                placeholder="e.g. Form 2A"
+                autoCapitalize="words"
+                autoFocus
+              />
+              {joinSearching && <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 10 }} />}
+              {joinError ? <Text style={{ color: COLORS.error, fontSize: 13, marginTop: 10 }}>{joinError}</Text> : null}
+              {joinResults.length > 0 && (
+                <View style={{ marginTop: 10, maxHeight: 200 }}>
+                  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                    {joinResults.map(c => (
+                      <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.background }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text }}>{c.name}{c.subject ? ` — ${c.subject}` : ''}</Text>
+                          {c.teacher && <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>{c.teacher.first_name} {c.teacher.surname}</Text>}
+                        </View>
+                        <TouchableOpacity
+                          style={{ backgroundColor: COLORS.teal500, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 }}
+                          onPress={() => handleJoinById(c.id, c.name)}
+                          disabled={joining}
+                        >
+                          <Text style={{ color: COLORS.white, fontWeight: '700', fontSize: 13 }}>Join</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </ScrollView>
                 </View>
               )}
-              {classInfo && (
-                <TouchableOpacity style={[m.btn, joining && { opacity: 0.6 }]} onPress={handleJoin} disabled={joining}>
-                  {joining ? <ActivityIndicator color={COLORS.white} /> : <Text style={m.btnText}>Join {classInfo.name}</Text>}
-                </TouchableOpacity>
+              {joinSearch.length >= 2 && !joinSearching && joinResults.length === 0 && (
+                <Text style={{ color: COLORS.gray500, fontSize: 13, marginTop: 14, textAlign: 'center' }}>No classes found. Try a different name.</Text>
               )}
             </View>
           </View>

@@ -8443,26 +8443,42 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
         </div>
       )}
 
-      {/* Join Another Class modal */}
+      {/* Join a Class modal — name search */}
       {joinModal && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 10 }}>
           <div style={{ background: C.white, borderRadius: '16px 16px 0 0', width: '100%', padding: 16, boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join Another Class</span>
+              <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join a Class</span>
               <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
             </div>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Enter the join code your teacher gave you</div>
+            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Search for your class by name</div>
             <input
               value={joinCode}
-              onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              maxLength={6}
-              placeholder="e.g. NR2A01"
-              style={{ ...inpS, textTransform: 'uppercase', letterSpacing: '0.15em', textAlign: 'center', fontWeight: 700, fontSize: 20, border: `2px solid ${C.teal}`, marginBottom: 14 }}
+              onChange={e => setJoinCode(e.target.value)}
+              placeholder="e.g. Form 2A"
+              autoFocus
+              style={{ ...inpS, marginBottom: 12 }}
             />
-            <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast('Joined Form 3B — Science successfully!'); }} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '13px 0', color: C.white, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Join Class</button>
-            <div style={{ textAlign: 'center', marginTop: 10 }}>
-              <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g500, fontSize: 13, fontFamily: 'inherit' }}>Cancel</button>
-            </div>
+            {/* Demo search results */}
+            {joinCode.length >= 2 && (
+              <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                {[
+                  { id: 'c1', name: 'Form 3B', subject: 'Science', teacher: 'Mrs Dube' },
+                  { id: 'c2', name: 'Form 2B', subject: 'Mathematics', teacher: 'Mr Phiri' },
+                ].filter(c => c.name.toLowerCase().includes(joinCode.toLowerCase()) || c.subject.toLowerCase().includes(joinCode.toLowerCase())).map(c => (
+                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${C.bg}` }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{c.name} — {c.subject}</div>
+                      <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>{c.teacher}</div>
+                    </div>
+                    <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast(`Joined ${c.name} — ${c.subject} successfully!`); }} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 14px', color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Join</button>
+                  </div>
+                ))}
+                {[{ id: 'c1', name: 'Form 3B', subject: 'Science' }, { id: 'c2', name: 'Form 2B', subject: 'Mathematics' }].filter(c => c.name.toLowerCase().includes(joinCode.toLowerCase()) || c.subject.toLowerCase().includes(joinCode.toLowerCase())).length === 0 && (
+                  <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 14 }}>No classes found. Try a different name.</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

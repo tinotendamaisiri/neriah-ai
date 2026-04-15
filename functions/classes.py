@@ -111,9 +111,13 @@ def delete_class(class_id: str):
     return jsonify({"message": "deleted"}), 200
 
 
-def _classes_for_school_name(school_name: str) -> list[dict]:
+def _classes_for_school_name(school_name: str, search: str = "") -> list[dict]:
     """
     Return classes whose teacher is at the given school.
+
+    Args:
+        school_name: the school to search in
+        search: optional substring filter on class name or subject (case-insensitive)
 
     Avoids querying classes by school_id (requires a Firestore composite index
     that may not exist).  Instead we:
@@ -124,6 +128,7 @@ def _classes_for_school_name(school_name: str) -> list[dict]:
     sn = school_name.strip()
     if not sn:
         return []
+    search_lower = search.strip().lower()
 
     # Exact match first (fast path)
     teachers = query("teachers", [("school_name", "==", sn)])
@@ -152,20 +157,26 @@ def _classes_for_school_name(school_name: str) -> list[dict]:
         )
         for cls in teacher_classes:
             cid = cls.get("id", "")
-            if cid not in seen:
-                seen.add(cid)
-                # Embed teacher name so the mobile UI doesn't need an extra fetch
-                cls_out = {
-                    "id": cid,
-                    "name": cls.get("name", ""),
-                    "education_level": cls.get("education_level", ""),
-                    "subject": cls.get("subject"),
-                    "teacher": {
-                        "first_name": t.get("first_name") or "",
-                        "surname":    t.get("surname")     or "",
-                    },
-                }
-                results.append(cls_out)
+            if cid in seen:
+                continue
+            # Apply search filter if provided
+            if search_lower:
+                name_lower = (cls.get("name") or "").lower()
+                subj_lower = (cls.get("subject") or "").lower()
+                if search_lower not in name_lower and search_lower not in subj_lower:
+                    continue
+            seen.add(cid)
+            cls_out = {
+                "id": cid,
+                "name": cls.get("name", ""),
+                "education_level": cls.get("education_level", ""),
+                "subject": cls.get("subject"),
+                "teacher": {
+                    "first_name": t.get("first_name") or "",
+                    "surname":    t.get("surname")     or "",
+                },
+            }
+            results.append(cls_out)
 
     return results
 
@@ -199,16 +210,17 @@ def classes_by_school_name():
     Public — list classes for a school by school name (query param).
     Used by mobile and web student registration to show available classes.
 
-    GET /api/classes/by-school?school=Chiredzi+High+School
+    GET /api/classes/by-school?school=Chiredzi+High+School&search=Form+2
     """
     school = (request.args.get("school") or "").strip()
-    logger.debug("[classes] GET /classes/by-school school=%r", school)
+    search = (request.args.get("search") or "").strip()
+    logger.debug("[classes] GET /classes/by-school school=%r search=%r", school, search)
 
     if not school:
         return jsonify({"error": "school query parameter is required"}), 400
 
-    out = _classes_for_school_name(school)
-    logger.info("[classes] /classes/by-school returning %d classes for school=%r", len(out), school)
+    out = _classes_for_school_name(school, search=search)
+    logger.info("[classes] /classes/by-school returning %d classes for school=%r search=%r", len(out), school, search)
     return jsonify(out), 200
 
 

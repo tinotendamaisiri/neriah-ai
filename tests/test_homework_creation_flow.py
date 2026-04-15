@@ -7112,3 +7112,58 @@ class TestLanguageAndMultiClass:
         schools = {c["school_name"] for c in body["classes"]}
         assert "Chiredzi High" in schools
         assert "Allan Wilson" in schools
+
+
+# ── Classes by school search ─────────────────────────────────────────────────
+
+_SEARCH_TEACHER = {"id": "t-search-1", "first_name": "Mr", "surname": "Test", "school_name": "Chiredzi High School"}
+_SEARCH_CLASS_2A = {"id": "cls-2a", "teacher_id": "t-search-1", "name": "Form 2A", "subject": "Mathematics", "education_level": "form_2", "created_at": "2026-01-01T00:00:00Z"}
+_SEARCH_CLASS_2B = {"id": "cls-2b", "teacher_id": "t-search-1", "name": "Form 2B", "subject": "Mathematics", "education_level": "form_2", "created_at": "2026-01-02T00:00:00Z"}
+_SEARCH_CLASS_3B = {"id": "cls-3b", "teacher_id": "t-search-1", "name": "Form 3B", "subject": "Physics", "education_level": "form_3", "created_at": "2026-01-03T00:00:00Z"}
+
+
+class TestClassSearchFiltering:
+    """Tests for GET /api/classes/by-school with search param."""
+
+    def _fake_query(self, collection, filters=None, **kwargs):
+        filt = filters or []
+        if collection == "teachers":
+            if any(f[0] == "school_name" for f in filt):
+                return [_SEARCH_TEACHER]
+            return [_SEARCH_TEACHER]
+        if collection == "classes":
+            return [_SEARCH_CLASS_2A, _SEARCH_CLASS_2B, _SEARCH_CLASS_3B]
+        return []
+
+    @feature_test("classes_by_school_search_filters")
+    def test_search_filters_by_name(self, client):
+        """GET with search=form 2 returns Form 2A and Form 2B but not Form 3B."""
+        with patch("functions.classes.query", side_effect=self._fake_query):
+            rv = client.get("/api/classes/by-school?school=Chiredzi+High+School&search=form+2")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        names = {c["name"] for c in data}
+        assert names == {"Form 2A", "Form 2B"}
+        assert "Form 3B" not in names
+
+    @feature_test("classes_by_school_search_empty_returns_all")
+    def test_no_search_returns_all(self, client):
+        """GET without search param returns all classes."""
+        with patch("functions.classes.query", side_effect=self._fake_query):
+            rv = client.get("/api/classes/by-school?school=Chiredzi+High+School")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 3
+
+    @feature_test("classes_by_school_search_by_subject")
+    def test_search_filters_by_subject(self, client):
+        """GET with search=physics returns only Physics class."""
+        with patch("functions.classes.query", side_effect=self._fake_query):
+            rv = client.get("/api/classes/by-school?school=Chiredzi+High+School&search=physics")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Form 3B"
