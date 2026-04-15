@@ -294,7 +294,7 @@ export default function StudentSettingsScreen() {
       <SectionCard title="Support">
         <TouchableOpacity
           style={styles.linkRow}
-          onPress={() => openLink('https://wa.me/263000000000')}
+          onPress={() => openLink('mailto:support@neriah.ai')}
         >
           <Text style={styles.linkRowText}>Contact support</Text>
           <Text style={styles.linkRowArrow}>›</Text>

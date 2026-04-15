@@ -7142,7 +7142,7 @@ function Toast({ message, type = 'success', onDone }: { message: string; type?: 
 
 // SCREEN: Teacher Settings (web)
 // ──────────────────────────────────────────────────────────────────────────────
-function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
+function TeacherSettingsWebScreen({ onBack, onAnalytics }: { onBack: () => void; onAnalytics?: () => void }) {
   const [pinActive, setPinActive]   = useState(false);
   const [pinModal,  setPinModal]    = useState<PinModalMode | null>(null);
   const [toast,     setToast]       = useState('');
@@ -7294,13 +7294,13 @@ function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
       {/* Bottom tab bar */}
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
         {[
-          { icon: <Home size={16} />, label: 'Classes', active: false },
-          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false },
-          { icon: <Settings size={16} />, label: 'Settings', active: true },
+          { icon: <Home size={16} />,     label: 'Classes',   active: false, onClick: onBack },
+          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
+          { icon: <Settings size={16} />, label: 'Settings',  active: true,  onClick: undefined as (() => void) | undefined },
         ].map(tab => (
           <div
             key={tab.label}
-            onClick={tab.label === 'Classes' ? onBack : undefined}
+            onClick={tab.onClick}
             style={{
               flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
               justifyContent: 'center', gap: 2, cursor: 'pointer',
@@ -7335,7 +7335,7 @@ function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Student Settings (web)
 // ──────────────────────────────────────────────────────────────────────────────
-function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void; studentName: string }) {
+function StudentSettingsWebScreen({ onBack, onResults, studentName }: { onBack: () => void; onResults?: () => void; studentName: string }) {
   const firstName = studentName.split(' ')[0];
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg }}>
@@ -7409,13 +7409,13 @@ function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void;
       {/* Bottom tabs */}
       <div style={{ height: 50, background: C.white, borderTop: `1px solid ${C.border}`, display: 'flex', flexShrink: 0 }}>
         {[
-          { icon: <Home size={16} />, label: 'Home', active: false },
-          { icon: <BarChart2 size={16} />, label: 'Results', active: false },
-          { icon: <Settings size={16} />, label: 'Settings', active: true },
+          { icon: <Home size={16} />,     label: 'Home',     active: false, onClick: onBack },
+          { icon: <BarChart2 size={16} />, label: 'Results',  active: false, onClick: onResults },
+          { icon: <Settings size={16} />, label: 'Settings', active: true,  onClick: undefined as (() => void) | undefined },
         ].map(tab => (
           <div
             key={tab.label}
-            onClick={tab.label === 'Home' ? onBack : undefined}
+            onClick={tab.onClick}
             style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
           >
             <span style={{ color: tab.active ? C.amber : C.g500 }}>{tab.icon}</span>
@@ -7531,7 +7531,7 @@ export default function DemoPage() {
           />
         );
       case 't-settings':
-        return <TeacherSettingsWebScreen onBack={() => go('classes')} />;
+        return <TeacherSettingsWebScreen onBack={() => go('classes')} onAnalytics={() => go('analytics')} />;
       case 'add-homework':
         return (
           <AddHomeworkScreen
@@ -7666,7 +7666,7 @@ export default function DemoPage() {
             if (!sTeacherNewClass) { sGo('classes'); return null; }
             return <ClassJoinCodeScreen cls={sTeacherNewClass} onDone={() => { setSTeacherNewClass(null); sGo('classes'); }} />;
           case 't-settings':
-            return <TeacherSettingsWebScreen onBack={() => sGo('classes')} />;
+            return <TeacherSettingsWebScreen onBack={() => sGo('classes')} onAnalytics={() => sGo('analytics')} />;
           case 'add-homework':
             return <AddHomeworkScreen onBack={() => sGo('classes')} onSuccess={(data) => { setSchemeData(data); sGo('review-scheme'); }} demoToken={demoToken} />;
           case 'review-scheme':
@@ -7707,7 +7707,7 @@ export default function DemoPage() {
       case 's-home':
         return <StudentHomeScreen studentName={studentName} submissionsOpen={submissionsOpen} onSubmit={() => setSScreen('s-submit')} onResults={() => setSScreen('s-results')} onTutor={() => setSScreen('s-tutor')} onSettings={() => setSScreen('s-settings')} />;
       case 's-settings':
-        return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} studentName={studentName} />;
+        return <StudentSettingsWebScreen onBack={() => setSScreen('s-home')} onResults={() => setSScreen('s-results')} studentName={studentName} />;
       case 's-submit':
         return (
           <StudentSubmitScreen
