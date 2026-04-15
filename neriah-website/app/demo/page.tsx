@@ -1799,7 +1799,7 @@ function RegisterScreen({ onSignIn, onContinue }: { onSignIn: () => void; onCont
 
       {/* Icon badge — 72×72, light teal rounded square, borderRadius 16, teal clipboard 36px */}
       <div style={{
-        width: 72, height: 72, borderRadius: 16, background: '#E8F4F4',
+        width: 72, height: 72, borderRadius: 16, background: C.primaryLight,
         display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 6,
       }}>
         <ClipboardList size={36} color={C.teal} />
