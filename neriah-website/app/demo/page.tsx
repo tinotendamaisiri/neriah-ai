@@ -211,7 +211,7 @@ function SkeletonRow({ width = '100%', height = 56 }: { width?: string | number;
 }
 
 // ── Demo API ──────────────────────────────────────────────────────────────────
-export const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-grading/api';
+export const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
 
 export async function demoFetch(path: string, opts: RequestInit = {}, token?: string | null) {
   try {
@@ -1292,12 +1292,15 @@ function PhoneScreen({
 
   const handleContinue = async () => {
     const phone = dialCode + number;
+    console.log('[Web OTP] Submitting phone:', phone);
+    console.log('[Web OTP] Calling:', `${DEMO_API}/demo/auth/send-otp`);
     setLoading(true);
     const res = await demoFetch('/demo/auth/send-otp', {
       method: 'POST',
       body: JSON.stringify({ phone }),
     });
     setLoading(false);
+    console.log('[Web OTP] Response:', res ? JSON.stringify(res) : 'null (fetch failed or non-2xx)');
     const channel: 'whatsapp' | 'sms' = res?.channel ?? 'sms';
     onContinue(phone, channel);
   };

@@ -1107,6 +1107,83 @@ def demo_student_analytics(student_id: str):
     return jsonify(data), 200
 
 
+# ── GET /api/demo/analytics/homework/<homework_id> ───────────────────────────
+
+@demo_bp.get("/demo/analytics/homework/<homework_id>")
+def demo_homework_analytics(homework_id: str):
+    """Return per-student scores for a single homework assignment."""
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    ak = get_doc("answer_keys", homework_id)
+    if not ak:
+        # Fallback to demo canned data
+        return jsonify({
+            "has_data": True,
+            "homework_id": homework_id,
+            "homework_title": "Test Homework",
+            "class_id": DEMO_CLASS_ID,
+            "class_name": "Form 2A",
+            "submission_count": 0,
+            "average_score": 0,
+            "highest_score": 0,
+            "lowest_score": 0,
+            "pass_rate": 0,
+            "students": [],
+        }), 200
+
+    class_id = ak.get("class_id", DEMO_CLASS_ID)
+    all_marks = query("marks", [("answer_key_id", "==", homework_id)])
+    approved = [m for m in all_marks if m.get("approved") or m.get("status") in ("approved", "graded")]
+
+    if not approved:
+        return jsonify({
+            "has_data": False,
+            "reason": "no_graded_submissions",
+            "homework_id": homework_id,
+            "homework_title": ak.get("title") or ak.get("subject") or "Homework",
+            "submission_count": 0,
+            "students": [],
+        }), 200
+
+    students_list = query("students", [("class_id", "==", class_id)])
+    student_map = {s["id"]: s for s in students_list}
+    scores = [float(m.get("percentage", 0)) for m in approved]
+
+    students_out = []
+    for m in sorted(approved, key=lambda x: float(x.get("percentage", 0)), reverse=True):
+        sid = m.get("student_id", "")
+        stu = student_map.get(sid, {})
+        name = f"{stu.get('first_name', '')} {stu.get('surname', '')}".strip() or stu.get("name", "Student")
+        pct = round(float(m.get("percentage", 0)), 1)
+        students_out.append({
+            "student_id": sid,
+            "name": name,
+            "score": m.get("score", 0),
+            "max_score": m.get("max_score", 0),
+            "percentage": pct,
+            "pass_fail": "pass" if pct >= 50 else "fail",
+            "mark_id": m.get("id", ""),
+        })
+
+    avg = round(sum(scores) / len(scores), 1) if scores else 0
+    return jsonify({
+        "has_data": True,
+        "homework_id": homework_id,
+        "homework_title": ak.get("title") or ak.get("subject") or "Homework",
+        "class_id": class_id,
+        "class_name": "Form 2A",
+        "submission_count": len(approved),
+        "average_score": avg,
+        "highest_score": round(max(scores), 1) if scores else 0,
+        "lowest_score": round(min(scores), 1) if scores else 0,
+        "pass_rate": round(
+            100 * len([s for s in students_out if s["pass_fail"] == "pass"]) / len(students_out), 1
+        ) if students_out else 0,
+        "students": students_out,
+    }), 200
+
+
 # ── POST /api/demo/study-suggestions ─────────────────────────────────────────
 
 @demo_bp.post("/demo/study-suggestions")
@@ -1562,8 +1639,14 @@ def demo_auth_register():
 
 
 def _demo_channel(phone: str) -> str:
-    """Return 'whatsapp' for Zimbabwean numbers, 'sms' for everything else."""
-    return "whatsapp" if phone.startswith("+263") else "sms"
+    """Return the OTP delivery channel for this phone number.
+
+    WhatsApp pending Meta business verification — using SMS for all demo users
+    until the WhatsApp Business API is approved.
+    """
+    # WhatsApp pending Meta verification — using SMS for all demo users
+    _ = phone  # phone kept as param for future use once WA is verified
+    return "sms"
 
 
 @demo_bp.post("/demo/auth/send-otp")
@@ -1579,6 +1662,7 @@ def demo_auth_send_otp():
 
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
+    logger.info("[demo] send-otp called with phone=%r", phone)
     if not phone:
         return jsonify({"error": "phone is required"}), 400
 
@@ -1592,7 +1676,7 @@ def demo_auth_send_otp():
         "created_at":      _now(),
     })
 
-    logger.info("[demo] send-otp phone=%s channel=%s vid=%s", phone, channel, verification_id)
+    logger.info("[demo] send-otp OK phone=%s channel=%s vid=%s", phone, channel, verification_id)
     return jsonify({"verification_id": verification_id, "channel": channel}), 200
 
 

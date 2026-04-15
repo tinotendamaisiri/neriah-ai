@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from google.cloud import firestore
@@ -18,18 +19,25 @@ _db: Optional[firestore.Client] = None
 def get_db() -> firestore.Client:
     global _db
     if _db is None:
-        # In demo mode the FIRESTORE_DATABASE env var should be set to "demo".
-        # Fallback: if NERIAH_ENV=demo but the var is still "(default)", override
-        # here so a misconfigured deploy can't accidentally write to production.
+        # Use FIRESTORE_DATABASE env var if explicitly set.
+        # Safety: if NERIAH_ENV=demo and FIRESTORE_DATABASE is absent from the
+        # environment (not just defaulted by pydantic), auto-default to "demo"
+        # so a misconfigured deploy can't accidentally write to production.
+        # To opt the demo function into (default), set FIRESTORE_DATABASE=(default)
+        # explicitly in the function's environment variables.
         from shared.config import is_demo
         db_name = settings.FIRESTORE_DATABASE
-        if is_demo() and db_name == "(default)":
+        if is_demo() and os.getenv("FIRESTORE_DATABASE") is None:
             db_name = "demo"
-            logger.warning("NERIAH_ENV=demo but FIRESTORE_DATABASE not set — defaulting to 'demo'")
+            logger.warning(
+                "NERIAH_ENV=demo but FIRESTORE_DATABASE not set — defaulting to 'demo'. "
+                "Set FIRESTORE_DATABASE=(default) in function env vars to use the default database."
+            )
         _db = firestore.Client(
             project=settings.GCP_PROJECT_ID,
             database=db_name,
         )
+        logger.info("Firestore client initialised: project=%s database=%s", settings.GCP_PROJECT_ID, db_name)
     return _db
 
 
