@@ -6788,6 +6788,14 @@ function TeacherSettingsWebScreen({ onBack }: { onBack: () => void }) {
         {/* Offline AI Model */}
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
         <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
+          {/* Model name */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E4B</div>
+            </div>
+            <div style={{ fontSize: 12, color: C.g500 }}>3.5 GB</div>
+          </div>
           {/* Cloud-only badge */}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
             <Cloud size={13} color={C.g500} />
@@ -6903,6 +6911,14 @@ function StudentSettingsWebScreen({ onBack, studentName }: { onBack: () => void;
         {/* Offline AI Model */}
         <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Offline AI Model</div>
         <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 20 }}>
+          {/* Model name */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
+              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E2B</div>
+            </div>
+            <div style={{ fontSize: 12, color: C.g500 }}>2.5 GB</div>
+          </div>
           {/* Cloud-only badge */}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '6px 10px', marginBottom: 14 }}>
             <Cloud size={13} color={C.g500} />

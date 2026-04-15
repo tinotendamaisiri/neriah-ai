@@ -299,8 +299,9 @@ export default function SettingsScreen() {
         <View style={styles.modelCard}>
           <View style={styles.modelCardHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.modelCardName}>
-                {modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'Gemma 4 E4B'}
+              <Text style={styles.modelCardName}>Neriah AI</Text>
+              <Text style={styles.modelCardSubtitle}>
+                {modelVariant === 'e2b' ? 'Powered by Gemma 4 E2B' : 'Powered by Gemma 4 E4B'}
               </Text>
               <Text style={styles.modelCardSize}>
                 {modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '3.5 GB'}
@@ -646,8 +647,9 @@ const styles = StyleSheet.create({
     borderRadius: 10, padding: 14, marginBottom: 4,
   },
   modelCardHeader: { flexDirection: 'row', alignItems: 'center' },
-  modelCardName: { fontSize: 15, fontWeight: '600', color: COLORS.gray900 },
-  modelCardSize: { fontSize: 13, color: COLORS.textLight, marginTop: 2 },
+  modelCardName: { fontSize: 15, fontWeight: '700', color: COLORS.gray900 },
+  modelCardSubtitle: { fontSize: 12, color: COLORS.gray500, marginTop: 1 },
+  modelCardSize: { fontSize: 13, color: COLORS.textLight, marginTop: 3 },
   modelStatusBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   modelStatusDone: { backgroundColor: '#EBF9F1' },
   modelStatusActive: { backgroundColor: COLORS.teal50 },
