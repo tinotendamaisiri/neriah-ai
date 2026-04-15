@@ -8051,7 +8051,7 @@ export default function DemoPage() {
         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
         padding: '28px 16px 48px', gap: 0, flexWrap: 'wrap',
       }}>
-        <PhoneFrame label="Teacher" labelColor={C.teal} showAIStatus>
+        <PhoneFrame label="Teacher" labelColor={C.teal} showAIStatus={!(['welcome','phone','otp','register','class-setup','class-join-code'] as TScreen[]).includes(screen)}>
           {renderTeacherScreen()}
         </PhoneFrame>
 
@@ -8072,7 +8072,7 @@ export default function DemoPage() {
           </div>
         </div>
 
-        <PhoneFrame label="Student" labelColor={C.amber700}>
+        <PhoneFrame label="Student" labelColor={C.amber700} showAIStatus={!(['s-welcome','s-phone','s-otp','s-register'] as SStudentScreen[]).includes(sScreen)}>
           {renderStudentScreen()}
         </PhoneFrame>
       </main>
