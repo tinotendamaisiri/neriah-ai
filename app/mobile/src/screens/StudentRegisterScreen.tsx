@@ -86,6 +86,15 @@ export default function StudentRegisterScreen() {
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedClassName, setSelectedClassName] = useState('');
 
+  // Manual entry panel (shown below fetched class list)
+  const [showManual, setShowManual] = useState(false);
+  const [manualClassName, setManualClassName] = useState('');
+  const [manualJoinCode, setManualJoinCode] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualError, setManualError] = useState('');
+  // When true the student registered without a verified class_id (offline/unmatched)
+  const [isPendingClass, setIsPendingClass] = useState(false);
+
   // Step 4 — name
   const [firstName, setFirstName] = useState('');
   const [surname, setSurname] = useState('');
@@ -178,6 +187,43 @@ export default function StudentRegisterScreen() {
   const handleSelectClass = (cls: ClassOption) => {
     setSelectedClassId(cls.id);
     setSelectedClassName(cls.name);
+    setIsPendingClass(false);
+    setStep('name');
+  };
+
+  // Confirm manual class entry — resolves join code if provided, else marks pending
+  const handleManualAdd = async () => {
+    const name = manualClassName.trim();
+    const code = manualJoinCode.trim().toUpperCase();
+    if (!name) {
+      setManualError('Please enter your class name.');
+      return;
+    }
+    setManualError('');
+    if (code) {
+      // Try to resolve the join code so we get a real class_id
+      setManualLoading(true);
+      try {
+        const { getClassJoinInfo } = await import('../services/api');
+        const cls = await getClassJoinInfo(code);
+        setSelectedClassId(cls.id);
+        setSelectedClassName(cls.name || name);
+        setIsPendingClass(false);
+      } catch {
+        // Offline or invalid code — store name + code for later merge
+        setSelectedClassId('');
+        setSelectedClassName(name);
+        setIsPendingClass(true);
+      } finally {
+        setManualLoading(false);
+      }
+    } else {
+      // No join code — pending until teacher matches them
+      setSelectedClassId('');
+      setSelectedClassName(name);
+      setIsPendingClass(true);
+    }
+    setShowManual(false);
     setStep('name');
   };
 
@@ -190,8 +236,8 @@ export default function StudentRegisterScreen() {
       Alert.alert('Name required', 'Please enter your first name and surname.');
       return;
     }
-    if (!selectedClassId) {
-      Alert.alert('Class required', 'Please select your class.');
+    if (!selectedClassId && !selectedClassName) {
+      Alert.alert('Class required', 'Please select or enter your class.');
       return;
     }
 
@@ -201,7 +247,9 @@ export default function StudentRegisterScreen() {
         first_name: fn,
         surname: sn,
         phone: phone.trim(),
-        class_id: selectedClassId,
+        ...(selectedClassId ? { class_id: selectedClassId } : {}),
+        ...(isPendingClass && manualJoinCode.trim() ? { class_join_code: manualJoinCode.trim().toUpperCase() } : {}),
+        ...(isPendingClass ? { manual_class_name: selectedClassName } : {}),
       });
       navigation.navigate('OTP', {
         phone: phone.trim(),
@@ -349,24 +397,14 @@ export default function StudentRegisterScreen() {
 
             {classesLoading ? (
               <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 32 }} />
-            ) : classes.length === 0 ? (
-              <>
-                <Text style={styles.emptyText}>
-                  No classes found at {selectedSchoolName || 'this school'}.{'\n\n'}
-                  Ask your teacher for their class join code and use it to join directly.
-                </Text>
-                <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Phone')}>
-                  <Text style={styles.buttonText}>Sign in with join code</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { marginTop: 8 }]}
-                  onPress={() => setStep('school')}
-                >
-                  <Text style={styles.secondaryButtonText}>Try a different school</Text>
-                </TouchableOpacity>
-              </>
             ) : (
               <>
+                {classes.length === 0 && (
+                  <Text style={styles.emptyText}>
+                    No classes found at {selectedSchoolName || 'this school'} yet.
+                  </Text>
+                )}
+
                 {classes.map((cls) => (
                   <TouchableOpacity
                     key={cls.id}
@@ -387,6 +425,71 @@ export default function StudentRegisterScreen() {
                     </Text>
                   </TouchableOpacity>
                 ))}
+
+                {/* ── Manual entry panel ─────────────────────────────────── */}
+                {!showManual ? (
+                  <TouchableOpacity
+                    style={styles.manualToggle}
+                    onPress={() => { setShowManual(true); setManualError(''); }}
+                  >
+                    <Text style={styles.manualToggleText}>
+                      {classes.length === 0 ? "Add my class manually →" : "My class isn't listed →"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.manualPanel}>
+                    <Text style={styles.manualPanelTitle}>Add your class</Text>
+                    <Text style={styles.manualPanelHint}>
+                      Enter your class name. If your teacher gave you a join code, add it too — otherwise your details will be saved and linked once your teacher sets up the class.
+                    </Text>
+
+                    <Text style={styles.label}>Class name</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. Form 2A"
+                      value={manualClassName}
+                      onChangeText={setManualClassName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      returnKeyType="next"
+                    />
+
+                    <Text style={[styles.label, { marginTop: 10 }]}>Join code (optional)</Text>
+                    <TextInput
+                      style={[styles.input, { textTransform: 'uppercase', letterSpacing: 2 }]}
+                      placeholder="e.g. NR2A01"
+                      value={manualJoinCode}
+                      onChangeText={(t) => setManualJoinCode(t.toUpperCase())}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      maxLength={8}
+                      returnKeyType="done"
+                      onSubmitEditing={handleManualAdd}
+                    />
+
+                    {manualError ? (
+                      <Text style={styles.manualError}>{manualError}</Text>
+                    ) : null}
+
+                    <TouchableOpacity
+                      style={[styles.button, { marginTop: 14 }, manualLoading && styles.buttonDisabled]}
+                      onPress={handleManualAdd}
+                      disabled={manualLoading}
+                    >
+                      {manualLoading
+                        ? <ActivityIndicator color={COLORS.white} />
+                        : <Text style={styles.buttonText}>Add this class</Text>
+                      }
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.secondaryButton, { marginTop: 8 }]}
+                      onPress={() => { setShowManual(false); setManualError(''); }}
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </>
             )}
           </>
@@ -398,8 +501,9 @@ export default function StudentRegisterScreen() {
             <Text style={styles.heading}>Your name</Text>
             <Text style={styles.subheading}>
               {selectedClassName
-                ? `Joining ${selectedClassName} at ${selectedSchoolName}`
+                ? `Joining ${selectedClassName}${selectedSchoolName ? ` at ${selectedSchoolName}` : ''}`
                 : `Joining ${selectedSchoolName}`}
+              {isPendingClass ? '\nYour class will be confirmed once your teacher links you.' : ''}
             </Text>
 
             <View style={styles.form}>
@@ -652,4 +756,21 @@ const styles = StyleSheet.create({
   customSchoolButtonText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
 
   customInputContainer: { padding: 20, gap: 4 },
+
+  // Manual entry
+  manualToggle: {
+    marginTop: 20, paddingVertical: 14, alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
+    borderStyle: 'dashed',
+  },
+  manualToggleText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
+
+  manualPanel: {
+    marginTop: 20, padding: 16, borderRadius: 12,
+    borderWidth: 1, borderColor: COLORS.amber300,
+    backgroundColor: COLORS.amber50,
+  },
+  manualPanelTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  manualPanelHint: { fontSize: 13, color: COLORS.gray500, lineHeight: 18, marginBottom: 4 },
+  manualError: { fontSize: 13, color: '#DC2626', marginTop: 6, fontWeight: '500' },
 });

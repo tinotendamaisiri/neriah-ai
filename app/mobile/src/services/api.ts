@@ -509,13 +509,14 @@ export const studentActivate = async (data: {
   return res.data;
 };
 
-/** Self-register as a new student. Provide class_id (new flow) or class_join_code (legacy). */
+/** Self-register as a new student. Provide class_id, class_join_code, or manual_class_name (offline/unmatched). */
 export const studentRegister = async (data: {
   first_name: string;
   surname: string;
   phone: string;
   class_id?: string;
   class_join_code?: string;
+  manual_class_name?: string;
 }): Promise<OtpSentResponse> => {
   const res = await client.post('/auth/student/register', data);
   return res.data;
