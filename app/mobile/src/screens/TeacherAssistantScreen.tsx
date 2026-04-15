@@ -671,7 +671,11 @@ export default function TeacherAssistantScreen() {
               {/* Hero: centered in the available scroll space */}
               <View style={s.emptyHero}>
                 <View style={s.emptyIcon}>
-                  <Ionicons name="sparkles" size={34} color={AI.teal} />
+                  <Image
+                    source={require('../../assets/icon.png')}
+                    style={{ width: 48, height: 48, tintColor: AI.teal }}
+                    resizeMode="contain"
+                  />
                 </View>
                 <Text style={s.emptyTitle}>Neriah AI</Text>
                 <Text style={s.emptySub}>Your AI teaching assistant</Text>
@@ -905,8 +909,8 @@ const s = StyleSheet.create({
   emptyCont: { flexGrow: 1, padding: 24 },
   emptyHero: { flex: 1, alignItems: 'center', justifyContent: 'center', width: '100%' },
   emptyIcon: {
-    width: 68, height: 68, borderRadius: 34,
-    backgroundColor: '#E8F4F4', borderWidth: 1, borderColor: AI.teal,
+    width: 80, height: 80, borderRadius: 40,
+    backgroundColor: '#E8F4F4', borderWidth: 2, borderColor: AI.teal,
     alignItems: 'center', justifyContent: 'center', marginBottom: 16,
   },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: AI.text, marginBottom: 6 },

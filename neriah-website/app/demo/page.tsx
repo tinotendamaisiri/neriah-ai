@@ -3517,10 +3517,11 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
           {/* Hero: centers icon + title + subtitle in remaining space */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', padding: '20px 20px 12px', gap: 8 }}>
-            <div style={{ width: 60, height: 60, borderRadius: 30, background: C.primaryLight,
-              border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center',
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#E8F4F4',
+              border: `2px solid ${C.teal}`, display: 'flex', alignItems: 'center',
               justifyContent: 'center', marginBottom: 8 }}>
-              <Sparkles size={28} color={C.teal} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/images/icon-transparent.png" style={{ width: 48, height: 48, filter: 'invert(29%) sepia(69%) saturate(456%) hue-rotate(147deg) brightness(90%) contrast(91%)' }} alt="Neriah" />
             </div>
             <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Neriah AI</span>
             <span style={{ fontSize: 13, color: C.g500 }}>Your AI teaching assistant</span>
