@@ -1124,7 +1124,8 @@ function PhoneInputRow({ value, onChange, compact = false }: { value: string; on
         type="tel"
         inputMode="numeric"
         value={value}
-        onChange={e => onChange(e.target.value.replace(/\D/g, ''), country.dialCode)}
+        onChange={e => { const d = e.target.value.replace(/\D/g, '').replace(/^0/, ''); if (d.length <= (country.digits ?? 9)) onChange(e.target.value.replace(/\D/g, ''), country.dialCode); }}
+        maxLength={(country.digits ?? 9) + 1}
         placeholder="771 234 567"
         style={{
           flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
@@ -6428,11 +6429,6 @@ function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => voi
   const [searching, setSearching] = useState(false);
   const [searchedSchool, setSearchedSchool] = useState('');
   const [joiningId, setJoiningId] = useState<string | null>(null);
-  // Code fallback
-  const [showCode, setShowCode] = useState(false);
-  const [joinCode, setJoinCode] = useState('');
-  const [joinInfo, setJoinInfo] = useState<{ name: string } | null>(null);
-  const [joinErr, setJoinErr] = useState('');
   const [joining, setJoining] = useState(false);
 
   useEffect(() => {
@@ -6447,26 +6443,6 @@ function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => voi
     if (!confirm(`Leave ${name}? You will lose access to its assignments and results.`)) return;
     await demoFetch('/demo/auth/student/leave-class', { method: 'DELETE', body: JSON.stringify({ class_id: cid }) }, demoToken);
     setClasses(prev => prev.filter(c => c.class_id !== cid));
-  };
-
-  const handleCodeChange = async (val: string) => {
-    const upper = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    setJoinCode(upper); setJoinErr(''); setJoinInfo(null);
-    if (upper.length === 6) {
-      const info = await demoFetch(`/demo/auth/student/lookup`, { method: 'POST', body: JSON.stringify({ join_code: upper }) }, demoToken);
-      if (info?.name) setJoinInfo({ name: info.name });
-      else setJoinErr('Class not found.');
-    }
-  };
-
-  const handleJoin = async () => {
-    setJoining(true);
-    const res = await demoFetch('/demo/auth/student/join-class', { method: 'POST', body: JSON.stringify({ join_code: joinCode }) }, demoToken);
-    if (res) {
-      setClasses(prev => [...prev, { class_id: res.class_id ?? joinCode, name: joinInfo?.name ?? 'Class', subject: '', teacher_name: '', school_name: '' }]);
-      setJoinOpen(false); setJoinCode(''); setJoinInfo(null);
-    } else { setJoinErr('Could not join.'); }
-    setJoining(false);
   };
 
   return (
@@ -6546,14 +6522,6 @@ function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => voi
                   </div>
                 );
               })}
-              <button onClick={() => setShowCode(!showCode)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.teal, fontSize: 13, fontWeight: 600, marginTop: 20, fontFamily: 'inherit' }}>{showCode ? 'Hide code input' : 'Have a join code? \u2192'}</button>
-              {showCode && (
-                <div style={{ marginTop: 10 }}>
-                  <input type="text" value={joinCode} onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); setJoinCode(v); setJoinErr(''); setJoinInfo(null); if (v.length === 6) { demoFetch('/demo/auth/student/lookup', { method: 'POST', body: JSON.stringify({ join_code: v }) }, demoToken).then(d => { if (d?.name) setJoinInfo({ name: d.name }); else setJoinErr('Class not found.'); }); } }} placeholder="AB12CD" maxLength={6} style={{ width: '100%', border: `2px solid ${C.teal}`, borderRadius: 10, padding: '10px 14px', fontSize: 18, fontWeight: 700, letterSpacing: 4, textAlign: 'center', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
-                  {joinErr && <div style={{ color: C.red, fontSize: 13, marginTop: 8, textAlign: 'center' }}>{joinErr}</div>}
-                  {joinInfo && <button onClick={async () => { setJoining(true); await demoFetch('/demo/auth/student/join-class', { method: 'POST', body: JSON.stringify({ join_code: joinCode }) }, demoToken); setClasses(prev => [...prev, { class_id: joinCode, name: joinInfo.name, subject: '', teacher_name: '', school_name: '' }]); setJoinOpen(false); setJoining(false); }} disabled={joining} style={{ marginTop: 12, width: '100%', background: joining ? C.g200 : C.teal, border: 'none', borderRadius: 12, padding: '12px 0', cursor: joining ? 'default' : 'pointer', color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit' }}>{joining ? 'Joining...' : `Join ${joinInfo.name}`}</button>}
-                </div>
-              )}
             </div>
           </div>
         </div>
