@@ -289,9 +289,10 @@ function StudentTabs() {
         tabBarStyle: { borderTopColor: COLORS.border },
         tabBarIcon: ({ color, size }) => {
           const icons: Partial<Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap>> = {
-            StudentSubmit: 'camera-outline',
-            StudentResults: 'checkmark-circle-outline',
+            StudentHome: 'home-outline',
+            StudentSubmit: 'document-text-outline',
             StudentTutor: 'chatbubble-ellipses-outline',
+            StudentResults: 'checkmark-circle-outline',
           };
           return <Ionicons name={icons[route.name] ?? 'ellipse-outline'} size={size} color={color} />;
         },
@@ -300,22 +301,22 @@ function StudentTabs() {
       <StudentTab.Screen
         name="StudentHome"
         component={StudentHomeScreen}
-        options={{ title: 'Home', headerShown: false, tabBarButton: () => null }}
+        options={{ title: 'Home', tabBarLabel: 'Home', headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentSubmit"
         component={StudentSubmitScreen}
-        options={{ title: 'Submit Work', tabBarLabel: 'Submit', headerShown: false }}
-      />
-      <StudentTab.Screen
-        name="StudentResults"
-        component={StudentResultsScreen}
-        options={{ title: 'My Results', tabBarLabel: 'Results', headerShown: false }}
+        options={{ title: 'Homework', tabBarLabel: 'Homework', headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentTutor"
         component={StudentTutorScreen}
         options={{ title: 'Tutor', tabBarLabel: 'Tutor', headerShown: false }}
+      />
+      <StudentTab.Screen
+        name="StudentResults"
+        component={StudentResultsScreen}
+        options={{ title: 'My Results', tabBarLabel: 'Results', headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentSettings"
