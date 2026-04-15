@@ -301,27 +301,27 @@ function StudentTabs() {
       <StudentTab.Screen
         name="StudentHome"
         component={StudentHomeScreen}
-        options={{ title: 'Homework', tabBarLabel: 'Homework', headerShown: false }}
+        options={{ title: t('my_homework'), tabBarLabel: t('my_homework'), headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentTutor"
         component={StudentTutorScreen}
-        options={{ title: 'Tutor', tabBarLabel: 'Tutor', headerShown: false }}
+        options={{ title: t('tutor'), tabBarLabel: t('tutor'), headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentResults"
         component={StudentResultsScreen}
-        options={{ title: 'My Results', tabBarLabel: 'Results', headerShown: false }}
+        options={{ title: t('results'), tabBarLabel: t('results'), headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentSubmit"
         component={StudentSubmitScreen}
-        options={{ title: 'Submit', headerShown: false, tabBarButton: () => null }}
+        options={{ title: t('submit'), headerShown: false, tabBarButton: () => null }}
       />
       <StudentTab.Screen
         name="StudentSettings"
         component={StudentSettingsScreen}
-        options={{ title: 'Settings', headerShown: false, tabBarButton: () => null }}
+        options={{ title: t('settings'), headerShown: false, tabBarButton: () => null }}
       />
     </StudentTab.Navigator>
   );

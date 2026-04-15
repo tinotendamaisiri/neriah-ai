@@ -215,7 +215,9 @@ export const translations = {
     submission_history: 'Submission History',
     commendations: 'Commendations',
     no_chart_data: 'Not enough data for chart',
-    // Student home / class switcher
+    // Student tabs + home
+    tutor: 'Tutor',
+    results: 'Results',
     my_homework: 'Homework',
     my_assignments: 'My Assignments',
     no_assignments_yet: 'No assignments yet',
@@ -427,6 +429,8 @@ export const translations = {
     submission_history: 'Nhoroondo yeZvishumiso',
     commendations: 'Kurumbidzwa',
     no_chart_data: 'Hapana data yakakwana yechati',
+    tutor: 'Mudzidzisi',
+    results: 'Mhedzisiro',
     my_homework: 'Basa reKudzidza',
     my_assignments: 'Mabasa Angu',
     no_assignments_yet: 'Hapana mabasa zvachose',
@@ -638,6 +642,8 @@ export const translations = {
     submission_history: 'Umlando Wokufaka',
     commendations: 'Izincomo',
     no_chart_data: 'Amanani anele ishadi awekho',
+    tutor: 'Umlaleli',
+    results: 'Imiphumela',
     my_homework: 'Umsebenzi weKhaya',
     my_assignments: 'Imisebenzi Yami',
     no_assignments_yet: 'Ayikho imisebenzi okwamanje',
