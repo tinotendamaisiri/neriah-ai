@@ -6366,155 +6366,130 @@ function StudentTutorScreen({
     reader.readAsDataURL(f);
   }
 
-  // Old render replaced — new Teacher-AI-style render follows
-
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg, position: 'relative' }}>
       {/* Header */}
-      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 14, paddingBottom: 12, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            onClick={onBack}
-            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: C.white, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-          >
-            <ChevronLeft size={18} color={C.white} />
-          </button>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.white, lineHeight: 1.2 }}>AI Tutor</div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 1 }}>
-              {typing ? `Thinking${dots}` : 'Gemma 4 · Socratic mode · Chapter 5 Maths'}
+      <div style={{ background: C.teal, paddingInline: 16, paddingTop: 14, paddingBottom: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button onClick={() => setShowDrawer(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Menu size={22} color={C.white} /></button>
+        <span style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Neriah</span>
+        <button onClick={startNew} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Pencil size={18} color={C.white} /></button>
+      </div>
+
+      {/* Context pills */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '8px 16px', background: C.white, borderBottom: `1px solid ${C.border}` }}>
+        <span style={{ background: C.primaryLight, borderRadius: 16, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: C.teal }}>Mathematics</span>
+        <span style={{ background: C.primaryLight, borderRadius: 16, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: C.teal }}>Form 2</span>
+      </div>
+
+      {/* Empty state or messages */}
+      {messages.length === 0 && !sending ? (
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 20 }}>
+          <div style={{ textAlign: 'center', marginTop: 40 }}>
+            <div style={{ width: 72, height: 72, borderRadius: 36, background: C.primaryLight, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+              <img src="/images/icon-transparent.png" style={{ width: 40, height: 40 }} alt="Neriah" />
             </div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Neriah</div>
+            <div style={{ fontSize: 13, color: C.grayTxt, marginTop: 2 }}>Your AI study assistant</div>
           </div>
-          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Bot size={18} color={C.white} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 24 }}>
+            {QUICK_ACTIONS.map(({ label, icon }) => (
+              <button key={label} onClick={() => sendMsg(label)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: '11px 14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                {icon}<span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{label}</span>
+              </button>
+            ))}
           </div>
         </div>
-      </div>
-
-      {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {messages.map(msg => {
-          const isUser = msg.role === 'user';
-          return (
-            <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
-              {!isUser && (
-                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-                  <img src="/neriah-logo.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {messages.map(msg => {
+            const isUser = msg.role === 'user';
+            return (
+              <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
+                {!isUser && <div style={{ width: 28, height: 28, borderRadius: 14, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><img src="/images/icon-transparent.png" style={{ width: 16, height: 16, filter: 'brightness(0) invert(1)' }} alt="" /></div>}
+                <div style={{ maxWidth: '78%', background: isUser ? C.teal : C.white, borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 13px', border: isUser ? 'none' : `1px solid ${C.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  {msg.imageUri && <img src={msg.imageUri} alt="" style={{ width: '100%', borderRadius: 8, marginBottom: msg.content ? 8 : 0, maxHeight: 160, objectFit: 'cover' }} />}
+                  {msg.content && <div style={{ fontSize: 13, color: isUser ? C.white : C.text, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{msg.content}</div>}
                 </div>
-              )}
-              <div style={{
-                maxWidth: '75%',
-                background: isUser ? C.amber : C.white,
-                borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                padding: '9px 12px',
-                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-                border: isUser ? 'none' : `1px solid ${C.border}`,
-              }}>
-                {msg.imageBase64 && (
-                  <img
-                    src={`data:${msg.imageMimeType ?? 'image/jpeg'};base64,${msg.imageBase64}`}
-                    alt="uploaded"
-                    style={{ width: '100%', borderRadius: 8, marginBottom: msg.content ? 8 : 0, display: 'block', maxHeight: 160, objectFit: 'cover' }}
-                  />
-                )}
-                {msg.content && (
-                  <div style={{ fontSize: 13, color: isUser ? C.white : C.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                    {msg.content}
-                  </div>
-                )}
               </div>
-              {isUser && (
-                <div style={{ width: 24, height: 24, borderRadius: 8, background: C.amber100, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0, marginBottom: 2, fontWeight: 800, color: C.amber700 }}>
-                  {firstName[0]}
-                </div>
-              )}
+            );
+          })}
+          {sending && (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 14, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><img src="/images/icon-transparent.png" style={{ width: 16, height: 16, filter: 'brightness(0) invert(1)' }} alt="" /></div>
+              <div style={{ background: C.white, borderRadius: '16px 16px 16px 4px', padding: '12px 16px', border: `1px solid ${C.border}`, display: 'flex', gap: 5 }}>
+                {[0, 1, 2].map(i => <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: C.teal, opacity: 0.4 }} />)}
+              </div>
             </div>
-          );
-        })}
-
-        {/* Typing indicator */}
-        {typing && (
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ width: 24, height: 24, borderRadius: 8, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 2 }}>
-              <img src="/neriah-logo.png" style={{ width: 14, height: 14, filter: 'brightness(0) invert(1)' }} alt="Neriah" />
-            </div>
-            <div style={{
-              background: C.white, borderRadius: '14px 14px 14px 4px', padding: '10px 14px',
-              border: `1px solid ${C.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-              display: 'flex', gap: 5, alignItems: 'center',
-            }}>
-              {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: 7, height: 7, borderRadius: '50%', background: C.teal,
-                  opacity: dotPhase === i + 1 ? 1 : 0.3,
-                  transform: `scale(${dotPhase === i + 1 ? 1.25 : 1})`,
-                  transition: 'opacity 0.2s, transform 0.2s',
-                }} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+      )}
 
       {/* Input bar */}
-      <div style={{ background: C.white, borderTop: `1px solid ${C.border}`, padding: '10px 12px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Camera button */}
-          <button
-            onClick={() => setTutorCameraOpen(true)}
-            style={{ width: 36, height: 36, borderRadius: 10, background: C.g100, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-            title="Send a photo"
-          >
-            <Camera size={17} color={C.g500} />
-          </button>
-
-          {/* Text input */}
-          <input
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask anything…"
-            disabled={typing}
-            style={{
-              flex: 1, border: `1.5px solid ${input.trim() ? C.teal : C.g200}`, borderRadius: 20,
-              padding: '9px 14px', fontSize: 13, color: C.text, outline: 'none',
-              fontFamily: 'inherit', background: C.white, transition: 'border-color 0.15s',
-            }}
-          />
-
-          {/* Send button */}
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={typing || !input.trim()}
-            style={{
-              width: 36, height: 36, borderRadius: 10, border: 'none', cursor: (typing || !input.trim()) ? 'default' : 'pointer',
-              background: (typing || !input.trim()) ? C.g100 : C.amber,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              transition: 'background 0.15s', boxShadow: (typing || !input.trim()) ? 'none' : '0 2px 8px rgba(245,166,35,0.35)',
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke={(typing || !input.trim()) ? C.g400 : C.white} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+      <div style={{ background: C.white, borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ fontSize: 11, color: C.g400, textAlign: 'center', paddingTop: 6, paddingBottom: 3 }}>Neriah can make mistakes. Verify important info.</div>
+        {attachment && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 12px 6px', background: C.primaryLight, borderRadius: 10, padding: '5px 10px' }}>
+            <span style={{ fontSize: 12, color: C.teal, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.name}</span>
+            <button onClick={() => setAttachment(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.g400, fontSize: 14, padding: 2 }}>&#x2715;</button>
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, padding: '8px 12px 12px' }}>
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setShowAttach(!showAttach)} style={{ width: 36, height: 36, borderRadius: 10, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Paperclip size={18} color={C.g500} /></button>
+            {showAttach && (
+              <div style={{ position: 'absolute', bottom: 42, left: 0, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: 8, zIndex: 10, minWidth: 140 }}>
+                {[
+                  { icon: <Camera size={16} color={C.teal} />, label: 'Camera', onClick: () => { setShowAttach(false); setTutorCameraOpen(true); } },
+                  { icon: <ImageIcon size={16} color={C.teal} />, label: 'Gallery', onClick: () => { setShowAttach(false); galleryRef.current?.click(); } },
+                  { icon: <FileText size={16} color={C.teal} />, label: 'PDF', onClick: () => { setShowAttach(false); pdfRef.current?.click(); } },
+                ].map(opt => (
+                  <button key={opt.label} onClick={opt.onClick} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '8px 10px', borderRadius: 8, fontFamily: 'inherit', fontSize: 13, color: C.text }}>{opt.icon}<span>{opt.label}</span></button>
+                ))}
+              </div>
+            )}
+          </div>
+          <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }} placeholder="Ask Neriah..." disabled={sending} style={{ flex: 1, border: 'none', background: C.g100, borderRadius: 20, padding: '10px 14px', fontSize: 13, color: C.text, outline: 'none', fontFamily: 'inherit' }} />
+          <button onClick={() => sendMsg()} disabled={sending || (!input.trim() && !attachment)} style={{ width: 38, height: 38, borderRadius: 19, background: (!input.trim() && !attachment || sending) ? C.g200 : C.teal, border: 'none', cursor: (!input.trim() && !attachment || sending) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><ArrowUp size={18} color={C.white} /></button>
         </div>
-
-        <div style={{ marginTop: 7, fontSize: 11, color: C.g400, textAlign: 'center' }}>
-          Socratic AI — guides you to the answer, doesn't give it away
-        </div>
+        <input ref={galleryRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileInput} />
+        <input ref={pdfRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={handleFileInput} />
       </div>
 
-      <WebCameraModal
-        open={tutorCameraOpen}
-        onCapture={(base64, mimeType) => {
-          setTutorCameraOpen(false);
-          sendMessage(input || 'Can you help me with this problem?', base64, mimeType);
-          setInput('');
-        }}
-        onClose={() => setTutorCameraOpen(false)}
+      {/* Camera */}
+      <WebCameraModal open={tutorCameraOpen} onCapture={(b64, mime) => { setTutorCameraOpen(false); setAttachment({ name: `photo_${Date.now()}.jpg`, base64: b64, type: mime, dataUrl: `data:${mime};base64,${b64}` }); }} onClose={() => setTutorCameraOpen(false)} />
+
+      {/* Session Drawer */}
+      {showDrawer && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex' }}>
+          <div style={{ width: '80%', background: C.white, boxShadow: '4px 0 20px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><img src="/images/icon-transparent.png" style={{ width: 24, height: 24 }} alt="" /><span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>Neriah</span></div>
+              <button onClick={() => setShowDrawer(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} color={C.g500} /></button>
+            </div>
+            <div style={{ padding: '12px 16px' }}>
+              <button onClick={startNew} style={{ width: '100%', background: C.teal, border: 'none', borderRadius: 10, padding: '11px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: C.white, fontWeight: 700, fontSize: 14, fontFamily: 'inherit' }}><Plus size={18} /><span>New Chat</span></button>
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.05em', paddingInline: 16, marginBottom: 6 }}>RECENT CHATS</div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {sessions.length === 0 && <div style={{ padding: '20px 16px', fontSize: 13, color: C.g400, fontStyle: 'italic' }}>No recent chats</div>}
+              {sessions.slice(0, MAX_D).map(sess => {
+                const active = sess.chat_id === currentChatId;
+                return (
+                  <div key={sess.chat_id} onClick={() => loadSess(sess)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', cursor: 'pointer', background: active ? C.teal50 : 'transparent', borderLeft: active ? `3px solid ${C.teal}` : '3px solid transparent' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 500, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sess.preview || 'Chat'}</div><div style={{ fontSize: 11, color: C.g500, marginTop: 2 }}>{relTime(sess.updated_at)}</div></div>
+                    <button onClick={e => { e.stopPropagation(); deleteSess(sess.chat_id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Trash2 size={14} color={C.g400} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div onClick={() => setShowDrawer(false)} style={{ flex: 1, background: 'rgba(0,0,0,0.3)', cursor: 'pointer' }} />
+        </div>
+      )}
+    </div>
+  );
+}
       />
     </div>
   );
