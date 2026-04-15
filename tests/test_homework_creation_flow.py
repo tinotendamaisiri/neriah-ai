@@ -2130,7 +2130,7 @@ class TestTeacherRegister:
         # Response must contain teacher_id and token
         assert "teacher_id" in body, f"teacher_id missing: {body!r}"
         assert "token"      in body, f"token missing: {body!r}"
-        assert body.get("user", {}).get("school") == "Prince Edward School", (
+        assert body.get("user", {}).get("school_name") == "Prince Edward School", (
             f"School must be stored exactly as provided: {body!r}"
         )
 
@@ -2138,8 +2138,8 @@ class TestTeacherRegister:
         teacher_writes = [c for c in upsert_calls if c[0] == "teachers"]
         assert len(teacher_writes) == 1, "Exactly one write to 'teachers' collection expected"
         stored = teacher_writes[0][2]
-        assert stored["school"] == "Prince Edward School", (
-            f"Firestore school mismatch: {stored.get('school')!r}"
+        assert stored["school_name"] == "Prince Edward School", (
+            f"Firestore school_name mismatch: {stored.get('school_name')!r}"
         )
 
     @feature_test("teacher_register_custom_school")
@@ -2161,12 +2161,12 @@ class TestTeacherRegister:
             f"{resp.get_data(as_text=True)}"
         )
         body = resp.get_json()
-        assert body.get("user", {}).get("school") == custom, (
+        assert body.get("user", {}).get("school_name") == custom, (
             f"Custom school must be stored as-is, got: {body!r}"
         )
 
         teacher_writes = [c for c in upsert_calls if c[0] == "teachers"]
-        assert teacher_writes[0][2]["school"] == custom
+        assert teacher_writes[0][2]["school_name"] == custom
 
     @feature_test("teacher_register_required_fields")
     def test_teacher_registration_missing_school(self, client):
@@ -2276,7 +2276,7 @@ class TestTeacherRegister:
         assert user["first_name"] == "Chipo"
         assert user["surname"]    == "Dube"
         assert user["phone"]      == "+263772345678"
-        assert user["school"]     == "St Georges College"
+        assert user["school_name"] == "St Georges College"
         assert user["role"]       == "teacher"
 
         # Exactly one Firestore write to 'teachers'

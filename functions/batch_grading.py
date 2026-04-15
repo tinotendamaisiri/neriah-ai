@@ -88,6 +88,10 @@ def main() -> None:
             # Grade
             raw_verdicts = grade_submission(image_bytes, answer_key, education_level)
             verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
+            if not verdicts:
+                logger.warning("[batch_grading] 0 verdicts for sub=%s, skipping", sub_id)
+                upsert("student_submissions", sub_id, {"status": "error", "error": "AI could not grade this submission"})
+                continue
             score = sum(v.awarded_marks for v in verdicts)
             max_score = sum(v.max_marks for v in verdicts) or float(answer_key.get("total_marks", 1))
             percentage = round(score / max_score * 100, 1) if max_score else 0.0

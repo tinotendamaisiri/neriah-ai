@@ -717,8 +717,14 @@ def _handle_awaiting_answer_key(phone: str, context: dict, text: str, media_id: 
 
 def _store_answer_key(phone: str, class_id: str, education_level: str, scheme: dict, context: dict):
     teacher = _get_teacher(phone)
-    teacher_id = teacher["id"] if teacher else "unknown"
+    if not teacher:
+        send_text(phone, "Could not find your teacher profile. Please register first.")
+        return
+    teacher_id = teacher["id"]
     questions = scheme.get("questions", [])
+    if not questions:
+        send_text(phone, "Could not generate a marking scheme — no questions found. Try a clearer image or type the answers manually.")
+        return
     total_marks = sum(float(q.get("marks", 0)) for q in questions)
 
     key = AnswerKey(
@@ -791,13 +797,20 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
     student_id = context.get("current_student_id", str(uuid.uuid4()))
     blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
     teacher = _get_teacher(phone)
-    teacher_id = teacher["id"] if teacher else "unknown"
+    if not teacher:
+        send_text(phone, "Could not find your teacher profile. Mark not saved.")
+        return
+    teacher_id = teacher["id"]
+    class_id = context.get("class_id", "")
+    if not class_id:
+        send_text(phone, "No class selected. Type 'menu' to start over.")
+        return
     upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
     marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60)
 
     mark = Mark(
         student_id=student_id,
-        class_id=context.get("class_id", ""),
+        class_id=class_id,
         answer_key_id=answer_key_id,
         teacher_id=teacher_id,
         score=score,

@@ -278,7 +278,7 @@ def _seed() -> dict:
 
     # Student
     upsert("students", DEMO_STUDENT_ID, {
-        "id": DEMO_STUDENT_ID, "name": "Tendai Moyo",
+        "id": DEMO_STUDENT_ID, "first_name": "Tendai", "surname": "Moyo",
         "phone": "+0987654321", "role": "student",
         "school_id": DEMO_SCHOOL_ID, "class_id": DEMO_CLASS_ID,
         "token_version": 0, "created_at": now,
@@ -1669,12 +1669,14 @@ def demo_auth_register():
 
     teacher_doc = {
         "id":              teacher_id,
+        "name":            f"{first_name} {surname}".strip(),
         "first_name":      first_name,
         "surname":         surname,
         "phone":           phone,
-        "school":          school,
+        "school_name":     school,
         "education_level": education_level or None,
         "role":            "teacher",
+        "token_version":   0,
         "created_at":      now,
         "updated_at":      now,
     }
@@ -1688,12 +1690,13 @@ def demo_auth_register():
         "teacher_id": teacher_id,
         "token":      token,
         "user":       {
-            "id":        teacher_id,
-            "first_name": first_name,
-            "surname":    surname,
-            "phone":      phone,
-            "school":     school,
-            "role":       "teacher",
+            "id":          teacher_id,
+            "name":        f"{first_name} {surname}".strip(),
+            "first_name":  first_name,
+            "surname":     surname,
+            "phone":       phone,
+            "school_name": school,
+            "role":        "teacher",
         },
     }), 200
 
@@ -2263,13 +2266,14 @@ def demo_student_submission_create():
     submission_id = f"sub-{uuid.uuid4().hex[:8]}"
     doc = {
         "submission_id": submission_id,
+        "student_id":    DEMO_STUDENT_ID,
+        "class_id":      DEMO_CLASS_ID,
         "homework_id":   homework_id,
         "answer_key_id": answer_key_id,
         "media_type":    media_type,
         "file_name":     file_name,
         "status":        "received",
         "submitted_at":  datetime.utcnow().isoformat() + "Z",
-        # Store a stub — file_data is not persisted in the demo
         "has_file":      bool(file_data),
     }
     upsert("demo_student_submissions", submission_id, doc)

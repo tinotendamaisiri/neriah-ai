@@ -110,7 +110,7 @@ def create_students_batch():
         for raw_name in body["names"]:
             parts = str(raw_name).strip().split(None, 1)
             first = parts[0] if parts else str(raw_name).strip()
-            sur = parts[1] if len(parts) > 1 else ""
+            sur = parts[1] if len(parts) > 1 else first  # single name → use as both
             if not first:
                 continue
             student = Student(class_id=class_id, first_name=first, surname=sur)

@@ -485,11 +485,12 @@ def update_answer_key(key_id: str):
             scheme = generate_marking_scheme(question_paper_text, education_level,
                                              user_context=upd_user_ctx)
             qs = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
-            updates["questions"] = qs
-            updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
-            updates["generated"] = True
-            if not key.get("title") or key.get("title") == "Auto-generated scheme":
-                updates.setdefault("title", scheme.get("title") or key.get("title"))
+            if qs:  # Don't overwrite existing questions with empty Gemma output
+                updates["questions"] = qs
+                updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
+                updates["generated"] = True
+                if not key.get("title") or key.get("title") == "Auto-generated scheme":
+                    updates.setdefault("title", scheme.get("title") or key.get("title"))
 
     else:
         body = request.get_json(silent=True) or {}
@@ -512,11 +513,12 @@ def update_answer_key(key_id: str):
             scheme = generate_marking_scheme(question_paper_text, education_level,
                                              user_context=json_user_ctx)
             qs = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
-            updates["questions"] = qs
-            updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
-            updates["generated"] = True
-            if not key.get("title") or key.get("title") == "Auto-generated scheme":
-                updates.setdefault("title", scheme.get("title") or key.get("title"))
+            if qs:  # Don't overwrite existing questions with empty Gemma output
+                updates["questions"] = qs
+                updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
+                updates["generated"] = True
+                if not key.get("title") or key.get("title") == "Auto-generated scheme":
+                    updates.setdefault("title", scheme.get("title") or key.get("title"))
 
     if not updates:
         return jsonify({"error": "No updatable fields"}), 400
@@ -1254,6 +1256,11 @@ def grade_all_submissions(homework_id: str):
             # Grade — Gemma 4 reads handwriting directly (single multimodal call)
             raw_verdicts = _grade(image_bytes, homework, education_level)
             verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
+            if not verdicts:
+                logger.warning("[grade-all] Gemma returned 0 verdicts for sub=%s, skipping", sub_id)
+                upsert("student_submissions", sub_id, {"status": "error", "error": "AI could not grade this submission"})
+                results.append({"submission_id": sub_id, "status": "error", "error": "no verdicts"})
+                continue
             score = sum(v.awarded_marks for v in verdicts)
             max_score = (
                 sum(v.max_marks for v in verdicts)

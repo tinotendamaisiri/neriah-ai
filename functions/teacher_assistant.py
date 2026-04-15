@@ -969,6 +969,9 @@ def teacher_assistant_export():
     if content_type == "homework" and content.get("instructions"):
         answer_key_doc["instructions"] = content["instructions"]
 
+    if not questions:
+        return jsonify({"error": "AI generated no questions. Try again or create manually."}), 422
+
     upsert("answer_keys", answer_key_id, answer_key_doc)
     logger.info(
         "teacher_assistant/export: created answer_key=%s class=%s teacher=%s type=%s",
