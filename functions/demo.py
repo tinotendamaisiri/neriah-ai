@@ -2178,6 +2178,34 @@ def demo_homework_submissions(hw_id: str):
     return jsonify({"submissions": subs}), 200
 
 
+# ── GET /api/demo/answer-keys/<key_id>/questions ──────────────────────────────
+
+@demo_bp.get("/demo/answer-keys/<key_id>/questions")
+def demo_answer_key_questions(key_id: str):
+    """Student-safe question list for an answer key (no answers exposed)."""
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    key = get_doc("answer_keys", key_id)
+    if not key:
+        return jsonify({"questions": [], "question_paper_text": ""}), 200
+
+    questions = key.get("questions") or []
+    out = [
+        {
+            "question_number": q.get("question_number", i + 1),
+            "question_text": q.get("question_text", ""),
+            "marks": q.get("marks", 0),
+        }
+        for i, q in enumerate(questions)
+    ]
+    result: dict = {"questions": out}
+    qp_text = key.get("question_paper_text") or ""
+    if qp_text:
+        result["question_paper_text"] = qp_text
+    return jsonify(result), 200
+
+
 # ── GET /api/demo/assignments ─────────────────────────────────────────────────
 
 @demo_bp.get("/demo/assignments")

@@ -1190,7 +1190,7 @@ function PhoneInputRow({ value, onChange, compact = false }: { value: string; on
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: Welcome / Role Select
 // ──────────────────────────────────────────────────────────────────────────────
-function WelcomeScreen({ onTeacher, highlight }: { onTeacher: () => void; highlight?: 'teacher' | 'student' }) {
+function WelcomeScreen({ onTeacher, onStudent, highlight }: { onTeacher: () => void; onStudent?: () => void; highlight?: 'teacher' | 'student' }) {
   return (
     <Screen style={{ justifyContent: 'flex-start', padding: '0 20px 32px' }}>
       <style>{`
@@ -1237,6 +1237,7 @@ function WelcomeScreen({ onTeacher, highlight }: { onTeacher: () => void; highli
 
         {/* Student */}
         <button
+          onClick={onStudent}
           style={{
             background: C.amber, border: highlight === 'student' ? `3px solid ${C.amber}` : 'none',
             borderRadius: 16, padding: '16px 16px',
@@ -5495,7 +5496,7 @@ function StudentSubmitScreen({
   useEffect(() => {
     if (!showQuestionsModal || questionsData.length > 0 || questionPaperText) return;
     setQuestionsLoading(true);
-    demoFetch(`/answer-keys/${DEMO_HOMEWORK.answer_key_id}/questions`, {}, demoToken)
+    demoFetch(`/demo/answer-keys/${DEMO_HOMEWORK.answer_key_id}/questions`, {}, demoToken)
       .then(data => {
         if (Array.isArray(data)) { setQuestionsData(data); }
         else if (data?.questions) {
@@ -5552,7 +5553,7 @@ function StudentSubmitScreen({
     setLoading(true);
     setError('');
     try {
-      const res = await demoFetch('/submissions/student', {
+      const res = await demoFetch('/demo/submissions/student', {
         method: 'POST',
         body: JSON.stringify({ homework_id: DEMO_HOMEWORK.id, answer_key_id: DEMO_HOMEWORK.answer_key_id, file_data: file.base64, media_type: file.mimeType, file_name: file.name }),
       }, demoToken);
@@ -6182,7 +6183,7 @@ function StudentTutorScreen({
 
     // Try real API first
     if (demoToken) {
-      const res = await demoFetch('/tutor', {
+      const res = await demoFetch('/tutor/chat', {
         method: 'POST',
         body: JSON.stringify({
           message:         text.trim(),
@@ -8293,6 +8294,7 @@ export default function DemoPage() {
         return (
           <WelcomeScreen
             onTeacher={() => { setSTeacherScreen('register'); setSTeacherPrev('register'); setSScreen('s-teacher'); }}
+            onStudent={() => setSScreen('s-register')}
             highlight="student"
           />
         );
