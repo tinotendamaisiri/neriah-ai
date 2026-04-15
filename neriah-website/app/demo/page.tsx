@@ -8346,33 +8346,51 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
               <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Join a Class</span>
               <button onClick={() => { setJoinModal(false); setJoinCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.g500 }}>✕</button>
             </div>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Search for your class by name</div>
+            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>Search by school or class name</div>
             <input
               value={joinCode}
               onChange={e => setJoinCode(e.target.value)}
-              placeholder="e.g. Form 2A"
+              placeholder="e.g. Chiredzi or Form 2A"
               autoFocus
               style={{ ...inpS, marginBottom: 12 }}
             />
-            {/* Demo search results */}
-            {joinCode.length >= 2 && (
-              <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-                {[
+            {/* Demo grouped results */}
+            {joinCode.length >= 2 && (() => {
+              const q = joinCode.toLowerCase();
+              const demoData = [
+                { school: 'Chiredzi High School', classes: [
                   { id: 'c1', name: 'Form 3B', subject: 'Science', teacher: 'Mrs Dube' },
+                  { id: 'c3', name: 'Form 2A', subject: 'Mathematics', teacher: 'Mr Maisiri' },
+                ]},
+                { school: 'Allan Wilson High School', classes: [
                   { id: 'c2', name: 'Form 2B', subject: 'Mathematics', teacher: 'Mr Phiri' },
-                ].filter(c => c.name.toLowerCase().includes(joinCode.toLowerCase()) || c.subject.toLowerCase().includes(joinCode.toLowerCase())).map(c => (
-                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${C.bg}` }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{c.name} — {c.subject}</div>
-                      <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>{c.teacher}</div>
+                ]},
+              ];
+              const filtered = demoData.map(g => ({
+                ...g,
+                classes: g.classes.filter(c => g.school.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.subject.toLowerCase().includes(q)),
+              })).filter(g => g.classes.length > 0);
+              return filtered.length > 0 ? (
+                <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                  {filtered.map(g => (
+                    <div key={g.school}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: 8, marginBottom: 4 }}>{g.school}</div>
+                      {g.classes.map(c => (
+                        <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px', borderBottom: `1px solid ${C.bg}` }}>
+                          <div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{c.name} — {c.subject}</div>
+                            <div style={{ fontSize: 11, color: C.g500, marginTop: 1 }}>{c.teacher}</div>
+                          </div>
+                          <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast(`Joined ${c.name} — ${c.subject} successfully!`); }} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 14px', color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Join</button>
+                        </div>
+                      ))}
                     </div>
-                    <button onClick={() => { setJoinModal(false); setJoinCode(''); setToast(`Joined ${c.name} — ${c.subject} successfully!`); }} style={{ background: C.teal, border: 'none', borderRadius: 8, padding: '5px 14px', color: C.white, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Join</button>
-                  </div>
-                ))}
-                {[{ id: 'c1', name: 'Form 3B', subject: 'Science' }, { id: 'c2', name: 'Form 2B', subject: 'Mathematics' }].filter(c => c.name.toLowerCase().includes(joinCode.toLowerCase()) || c.subject.toLowerCase().includes(joinCode.toLowerCase())).length === 0 && (
-                  <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 14 }}>No classes found. Try a different name.</div>
-                )}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', color: C.g500, fontSize: 13, padding: 14 }}>No schools or classes found.</div>
+              );
+            })()
             )}
           </div>
         </div>

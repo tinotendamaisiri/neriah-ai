@@ -109,10 +109,10 @@ export default function StudentSettingsScreen() {
     }
   };
 
-  // ── Join class modal (name-based search) ───────────────────────────────────
+  // ── Join class modal (school + class name search) ──────────────────────────
   const [joinModal, setJoinModal] = useState(false);
   const [joinSearch, setJoinSearch] = useState('');
-  const [joinResults, setJoinResults] = useState<Array<{ id: string; name: string; subject?: string; teacher?: { first_name: string; surname: string } }>>([]);
+  const [joinResults, setJoinResults] = useState<Array<{ id: string; name: string; subject?: string; school?: string; teacher?: { first_name: string; surname: string } }>>([]);
   const [joinSearching, setJoinSearching] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
@@ -127,9 +127,9 @@ export default function StudentSettingsScreen() {
       setJoinSearching(true);
       try {
         const { getClassesBySchool } = await import('../services/api');
-        const school = user?.school ?? '';
-        const results = await getClassesBySchool(school, query.trim());
-        setJoinResults(results.map(c => ({ id: c.id, name: c.name, subject: c.subject, teacher: c.teacher })));
+        // Use the query as both school (partial) and class search
+        const results = await getClassesBySchool(query.trim(), '');
+        setJoinResults(results.map(c => ({ id: c.id, name: c.name, subject: c.subject, school: (c as any).school, teacher: c.teacher })));
       } catch { setJoinResults([]); }
       finally { setJoinSearching(false); }
     }, 300);
@@ -413,40 +413,51 @@ export default function StudentSettingsScreen() {
               <TouchableOpacity onPress={() => { setJoinModal(false); setJoinSearch(''); setJoinResults([]); setJoinError(''); }}><Text style={m.close}>✕</Text></TouchableOpacity>
             </View>
             <View style={m.body}>
-              <Text style={m.label}>Search for your class by name</Text>
+              <Text style={m.label}>Search by school or class name</Text>
               <TextInput
                 style={m.input}
                 value={joinSearch}
                 onChangeText={searchClasses}
-                placeholder="e.g. Form 2A"
+                placeholder="e.g. Chiredzi or Form 2A"
                 autoCapitalize="words"
                 autoFocus
               />
               {joinSearching && <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 10 }} />}
               {joinError ? <Text style={{ color: COLORS.error, fontSize: 13, marginTop: 10 }}>{joinError}</Text> : null}
               {joinResults.length > 0 && (
-                <View style={{ marginTop: 10, maxHeight: 200 }}>
+                <View style={{ marginTop: 10, maxHeight: 240 }}>
                   <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
-                    {joinResults.map(c => (
-                      <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.background }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text }}>{c.name}{c.subject ? ` — ${c.subject}` : ''}</Text>
-                          {c.teacher && <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>{c.teacher.first_name} {c.teacher.surname}</Text>}
-                        </View>
-                        <TouchableOpacity
-                          style={{ backgroundColor: COLORS.teal500, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 }}
-                          onPress={() => handleJoinById(c.id, c.name)}
-                          disabled={joining}
-                        >
-                          <Text style={{ color: COLORS.white, fontWeight: '700', fontSize: 13 }}>Join</Text>
-                        </TouchableOpacity>
+                    {/* Group by school */}
+                    {Object.entries(joinResults.reduce<Record<string, typeof joinResults>>((acc, c) => {
+                      const school = c.school || 'Unknown School';
+                      if (!acc[school]) acc[school] = [];
+                      acc[school].push(c);
+                      return acc;
+                    }, {})).map(([school, classes]) => (
+                      <View key={school}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.gray500, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }}>{school}</Text>
+                        {classes.map(c => (
+                          <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingLeft: 8, borderBottomWidth: 1, borderBottomColor: COLORS.background }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.text }}>{c.name}{c.subject ? ` — ${c.subject}` : ''}</Text>
+                              {c.teacher && <Text style={{ fontSize: 11, color: COLORS.gray500, marginTop: 1 }}>{c.teacher.first_name} {c.teacher.surname}</Text>}
+                            </View>
+                            <TouchableOpacity
+                              style={{ backgroundColor: COLORS.teal500, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 }}
+                              onPress={() => handleJoinById(c.id, c.name)}
+                              disabled={joining}
+                            >
+                              <Text style={{ color: COLORS.white, fontWeight: '700', fontSize: 13 }}>Join</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
                       </View>
                     ))}
                   </ScrollView>
                 </View>
               )}
               {joinSearch.length >= 2 && !joinSearching && joinResults.length === 0 && (
-                <Text style={{ color: COLORS.gray500, fontSize: 13, marginTop: 14, textAlign: 'center' }}>No classes found. Try a different name.</Text>
+                <Text style={{ color: COLORS.gray500, fontSize: 13, marginTop: 14, textAlign: 'center' }}>No schools or classes found. Try a different name.</Text>
               )}
             </View>
           </View>

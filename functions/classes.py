@@ -116,31 +116,27 @@ def _classes_for_school_name(school_name: str, search: str = "") -> list[dict]:
     Return classes whose teacher is at the given school.
 
     Args:
-        school_name: the school to search in
+        school_name: school name or partial substring (e.g. "Chiredzi" finds "Chiredzi High School")
         search: optional substring filter on class name or subject (case-insensitive)
 
-    Avoids querying classes by school_id (requires a Firestore composite index
-    that may not exist).  Instead we:
-      1. Scan teachers whose school_name matches (exact, then case-insensitive).
-      2. For each matching teacher fetch their classes by teacher_id — which uses
-         the existing (teacher_id, created_at) composite index.
+    Uses partial matching on school names — "chiredzi" matches "Chiredzi High School".
     """
     sn = school_name.strip()
     if not sn:
         return []
     search_lower = search.strip().lower()
+    sn_lower = sn.lower()
 
     # Exact match first (fast path)
     teachers = query("teachers", [("school_name", "==", sn)])
 
-    # Case-insensitive fallback — scan all teachers and filter in Python.
+    # Partial + case-insensitive fallback — scan all teachers.
     # Acceptable because there are O(hundreds) of teachers in this dataset.
     if not teachers:
         all_teachers = query("teachers", [])
-        sn_lower = sn.lower()
         teachers = [
             t for t in all_teachers
-            if (t.get("school_name") or t.get("school_id") or "").lower() == sn_lower
+            if sn_lower in (t.get("school_name") or t.get("school_id") or "").lower()
         ]
 
     if not teachers:
@@ -171,6 +167,7 @@ def _classes_for_school_name(school_name: str, search: str = "") -> list[dict]:
                 "name": cls.get("name", ""),
                 "education_level": cls.get("education_level", ""),
                 "subject": cls.get("subject"),
+                "school": t.get("school_name") or "",
                 "teacher": {
                     "first_name": t.get("first_name") or "",
                     "surname":    t.get("surname")     or "",

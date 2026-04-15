@@ -7450,3 +7450,72 @@ class TestRAGPipelineAudit:
 
         assert len(results) == 1
         assert results[0]["text"] == "fallback result"
+
+
+# ── Partial school search ────────────────────────────────────────────────────
+
+class TestPartialSchoolSearch:
+    """Tests for partial school name matching in /classes/by-school."""
+
+    def _make_query(self, teacher_school="Chiredzi High School"):
+        teacher = {"id": "t1", "first_name": "Mr", "surname": "Maisiri", "school_name": teacher_school}
+        classes = [
+            {"id": "c1", "teacher_id": "t1", "name": "Form 2A", "subject": "Mathematics", "education_level": "form_2", "created_at": "2026-01-01"},
+            {"id": "c2", "teacher_id": "t1", "name": "Form 3B", "subject": "Physics", "education_level": "form_3", "created_at": "2026-01-02"},
+        ]
+        def fake_query(collection, filters=None, **kwargs):
+            filt = filters or []
+            if collection == "teachers":
+                if any(f[0] == "school_name" for f in filt):
+                    return []  # force fallback to partial match
+                return [teacher]
+            if collection == "classes":
+                return classes
+            return []
+        return fake_query
+
+    @feature_test("classes_search_partial_school_name")
+    def test_partial_school_name_finds_results(self, client):
+        """GET /api/classes/by-school?school=chiredzi finds 'Chiredzi High School'."""
+        with patch("functions.classes.query", side_effect=self._make_query()):
+            rv = client.get("/api/classes/by-school?school=chiredzi")
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert len(data) == 2
+        assert data[0]["school"] == "Chiredzi High School"
+
+    @feature_test("classes_search_partial_single_word")
+    def test_single_word_partial_matches(self, client):
+        """'high' matches 'Chiredzi High School'."""
+        with patch("functions.classes.query", side_effect=self._make_query()):
+            rv = client.get("/api/classes/by-school?school=high")
+        assert rv.status_code == 200
+        assert len(rv.get_json()) == 2
+
+    @feature_test("classes_search_no_code_needed")
+    def test_join_by_class_id_without_code(self, client):
+        """POST /api/auth/student/join-class with class_id (no join_code) succeeds."""
+        from shared.auth import create_jwt
+        token = create_jwt("student-join-test", "student", 1)
+        cls = {"id": "cls-test", "name": "Form 2A", "subject": "Maths", "student_count": 3}
+        student = {"id": "student-join-test", "class_id": "", "class_ids": []}
+
+        def fake_get(col, did):
+            if col == "classes" and did == "cls-test": return cls
+            if col == "students" and did == "student-join-test": return student
+            return None
+
+        saved = {}
+        def fake_upsert(col, did, data):
+            saved[f"{col}/{did}"] = data
+            return data
+
+        with patch("functions.auth.query_single", return_value=None), \
+             patch("functions.auth.get_doc", side_effect=fake_get), \
+             patch("functions.auth.upsert", side_effect=fake_upsert):
+            rv = client.post("/api/auth/student/join-class",
+                json={"class_id": "cls-test"},
+                headers={"Authorization": f"Bearer {token}"})
+
+        assert rv.status_code == 200
+        assert rv.get_json()["class_name"] == "Form 2A"
