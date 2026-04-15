@@ -14,6 +14,7 @@ import {
   FlatList,
   Platform,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -225,6 +226,11 @@ export default function ClassSetupScreen() {
         onClose={() => setCameraVisible(false)}
         quality={0.85}
       />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -396,6 +402,7 @@ export default function ClassSetupScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Education level picker modal */}
       <Modal

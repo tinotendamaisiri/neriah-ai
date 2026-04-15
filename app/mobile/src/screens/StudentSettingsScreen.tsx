@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
-  Modal, TextInput, ActivityIndicator, Switch,
+  Modal, TextInput, ActivityIndicator, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -219,7 +219,12 @@ export default function StudentSettingsScreen() {
   const languageLabel = LANGUAGES.find(l => l.code === language)?.label ?? 'English';
 
   return (
-    <ScrollView style={s.scroll} contentContainerStyle={s.content}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+    >
+    <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       {/* Header */}
       <View style={s.headerBar}>
         <Text style={s.heading}>Settings</Text>
@@ -357,27 +362,36 @@ export default function StudentSettingsScreen() {
 
       {/* ── Change Name Modal ───────────────────────────────────────── */}
       <Modal visible={nameModal} animationType="slide" transparent onRequestClose={() => setNameModal(false)}>
-        <View style={m.overlay}>
-          <View style={m.sheet}>
-            <View style={m.header}>
-              <Text style={m.title}>Change Name</Text>
-              <TouchableOpacity onPress={() => setNameModal(false)}><Text style={m.close}>✕</Text></TouchableOpacity>
-            </View>
-            <View style={m.body}>
-              <Text style={m.label}>First name</Text>
-              <TextInput style={m.input} value={editFirst} onChangeText={setEditFirst} placeholder="First name" autoCapitalize="words" />
-              <Text style={m.label}>Surname</Text>
-              <TextInput style={m.input} value={editSurname} onChangeText={setEditSurname} placeholder="Surname" autoCapitalize="words" />
-              <TouchableOpacity style={[m.btn, nameSaving && { opacity: 0.5 }]} onPress={handleSaveName} disabled={nameSaving}>
-                {nameSaving ? <ActivityIndicator color={COLORS.white} /> : <Text style={m.btnText}>Save</Text>}
-              </TouchableOpacity>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <View style={m.overlay}>
+            <View style={m.sheet}>
+              <View style={m.header}>
+                <Text style={m.title}>Change Name</Text>
+                <TouchableOpacity onPress={() => setNameModal(false)}><Text style={m.close}>✕</Text></TouchableOpacity>
+              </View>
+              <View style={m.body}>
+                <Text style={m.label}>First name</Text>
+                <TextInput style={m.input} value={editFirst} onChangeText={setEditFirst} placeholder="First name" autoCapitalize="words" />
+                <Text style={m.label}>Surname</Text>
+                <TextInput style={m.input} value={editSurname} onChangeText={setEditSurname} placeholder="Surname" autoCapitalize="words" />
+                <TouchableOpacity style={[m.btn, nameSaving && { opacity: 0.5 }]} onPress={handleSaveName} disabled={nameSaving}>
+                  {nameSaving ? <ActivityIndicator color={COLORS.white} /> : <Text style={m.btnText}>Save</Text>}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Join Class Modal ────────────────────────────────────────── */}
       <Modal visible={joinModal} animationType="slide" transparent onRequestClose={() => setJoinModal(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
         <View style={m.overlay}>
           <View style={m.sheet}>
             <View style={m.header}>
@@ -403,10 +417,15 @@ export default function StudentSettingsScreen() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── OTP Modal (PIN change/remove) ───────────────────────────── */}
       <Modal visible={otpMode !== null} animationType="slide" transparent onRequestClose={() => setOtpMode(null)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
         <View style={m.overlay}>
           <View style={m.sheet}>
             <View style={m.header}>
@@ -425,8 +444,10 @@ export default function StudentSettingsScreen() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

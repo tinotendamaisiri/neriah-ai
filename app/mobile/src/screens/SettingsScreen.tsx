@@ -199,7 +199,7 @@ export default function SettingsScreen() {
     : '';
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.heading}>{t('settings')}</Text>

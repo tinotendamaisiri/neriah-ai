@@ -8,11 +8,14 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   Modal,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { listStudents, createStudent, deleteStudent } from '../services/api';
@@ -244,59 +247,66 @@ function AddStudentModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={modalS.overlay}>
-        <View style={modalS.sheet}>
-          <View style={modalS.header}>
-            <Text style={modalS.title}>Add Student</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={modalS.close}>✕</Text>
-            </TouchableOpacity>
-          </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+      >
+        <View style={modalS.overlay}>
+          <View style={modalS.sheet}>
+            <View style={modalS.header}>
+              <Text style={modalS.title}>Add Student</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Text style={modalS.close}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
-          <View style={modalS.body}>
-            <Text style={modalS.label}>First name *</Text>
-            <TextInput
-              style={modalS.input}
-              value={firstName}
-              onChangeText={setFirstName}
-              placeholder="e.g. Tendai"
-              autoCapitalize="words"
-            />
-            <Text style={modalS.label}>Surname *</Text>
-            <TextInput
-              style={modalS.input}
-              value={surname}
-              onChangeText={setSurname}
-              placeholder="e.g. Moyo"
-              autoCapitalize="words"
-            />
-            <Text style={modalS.label}>Register number (optional)</Text>
-            <TextInput
-              style={modalS.input}
-              value={regNumber}
-              onChangeText={setRegNumber}
-              placeholder="e.g. 01"
-              keyboardType="number-pad"
-            />
-            <Text style={modalS.label}>Phone (optional)</Text>
-            <TextInput
-              style={modalS.input}
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="+263..."
-              keyboardType="phone-pad"
-            />
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={modalS.body}>
+                <Text style={modalS.label}>First name *</Text>
+                <TextInput
+                  style={modalS.input}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  placeholder="e.g. Tendai"
+                  autoCapitalize="words"
+                />
+                <Text style={modalS.label}>Surname *</Text>
+                <TextInput
+                  style={modalS.input}
+                  value={surname}
+                  onChangeText={setSurname}
+                  placeholder="e.g. Moyo"
+                  autoCapitalize="words"
+                />
+                <Text style={modalS.label}>Register number (optional)</Text>
+                <TextInput
+                  style={modalS.input}
+                  value={regNumber}
+                  onChangeText={setRegNumber}
+                  placeholder="e.g. 01"
+                  keyboardType="number-pad"
+                />
+                <Text style={modalS.label}>Phone (optional)</Text>
+                <TextInput
+                  style={modalS.input}
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="+263..."
+                  keyboardType="phone-pad"
+                />
 
-            <TouchableOpacity
-              style={[modalS.button, saving && modalS.buttonDisabled]}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={modalS.buttonText}>{saving ? 'Adding...' : 'Add Student'}</Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[modalS.button, saving && modalS.buttonDisabled]}
+                  onPress={handleSave}
+                  disabled={saving}
+                >
+                  <Text style={modalS.buttonText}>{saving ? 'Adding...' : 'Add Student'}</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

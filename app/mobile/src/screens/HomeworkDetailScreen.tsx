@@ -12,6 +12,8 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import {
@@ -352,7 +354,12 @@ export default function HomeworkDetailScreen() {
         onClose={handleCameraClose}
         quality={0.85}
       />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -621,6 +628,7 @@ export default function HomeworkDetailScreen() {
         {/* Spacer for bottom button */}
         <View style={{ height: 100 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Bottom action button */}
       <View style={styles.bottomBar}>
