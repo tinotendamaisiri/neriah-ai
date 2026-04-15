@@ -576,6 +576,33 @@ _DEMO_ASSISTANT_PERFORMANCE = {
     ],
 }
 
+DEMO_CLASS_CONTEXT = {
+    "has_data": True,
+    "classes": [
+        {
+            "id":              "demo-class-001",
+            "name":            "Form 2A",
+            "education_level": "Form 2",
+            "student_count":   28,
+            "homework_count":  5,
+        },
+        {
+            "id":              "demo-class-002",
+            "name":            "Form 3B",
+            "education_level": "Form 3",
+            "student_count":   31,
+            "homework_count":  3,
+        },
+    ],
+    "total_students": 59,
+    "performance": (
+        "Form 2A — Class average: 74.0%\n"
+        "Total submissions: 112\n"
+        "Top students: Tendai Moyo, Chido Ndlovu, Farai Gumbo\n"
+        "Students below 50%: Blessing Chivanda, Rutendo Makoni"
+    ),
+}
+
 _DEMO_ASSISTANT_RESPONSES: dict = {
     "chat": {
         "action_type": "chat",
@@ -693,11 +720,28 @@ def demo_teacher_assistant():
     file_data   = (body.get("file_data") or "").strip()
     media_type  = (body.get("media_type") or "").strip().lower()
 
+    # ── extract_students: return pre-canned roster for bulk import UI ─────────────
+    if action_type == "extract_students":
+        students = [
+            {"first_name": "Tendai",   "surname": "Moyo"},
+            {"first_name": "Chipo",    "surname": "Dube"},
+            {"first_name": "Takudzwa", "surname": "Ncube"},
+            {"first_name": "Blessing", "surname": "Chivanda"},
+            {"first_name": "Farai",    "surname": "Gumbo"},
+        ]
+        logger.info("[demo/teacher/assistant] extract_students: returning %d demo students", len(students))
+        return jsonify({
+            "action_type":     "extract_students",
+            "students":        students,
+            "conversation_id": f"demo-conv-{uuid.uuid4().hex[:8]}",
+        }), 200
+
     canned = _DEMO_ASSISTANT_RESPONSES.get(action_type, _DEMO_ASSISTANT_RESPONSES["chat"])
     resp = dict(canned)
     resp["conversation_id"] = f"demo-conv-{uuid.uuid4().hex[:8]}"
     resp["curriculum"]      = curriculum
     resp["level"]           = level
+    resp["context_injected"] = DEMO_CLASS_CONTEXT
 
     # When a file is attached, prepend a short note to the canned text response
     if file_data and media_type in ("image", "pdf", "word"):
@@ -1238,6 +1282,68 @@ def demo_create_class():
 
     logger.info("[demo] Created class %r (%s) with join_code=%s", name, education_level, join_code)
     return jsonify(class_doc), 201
+
+
+# ── POST /api/demo/students/batch ─────────────────────────────────────────────
+
+@demo_bp.post("/demo/students/batch")
+def demo_students_batch():
+    """
+    Batch-create students in a demo class (mirrors POST /api/students/batch).
+
+    Body: { class_id: str, students: [{ first_name, surname, phone?, register_number? }] }
+    Returns: { created: int, students: [...] }
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    body     = request.get_json(silent=True) or {}
+    class_id = (body.get("class_id") or "").strip()
+    raw      = body.get("students") or []
+
+    if not class_id:
+        return jsonify({"error": "class_id is required"}), 400
+    if not isinstance(raw, list) or len(raw) == 0:
+        return jsonify({"error": "students list is required and must not be empty"}), 400
+    if len(raw) > 100:
+        return jsonify({"error": "Maximum 100 students per batch"}), 400
+
+    now      = _now()
+    created  = []
+    for s in raw:
+        first_name = (s.get("first_name") or s.get("name") or "").strip()
+        surname    = (s.get("surname")    or "").strip()
+        if not first_name:
+            continue
+        student_id = str(uuid.uuid4())
+        doc = {
+            "id":              student_id,
+            "class_id":        class_id,
+            "teacher_id":      DEMO_TEACHER_ID,
+            "first_name":      first_name,
+            "surname":         surname,
+            "phone":           (s.get("phone") or "").strip() or None,
+            "register_number": (s.get("register_number") or "").strip() or None,
+            "role":            "student",
+            "token_version":   0,
+            "created_at":      now,
+        }
+        upsert("students", student_id, doc)
+        created.append(doc)
+
+    # Bump the class student_count
+    try:
+        cls_doc = get_doc("classes", class_id)
+        if cls_doc:
+            upsert("classes", class_id, {
+                "student_count": cls_doc.get("student_count", 0) + len(created),
+                "updated_at":    now,
+            })
+    except Exception:
+        pass
+
+    logger.info("[demo] Batch created %d students in class %s", len(created), class_id)
+    return jsonify({"created": len(created), "students": created}), 201
 
 
 # ── Demo OTP auth ─────────────────────────────────────────────────────────────

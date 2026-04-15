@@ -4691,3 +4691,226 @@ class TestGradingResultsScreen:
             "Mobile must use RefreshControl for pull-to-refresh on the submissions list"
         assert "onRefresh" in mobile, \
             "RefreshControl must have an onRefresh handler that calls loadData"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUITE — Teacher AI Assistant real-data wiring
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTeacherAssistantContextInjection:
+    """
+    Verify that the Teacher AI Assistant fetches and injects real class/student
+    data from Firestore for every message, and escalates to full marks data for
+    performance-related queries.
+    """
+
+    _CLASSES = [
+        {"id": CLASS_ID, "teacher_id": TEACHER_ID, "name": "Form 2B", "education_level": "Form 2"},
+    ]
+    _STUDENTS = [
+        {"id": "s1", "class_id": CLASS_ID, "first_name": "Tendai", "surname": "Moyo"},
+        {"id": "s2", "class_id": CLASS_ID, "first_name": "Chido",  "surname": "Ndlovu"},
+    ]
+    _MARKS = [
+        {"student_id": "s1", "class_id": CLASS_ID, "percentage": 88.0,
+         "student_name": "Tendai Moyo", "approved": True, "timestamp": "2026-01-01"},
+        {"student_id": "s2", "class_id": CLASS_ID, "percentage": 42.0,
+         "student_name": "Chido Ndlovu", "approved": True, "timestamp": "2026-01-01"},
+    ]
+    _ANSWER_KEYS = [
+        {"id": "ak1", "class_id": CLASS_ID},
+    ]
+
+    @pytest.fixture(scope="module")
+    def app(self):
+        from main import app as flask_app
+        flask_app.config["TESTING"] = True
+        return flask_app
+
+    @pytest.fixture(scope="module")
+    def client(self, app):
+        return app.test_client()
+
+    @pytest.fixture(scope="module")
+    def auth_headers(self):
+        from shared.auth import create_jwt
+        token = create_jwt(TEACHER_ID, "teacher", 1)
+        return {"Authorization": f"Bearer {token}"}
+
+    def _query_side_effect(self, collection, filters, **_):
+        """Route Firestore query mocks by collection."""
+        if collection == "classes":
+            return self._CLASSES
+        if collection == "students":
+            return self._STUDENTS
+        if collection == "answer_keys":
+            return self._ANSWER_KEYS
+        if collection == "marks":
+            return self._MARKS
+        return []
+
+    @feature_test("teacher_assistant_fetches_real_class_data")
+    def test_teacher_assistant_fetches_real_class_data(self, client, auth_headers):
+        """
+        POST /api/teacher/assistant must call get_teacher_context_data and inject
+        the formatted class list into the system prompt that reaches the model.
+        """
+        captured_system: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            captured_system.append(system)
+            return "Here is some advice on fractions."
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={"curriculum": "ZIMSEC", "education_level": "Form 2"}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={
+                    "message": "How can I teach fractions better?",
+                    "action_type": "chat",
+                    "curriculum": "ZIMSEC",
+                    "level": "Form 2",
+                    "class_id": CLASS_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_system, "Model was never called — no system prompt captured"
+        system_used = captured_system[0]
+        assert "TEACHER'S CLASS DATA" in system_used, \
+            "System prompt must contain TEACHER'S CLASS DATA section"
+        assert "Form 2B" in system_used, \
+            "System prompt must mention the teacher's class name"
+
+    @feature_test("teacher_assistant_handles_no_data")
+    def test_teacher_assistant_handles_no_data(self, client, auth_headers):
+        """
+        When the teacher has no classes in Firestore, the assistant must still
+        respond (not 500) and the system prompt should note no classes are set up.
+        """
+        captured_system: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            captured_system.append(system)
+            return "Happy to help once your class is set up!"
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Test School", "token_version": 1}), \
+             patch("functions.teacher_assistant.query", return_value=[]), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={
+                    "message": "What are my class results?",
+                    "action_type": "chat",
+                },
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert captured_system, "Model was never called"
+        assert "no classes" in captured_system[0].lower() or "TEACHER'S CLASS DATA" in captured_system[0], \
+            "System prompt must include TEACHER'S CLASS DATA even when teacher has no classes"
+
+    @feature_test("teacher_class_context_injected_for_all_messages")
+    def test_class_context_injected_for_all_messages(self, client, auth_headers):
+        """
+        Class context must be injected regardless of action_type — not just for
+        class_performance. Test with action_type='chat' (free-form question).
+        """
+        systems_seen: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            systems_seen.append(system)
+            return "Great teaching idea!"
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
+             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={
+                    "message": "Give me a fun lesson idea for teaching decimals.",
+                    "action_type": "chat",
+                    "class_id": CLASS_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert systems_seen, "Model was never called"
+        assert "TEACHER'S CLASS DATA" in systems_seen[0], \
+            "Class context must be injected for non-performance action types too"
+
+    @feature_test("performance_keywords_trigger_full_data_fetch")
+    def test_performance_keywords_trigger_full_marks_fetch(self, client, auth_headers):
+        """
+        When the message contains a performance keyword (e.g. 'struggling'),
+        get_teacher_context_data must be called with include_marks=True so that
+        the class performance summary is included in the system prompt.
+        """
+        systems_seen: list[str] = []
+
+        def fake_call_model(system, history, message, image_bytes=None):
+            systems_seen.append(system)
+            return json.dumps({
+                "summary": "Class average 65%",
+                "top_students": ["Tendai"],
+                "struggling_students": ["Chido"],
+                "weak_topics": ["algebra"],
+                "recommendations": ["More practice"],
+            })
+
+        with patch("shared.firestore_client.get_doc", return_value={"school_name": "Demo School", "token_version": 1}), \
+             patch("functions.teacher_assistant.query", side_effect=self._query_side_effect), \
+             patch("functions.teacher_assistant._call_model", side_effect=fake_call_model), \
+             patch("functions.teacher_assistant._rag_context", return_value=""), \
+             patch("functions.teacher_assistant.get_user_context", return_value={}), \
+             patch("shared.guardrails.check_rate_limit", return_value=(True, 0)), \
+             patch("shared.guardrails.validate_input", side_effect=lambda msg, **_: (True, msg)), \
+             patch("shared.guardrails.validate_output", side_effect=lambda text, **_: (True, text)), \
+             patch("shared.guardrails.log_ai_interaction"), \
+             patch("functions.teacher_assistant.upsert"):
+
+            resp = client.post(
+                "/api/teacher/assistant",
+                headers=auth_headers,
+                json={
+                    "message": "Which students are struggling the most this term?",
+                    "action_type": "class_performance",
+                    "class_id": CLASS_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert systems_seen, "Model was never called"
+        system_used = systems_seen[0]
+        # Performance keywords or class_performance action type must trigger marks data
+        assert "CLASS AVERAGE" in system_used.upper() or "PERFORMANCE DATA" in system_used.upper() \
+               or "65%" in system_used or "class average" in system_used.lower(), \
+            "System prompt must include marks/performance data for performance queries"

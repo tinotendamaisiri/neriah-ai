@@ -71,6 +71,21 @@ _OFF_TOPIC_PATTERNS: tuple[str, ...] = (
     "drug recipe", "how to make drugs",
 )
 
+# ── Performance query detection ───────────────────────────────────────────────
+
+PERFORMANCE_KEYWORDS: tuple[str, ...] = (
+    "how is my class", "performing", "performance", "grades", "marks",
+    "results", "struggling", "weak", "top students", "best students",
+    "worst", "average", "score", "submission", "submitted", "analytics",
+    "progress", "improvement", "failing", "passing", "class average",
+)
+
+
+def is_performance_query(message: str) -> bool:
+    """Return True if the message is asking about class/student performance data."""
+    lower = message.lower()
+    return any(kw in lower for kw in PERFORMANCE_KEYWORDS)
+
 # ── System prompt template (role-locked) ──────────────────────────────────────
 
 _SYSTEM_TEMPLATE = """\
@@ -257,6 +272,95 @@ def _class_performance_data(class_id: str) -> str:
         return "Performance data unavailable."
 
 
+def get_teacher_context_data(
+    teacher_id: str,
+    class_id: str | None = None,
+    include_marks: bool = False,
+) -> dict:
+    """
+    Fetch structured class and student data from Firestore for a teacher.
+
+    Returns a dict with:
+      has_data         — bool, False when teacher has no classes yet
+      classes          — list of {id, name, education_level, student_count, homework_count}
+      total_students   — int
+      overall_average  — float | None (only when include_marks=True)
+      performance      — str summary (only when include_marks=True and class_id given)
+    """
+    try:
+        # ── Fetch classes ─────────────────────────────────────────────────────
+        filters: list = [("teacher_id", "==", teacher_id)]
+        if class_id:
+            filters.append(("id", "==", class_id))
+        classes_raw = query("classes", filters) or []
+
+        if not classes_raw:
+            return {"has_data": False, "classes": [], "total_students": 0}
+
+        class_summaries: list[dict] = []
+        total_students = 0
+
+        for cls in classes_raw:
+            cid = cls.get("id") or cls.get("class_id", "")
+            if not cid:
+                continue
+
+            # ── Count students ────────────────────────────────────────────────
+            students_raw = query("students", [("class_id", "==", cid)]) or []
+            student_count = len(students_raw)
+            total_students += student_count
+
+            # ── Count homework (answer_keys) ──────────────────────────────────
+            hw_raw = query("answer_keys", [("class_id", "==", cid)]) or []
+            homework_count = len(hw_raw)
+
+            class_summaries.append({
+                "id":              cid,
+                "name":            cls.get("name") or cid,
+                "education_level": cls.get("education_level") or "Unknown",
+                "student_count":   student_count,
+                "homework_count":  homework_count,
+            })
+
+        result: dict = {
+            "has_data":      True,
+            "classes":       class_summaries,
+            "total_students": total_students,
+        }
+
+        # ── Optional: fetch performance marks ─────────────────────────────────
+        if include_marks and class_id:
+            result["performance"] = _class_performance_data(class_id)
+        elif include_marks and class_summaries:
+            # Aggregate across all classes if no specific class selected
+            all_perf = [_class_performance_data(c["id"]) for c in class_summaries]
+            result["performance"] = "\n\n".join(all_perf)
+
+        return result
+
+    except Exception:
+        logger.warning("teacher_assistant: get_teacher_context_data failed", exc_info=True)
+        return {"has_data": False, "classes": [], "total_students": 0}
+
+
+def _format_teacher_context(ctx: dict) -> str:
+    """Format get_teacher_context_data result into a prompt-injectable string."""
+    if not ctx.get("has_data"):
+        return "The teacher has no classes set up yet."
+
+    lines = [f"Total students across all classes: {ctx['total_students']}"]
+    for cls in ctx.get("classes", []):
+        lines.append(
+            f"- Class: {cls['name']} ({cls['education_level']}) | "
+            f"{cls['student_count']} students | {cls['homework_count']} homework assignments"
+        )
+
+    if ctx.get("performance"):
+        lines.append(f"\nPerformance data:\n{ctx['performance']}")
+
+    return "\n".join(lines)
+
+
 def _call_model(
     system: str,
     history: list[dict],
@@ -400,11 +504,15 @@ def teacher_assistant():
         logger.info("RAG context injected: %d chars", len(rag_text))
         system += f"\n\n{rag_text}"
 
-    # ── class_performance: inject Firestore data ──────────────────────────────
-    perf_data = ""
-    if action_type == "class_performance" and class_id:
-        perf_data = _class_performance_data(class_id)
-        system += f"\n\nCLASS PERFORMANCE DATA:\n{perf_data}"
+    # ── Teacher class context: injected for ALL message types ─────────────────
+    needs_marks = action_type == "class_performance" or is_performance_query(message)
+    teacher_ctx = get_teacher_context_data(teacher_id, class_id=class_id, include_marks=needs_marks)
+    ctx_text = _format_teacher_context(teacher_ctx)
+    logger.info(
+        "teacher_assistant: class context injected (has_data=%s, include_marks=%s)",
+        teacher_ctx.get("has_data"), needs_marks,
+    )
+    system += f"\n\nTEACHER'S CLASS DATA:\n{ctx_text}"
 
     # ── File attachment handling ───────────────────────────────────────────────
     image_bytes: bytes | None = None
