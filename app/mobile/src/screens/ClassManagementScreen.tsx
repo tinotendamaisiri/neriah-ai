@@ -112,10 +112,18 @@ export default function ClassManagementScreen() {
     setSearchingClasses(true);
     try {
       const data = await getClassesBySchool(schoolName, '');
+      console.log('[ClassMgmt] classes at', schoolName, ':', data?.length ?? 0);
       const enrolledIds = new Set(classes.map(c => c.class_id));
-      setAvailableClasses((data || []).filter((c: any) => !enrolledIds.has(c.id)));
-    } catch { setAvailableClasses([]); }
-    finally { setSearchingClasses(false); }
+      const unenrolled = (data || []).filter((c: any) => !enrolledIds.has(c.id));
+      const alreadyEnrolledCount = (data || []).length - unenrolled.length;
+      setAvailableClasses(unenrolled);
+      if (unenrolled.length === 0 && alreadyEnrolledCount > 0) {
+        Alert.alert('Already enrolled', `You're already in all ${alreadyEnrolledCount} class${alreadyEnrolledCount > 1 ? 'es' : ''} at ${schoolName}.`);
+      }
+    } catch (err) {
+      console.warn('[ClassMgmt] classes fetch error:', err);
+      setAvailableClasses([]);
+    } finally { setSearchingClasses(false); }
   };
 
   // ── Join ────────────────────────────────────────────────────────────────────
@@ -288,8 +296,9 @@ export default function ClassManagementScreen() {
 
                 {selectedSchool && !searchingClasses && availableClasses.length === 0 && (
                   <View style={m.emptySearch}>
-                    <Text style={m.emptySearchTitle}>No classes at {selectedSchool}</Text>
-                    <Text style={m.emptySearchHint}>Your teacher needs to create a class first.</Text>
+                    <Ionicons name="checkmark-circle" size={28} color={COLORS.teal500} style={{ marginBottom: 8 }} />
+                    <Text style={m.emptySearchTitle}>No new classes available</Text>
+                    <Text style={m.emptySearchHint}>You're already enrolled in all classes at {selectedSchool}, or the teacher hasn't created any yet.</Text>
                   </View>
                 )}
 
