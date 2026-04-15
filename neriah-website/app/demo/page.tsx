@@ -227,7 +227,7 @@ export async function demoFetch(path: string, opts: RequestInit = {}, token?: st
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 't-assistant';
+type TScreen = 'welcome' | 'phone' | 'otp' | 'register' | 'classes' | 'class-setup' | 'class-join-code' | 'add-homework' | 'review-scheme' | 'homework-created' | 'homework-list' | 'homework-detail' | 'grade-all' | 't-settings' | 'grading-detail' | 'analytics' | 'student-analytics' | 't-assistant';
 
 // ── DemoClass ─────────────────────────────────────────────────────────────────
 interface DemoClass {
@@ -3304,27 +3304,34 @@ function _detectAction(text: string): AIActionType {
 }
 
 // ── Web chat history helpers ──────────────────────────────────────────────────
-const WEB_CHAT_KEY = 'teacher_assistant_chats';
+const WEB_CHAT_KEY     = 'neriah_teacher_sessions';
 const WEB_MAX_SESSIONS = 50;
 const WEB_MAX_DISPLAY  = 20;
 
 interface WebChatSession {
-  chat_id:    string;
-  created_at: number;
-  messages:   AIChatMsg[];
-  preview:    string;
+  chat_id:     string;
+  created_at:  string;   // ISO 8601
+  updated_at:  string;   // ISO 8601
+  preview:     string;   // first user message, max 60 chars
+  action_type?: string;
+  messages:    AIChatMsg[];
 }
 
-function webRelativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 2)   return 'Just now';
-  if (mins < 60)  return `${mins}m ago`;
-  const hrs = Math.floor(diff / 3_600_000);
-  if (hrs < 24)   return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
-  const days = Math.floor(diff / 86_400_000);
-  if (days === 1) return 'Yesterday';
-  return `${days} days ago`;
+function webMakeId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function webRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins  = Math.floor(diff / 60_000);
+  const hrs   = Math.floor(diff / 3_600_000);
+  const days  = Math.floor(diff / 86_400_000);
+  if (mins < 1)  return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
+  if (days === 1) return "Yesterday";
+  if (days < 7)  return `${days} days ago`;
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
 }
 
 function loadWebChatHistory(): WebChatSession[] {
@@ -3339,12 +3346,9 @@ function saveWebChatHistory(sessions: WebChatSession[]): void {
 }
 
 function upsertWebChatSession(sessions: WebChatSession[], session: WebChatSession): WebChatSession[] {
-  const idx = sessions.findIndex(s => s.chat_id === session.chat_id);
-  let next = idx >= 0
-    ? sessions.map((s, i) => (i === idx ? session : s))
-    : [session, ...sessions];
-  if (next.length > WEB_MAX_SESSIONS) next = next.slice(0, WEB_MAX_SESSIONS);
-  return next;
+  const filtered = sessions.filter(s => s.chat_id !== session.chat_id);
+  const next = [session, ...filtered]; // newest first
+  return next.length > WEB_MAX_SESSIONS ? next.slice(0, WEB_MAX_SESSIONS) : next;
 }
 
 function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
@@ -3368,11 +3372,22 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
   // ── Drawer state ────────────────────────────────────────────────────────────
   const [showDrawer, setShowDrawer]       = useState(false);
   const [chatHistory, setChatHistory]     = useState<WebChatSession[]>([]);
-  const [currentChatId, setCurrentChatId] = useState<string>(() => `chat_${Date.now()}`);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const webSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, typing]);
+
+  // ── On mount: restore most-recent session ─────────────────────────────────
+  useEffect(() => {
+    const sessions = loadWebChatHistory();
+    if (sessions.length > 0) {
+      setChatHistory(sessions);
+      setMessages(sessions[0].messages);   // most-recently updated is first
+      setCurrentChatId(sessions[0].chat_id);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -3387,26 +3402,51 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 
   const closeDrawer = () => setShowDrawer(false);
 
-  const saveCurrentToHistory = (msgs: AIChatMsg[], chatId: string) => {
-    if (msgs.length === 0) return;
-    const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 40);
-    const sessions = loadWebChatHistory();
-    const existing = sessions.find(s => s.chat_id === chatId);
-    const session: WebChatSession = {
-      chat_id:    chatId,
-      created_at: existing ? existing.created_at : Date.now(),
-      messages:   msgs,
-      preview,
-    };
-    const updated = upsertWebChatSession(sessions, session);
-    saveWebChatHistory(updated);
+  // Debounced (500 ms) session save
+  const saveCurrentToHistory = (msgs: AIChatMsg[], chatId: string, actionType?: string) => {
+    if (msgs.length === 0 || !chatId) return;
+    if (webSaveTimerRef.current) clearTimeout(webSaveTimerRef.current);
+    webSaveTimerRef.current = setTimeout(() => {
+      const now = new Date().toISOString();
+      const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 60);
+      const sessions = loadWebChatHistory();
+      const existing = sessions.find(s => s.chat_id === chatId);
+      const session: WebChatSession = {
+        chat_id:     chatId,
+        created_at:  existing ? existing.created_at : now,
+        updated_at:  now,
+        preview,
+        action_type: actionType ?? existing?.action_type,
+        messages:    msgs,
+      };
+      const updated = upsertWebChatSession(sessions, session);
+      saveWebChatHistory(updated);
+      setChatHistory(updated);
+    }, 500);
   };
 
   const startNewChat = () => {
-    saveCurrentToHistory(messages, currentChatId);
-    const newId = `chat_${Date.now()}`;
+    // Flush current session immediately (bypass debounce)
+    if (messages.length > 0 && currentChatId) {
+      if (webSaveTimerRef.current) clearTimeout(webSaveTimerRef.current);
+      const now = new Date().toISOString();
+      const preview = (messages.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 60);
+      const sessions = loadWebChatHistory();
+      const existing = sessions.find(s => s.chat_id === currentChatId);
+      const session: WebChatSession = {
+        chat_id:     currentChatId,
+        created_at:  existing ? existing.created_at : now,
+        updated_at:  now,
+        preview,
+        action_type: existing?.action_type,
+        messages,
+      };
+      const updated = upsertWebChatSession(sessions, session);
+      saveWebChatHistory(updated);
+      setChatHistory(updated);
+    }
     setMessages([]);
-    setCurrentChatId(newId);
+    setCurrentChatId(null);   // next send() will create a fresh session
     closeDrawer();
   };
 
@@ -3414,12 +3454,17 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
     setMessages(session.messages);
     setCurrentChatId(session.chat_id);
     closeDrawer();
+    setTimeout(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, 80);
   };
 
   const deleteChatSession = (chatId: string) => {
     const sessions = loadWebChatHistory().filter(s => s.chat_id !== chatId);
     saveWebChatHistory(sessions);
     setChatHistory(sessions);
+    if (chatId === currentChatId) {
+      setMessages([]);
+      setCurrentChatId(null);
+    }
   };
 
   const readFileAsBase64 = (file: File): Promise<string> =>
@@ -3451,7 +3496,12 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
     const snap = attachment;
     setAttachment(null);
     const displayText = text.trim() || (snap ? `[${snap.name}]` : '');
-    const userMsg: AIChatMsg = { id: String(Date.now()), role: 'user', content: displayText };
+
+    // Create a new session ID on first message if none active
+    const activeChatId = currentChatId ?? webMakeId();
+    if (!currentChatId) setCurrentChatId(activeChatId);
+
+    const userMsg: AIChatMsg = { id: webMakeId(), role: 'user', content: displayText };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setTyping(true);
@@ -3480,12 +3530,12 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
         const chips = !isStructured ? ['Create Homework','Create a Quiz','Check class performance'] : undefined;
         setMessages(prev => {
           const next = [...prev, {
-            id: String(Date.now()+1), role: 'assistant' as const,
+            id: webMakeId(), role: 'assistant' as const,
             content: data.message ?? data.summary ?? data.overview ?? '',
             card, chips, structured: isStructured ? data : undefined,
             exportable, actionType: action,
           }];
-          saveCurrentToHistory(next, currentChatId);
+          saveCurrentToHistory(next, activeChatId, action);
           return next;
         });
       } else {
@@ -3916,7 +3966,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
                         {session.preview}
                       </div>
                       <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>
-                        {webRelativeTime(session.created_at)}
+                        {webRelativeTime(session.updated_at)}
                       </div>
                     </div>
                     <button
@@ -3953,7 +4003,7 @@ function TeacherAIAssistantWebScreen({ onBack }: { onBack: () => void }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // SCREEN: My Classes
 // ──────────────────────────────────────────────────────────────────────────────
-function ClassesScreen({ onAddHomework, onOpenHomework, onSettings, onAnalytics, onAssistant, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void }) {
+function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettings, onAnalytics, onAssistant, onNewClass }: { onAddHomework: () => void; onOpenHomework: () => void; onHomeworkList: () => void; onSettings: () => void; onAnalytics: () => void; onAssistant: () => void; onNewClass: () => void }) {
   const [fabOpen, setFabOpen] = useState(false);
 
   // Demo homework items for Form 2A — 3 items so the "+ 1 more" link is exercised

@@ -113,24 +113,29 @@ const DEFAULT_LEVEL: Record<string, string> = {
 
 // ── History helpers ───────────────────────────────────────────────────────────
 
-const historyKey        = (userId: string) => `teacher_assistant_history_${userId}`;
-const chatSessionsKey   = (userId: string) => `teacher_assistant_chats_${userId}`;
-const MAX_HISTORY       = 10;  // messages in context window
-const MAX_SESSIONS      = 50;  // chat sessions stored
-const MAX_DISPLAY       = 20;  // sessions shown in drawer
+const historyKey      = (userId: string) => `teacher_assistant_history_${userId}`;
+const sessionsKey     = (userId: string) => `teacher_assistant_sessions_${userId}`;
+const MAX_HISTORY     = 10;  // messages in context window
+const MAX_SESSIONS = 50;  // chat sessions stored
+const MAX_DISPLAY     = 20;  // sessions shown in drawer
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 2)   return 'Just now';
-  if (mins < 60)  return `${mins}m ago`;
-  const hrs = Math.floor(diff / 3_600_000);
-  if (hrs < 24)   return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
-  const days = Math.floor(diff / 86_400_000);
+function makeId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins  = Math.floor(diff / 60_000);
+  const hrs   = Math.floor(diff / 3_600_000);
+  const days  = Math.floor(diff / 86_400_000);
+  if (mins < 1)  return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
   if (days === 1) return 'Yesterday';
-  return `${days} days ago`;
+  if (days < 7)  return `${days} days ago`;
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -142,14 +147,17 @@ interface ChatMessage {
   actionType?: AssistantActionType;
   structured?: Record<string, unknown>;
   exportable?: boolean;
-  timestamp:   number;
+  timestamp:   string;  // ISO 8601
+  attachment?: { media_type: string; name: string };
 }
 
 interface ChatSession {
-  chat_id:    string;
-  created_at: number;
-  messages:   ChatMessage[];
-  preview:    string;
+  chat_id:     string;
+  created_at:  string;  // ISO 8601
+  updated_at:  string;  // ISO 8601
+  preview:     string;  // first user message, max 60 chars
+  action_type?: string;
+  messages:    ChatMessage[];
 }
 
 // ── Structured output card helpers ────────────────────────────────────────────
@@ -329,19 +337,25 @@ export default function TeacherAssistantScreen() {
   // ── Drawer state ──────────────────────────────────────────────────────────
   const [showDrawer, setShowDrawer]         = useState(false);
   const [chatHistory, setChatHistory]       = useState<ChatSession[]>([]);
-  const [currentChatId, setCurrentChatId]   = useState<string>(() => `chat_${Date.now()}`);
-  const drawerAnim = useRef(new Animated.Value(-SCREEN_WIDTH * 0.8)).current;
+  const [currentChatId, setCurrentChatId]   = useState<string | null>(null);
+  const drawerAnim  = useRef(new Animated.Value(-SCREEN_WIDTH * 0.8)).current;
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flatRef   = useRef<FlatList<ChatMessage>>(null);
   const userId    = user?.id ?? 'unknown';
 
-  // ── Load history on mount ─────────────────────────────────────────────────
+  // ── Load sessions on mount — restore most recent ──────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem(historyKey(userId)).then(raw => {
+    AsyncStorage.getItem(sessionsKey(userId)).then(raw => {
       if (!raw) return;
       try {
-        const saved: ChatMessage[] = JSON.parse(raw);
-        setMessages(saved);
+        const saved: ChatSession[] = JSON.parse(raw);
+        if (saved.length === 0) return;
+        setChatHistory(saved);
+        // Restore the most-recently-updated session automatically
+        const last = saved[0]; // array is sorted updated_at desc on save
+        setMessages(last.messages);
+        setCurrentChatId(last.chat_id);
       } catch {}
     });
   }, [userId]);
@@ -358,42 +372,47 @@ export default function TeacherAssistantScreen() {
     listClasses().then(setClasses).catch(() => {});
   }, []);
 
-  // ── Persist history ───────────────────────────────────────────────────────
+  // ── Persist history (legacy key — kept for API context window) ───────────
   const persistHistory = useCallback((msgs: ChatMessage[]) => {
     AsyncStorage.setItem(historyKey(userId), JSON.stringify(msgs)).catch(() => {});
   }, [userId]);
 
-  // ── Save current chat to session history ─────────────────────────────────
-  const saveToSessionHistory = useCallback(async (msgs: ChatMessage[], chatId: string) => {
+  // ── Save session to AsyncStorage (debounced 500 ms) ───────────────────────
+  const saveToSessionHistory = useCallback((
+    msgs: ChatMessage[],
+    chatId: string,
+    actionType?: string,
+  ) => {
     if (msgs.length === 0) return;
-    try {
-      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
-      let sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
-      const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 40);
-      const existing = sessions.findIndex(s => s.chat_id === chatId);
-      const session: ChatSession = {
-        chat_id:    chatId,
-        created_at: existing >= 0 ? sessions[existing].created_at : Date.now(),
-        messages:   msgs,
-        preview,
-      };
-      if (existing >= 0) {
-        sessions[existing] = session;
-      } else {
-        sessions = [session, ...sessions];
-      }
-      if (sessions.length > MAX_SESSIONS) {
-        sessions = sessions.slice(0, MAX_SESSIONS);
-      }
-      await AsyncStorage.setItem(chatSessionsKey(userId), JSON.stringify(sessions));
-      setChatHistory(sessions);
-    } catch {}
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const raw = await AsyncStorage.getItem(sessionsKey(userId));
+        let sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
+        const now = new Date().toISOString();
+        const preview = (msgs.find(m => m.role === 'user')?.content ?? 'Chat').slice(0, 60);
+        const existing = sessions.find(s => s.chat_id === chatId);
+        const session: ChatSession = {
+          chat_id:     chatId,
+          created_at:  existing ? existing.created_at : now,
+          updated_at:  now,
+          preview,
+          action_type: actionType ?? existing?.action_type,
+          messages:    msgs,
+        };
+        sessions = sessions.filter(s => s.chat_id !== chatId);
+        sessions = [session, ...sessions]; // newest first
+        if (sessions.length > MAX_SESSIONS) sessions = sessions.slice(0, MAX_SESSIONS);
+        await AsyncStorage.setItem(sessionsKey(userId), JSON.stringify(sessions));
+        setChatHistory(sessions);
+      } catch {}
+    }, 500);
   }, [userId]);
 
-  // ── Open drawer: load history then animate in ─────────────────────────────
+  // ── Open drawer: refresh history then animate in ─────────────────────────
   const openDrawer = useCallback(async () => {
     try {
-      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
+      const raw = await AsyncStorage.getItem(sessionsKey(userId));
       if (raw) setChatHistory(JSON.parse(raw));
     } catch {}
     setShowDrawer(true);
@@ -409,18 +428,18 @@ export default function TeacherAssistantScreen() {
     }).start(() => setShowDrawer(false));
   }, [drawerAnim]);
 
-  // ── Start a new chat (saves current first) ────────────────────────────────
-  const startNewChat = useCallback(async () => {
-    if (messages.length > 0) {
-      await saveToSessionHistory(messages, currentChatId);
+  // ── Start a new chat: flush current session, then reset to blank ──────────
+  const startNewChat = useCallback(() => {
+    if (messages.length > 0 && currentChatId) {
+      // Flush immediately (bypass debounce)
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveToSessionHistory(messages, currentChatId);
     }
-    const newId = `chat_${Date.now()}`;
     setMessages([]);
     setConversationId(undefined);
-    setCurrentChatId(newId);
-    AsyncStorage.removeItem(historyKey(userId)).catch(() => {});
+    setCurrentChatId(null);  // next message will create a new session
     closeDrawer();
-  }, [messages, currentChatId, saveToSessionHistory, userId, closeDrawer]);
+  }, [messages, currentChatId, saveToSessionHistory, closeDrawer]);
 
   // ── Load a saved chat session ─────────────────────────────────────────────
   const loadChatSession = useCallback((session: ChatSession) => {
@@ -428,20 +447,26 @@ export default function TeacherAssistantScreen() {
     setCurrentChatId(session.chat_id);
     setConversationId(undefined);
     closeDrawer();
+    setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 80);
   }, [closeDrawer]);
 
   // ── Delete a chat session ─────────────────────────────────────────────────
   const deleteChatSession = useCallback(async (chatId: string) => {
     try {
-      const raw = await AsyncStorage.getItem(chatSessionsKey(userId));
+      const raw = await AsyncStorage.getItem(sessionsKey(userId));
       let sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
       sessions = sessions.filter(s => s.chat_id !== chatId);
-      await AsyncStorage.setItem(chatSessionsKey(userId), JSON.stringify(sessions));
+      await AsyncStorage.setItem(sessionsKey(userId), JSON.stringify(sessions));
       setChatHistory(sessions);
+      // If the deleted session was active, reset to blank
+      if (chatId === currentChatId) {
+        setMessages([]);
+        setCurrentChatId(null);
+      }
     } catch {}
-  }, [userId]);
+  }, [userId, currentChatId]);
 
-  // ── Clear history ─────────────────────────────────────────────────────────
+  // ── Clear history (pencil button) ─────────────────────────────────────────
   const clearHistory = useCallback(() => {
     startNewChat();
   }, [startNewChat]);
@@ -502,11 +527,16 @@ export default function TeacherAssistantScreen() {
     const snap = attachment;
     setAttachment(null);
 
+    // Create a new session ID on first message if none is active
+    const activeChatId = currentChatId ?? makeId();
+    if (!currentChatId) setCurrentChatId(activeChatId);
+
     const userMsg: ChatMessage = {
-      id: String(Date.now()),
-      role: 'user',
-      content: displayText,
-      timestamp: Date.now(),
+      id:        makeId(),
+      role:      'user',
+      content:   displayText,
+      timestamp: new Date().toISOString(),
+      ...(snap ? { attachment: { media_type: snap.type, name: snap.name } } : {}),
     };
     const updatedWithUser = [...messages, userMsg];
     setMessages(updatedWithUser);
@@ -536,28 +566,29 @@ export default function TeacherAssistantScreen() {
       }
 
       const aiMsg: ChatMessage = {
-        id:          String(Date.now() + 1),
+        id:          makeId(),
         role:        'assistant',
         content:     res.response ?? '',
         actionType:  res.action_type,
         structured:  res.structured,
         exportable:  res.exportable,
-        timestamp:   Date.now(),
+        timestamp:   new Date().toISOString(),
       };
       const updated = [...updatedWithUser, aiMsg];
       setMessages(updated);
       persistHistory(updated);
-      saveToSessionHistory(updated, currentChatId).catch(() => {});
+      saveToSessionHistory(updated, activeChatId, res.action_type);
     } catch (err: any) {
       const aiMsg: ChatMessage = {
-        id:        String(Date.now() + 1),
+        id:        makeId(),
         role:      'assistant',
         content:   err?.message ?? 'Something went wrong. Please try again.',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
       };
       const updated = [...updatedWithUser, aiMsg];
       setMessages(updated);
       persistHistory(updated);
+      saveToSessionHistory(updated, activeChatId);
     } finally {
       setTyping(false);
     }
@@ -974,32 +1005,33 @@ export default function TeacherAssistantScreen() {
               ListEmptyComponent={
                 <Text style={s.drawerEmpty}>No recent chats</Text>
               }
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    s.drawerChatItem,
-                    item.chat_id === currentChatId && s.drawerChatItemActive,
-                  ]}
-                  onPress={() => loadChatSession(item)}
-                  onLongPress={() => deleteChatSession(item.chat_id)}
-                  delayLongPress={600}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.drawerChatPreview} numberOfLines={1}>
-                      {item.preview}
-                    </Text>
-                    <Text style={s.drawerChatTime}>
-                      {relativeTime(item.created_at)}
-                    </Text>
-                  </View>
+              renderItem={({ item }) => {
+                const isActive = item.chat_id === currentChatId;
+                return (
                   <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => deleteChatSession(item.chat_id)}
+                    style={[s.drawerChatItem, isActive && s.drawerChatItemActive]}
+                    onPress={() => loadChatSession(item)}
+                    onLongPress={() => deleteChatSession(item.chat_id)}
+                    delayLongPress={600}
                   >
-                    <Ionicons name="trash-outline" size={16} color={AI.sub} />
+                    {isActive && <View style={s.drawerActiveBorder} />}
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.drawerChatPreview} numberOfLines={1}>
+                        {item.preview}
+                      </Text>
+                      <Text style={s.drawerChatTime}>
+                        {relativeTime(item.updated_at)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      onPress={() => deleteChatSession(item.chat_id)}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={AI.sub} />
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </TouchableOpacity>
-              )}
+                );
+              }}
             />
           </Animated.View>
         </Modal>
@@ -1204,6 +1236,10 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
   },
   drawerChatItemActive: { backgroundColor: AI.chip },
+  drawerActiveBorder: {
+    position: 'absolute', left: 0, top: 0, bottom: 0,
+    width: 3, backgroundColor: AI.teal, borderRadius: 2,
+  },
   drawerChatPreview: { fontSize: 14, color: AI.text, fontWeight: '500' },
   drawerChatTime:    { fontSize: 12, color: AI.sub, marginTop: 2 },
   drawerEmpty: { fontSize: 13, color: AI.sub, textAlign: 'center', paddingTop: 24 },
