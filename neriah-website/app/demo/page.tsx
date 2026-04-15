@@ -5187,68 +5187,64 @@ function GradeAllScreen({
 
 // ── S1: Register / Join Class ─────────────────────────────────────────────────
 function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void }) {
-  const [joinCode, setJoinCode]   = useState('NR2A01');
-  const [firstName, setFirstName] = useState('Chipo');
-  const [surname, setSurname]     = useState('Dube');
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState('');
+  const [firstName, setFirstName]       = useState('Chipo');
+  const [surname, setSurname]           = useState('Dube');
+  const [manualClassName, setManualClassName] = useState('');
+  const [joinCode, setJoinCode]         = useState('');
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState('');
 
   async function handleJoin() {
-    if (!joinCode.trim() || !firstName.trim() || !surname.trim()) {
-      setError('Please fill in all fields.');
+    if (!firstName.trim() || !surname.trim()) {
+      setError('Please enter your name.');
+      return;
+    }
+    if (!manualClassName.trim() && !joinCode.trim()) {
+      setError('Enter your class name or join code.');
       return;
     }
     setLoading(true);
     setError('');
-    try {
-      await demoFetch('/demo/auth/student/lookup', {
-        method: 'POST',
-        body: JSON.stringify({ join_code: joinCode.trim().toUpperCase() }),
-      });
-      setLoading(false);
-      onJoined(`${firstName.trim()} ${surname.trim()}`);
-    } catch (err: any) {
-      setLoading(false);
-      const msg: string = err?.error ?? err?.message ?? '';
-      if (msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('no class')) {
-        setError('No class found. Check the join code and try again.');
-      } else {
-        // Network / unknown error — still proceed so demo is never blocked
-        onJoined(`${firstName.trim()} ${surname.trim()}`);
+    if (joinCode.trim()) {
+      try {
+        await demoFetch('/demo/auth/student/lookup', {
+          method: 'POST',
+          body: JSON.stringify({ join_code: joinCode.trim().toUpperCase() }),
+        });
+      } catch (err: any) {
+        const msg: string = err?.error ?? err?.message ?? '';
+        if (msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('no class')) {
+          setLoading(false);
+          setError('Join code not found. Check the code and try again.');
+          return;
+        }
+        // Offline / unknown — still proceed
       }
     }
+    setLoading(false);
+    onJoined(`${firstName.trim()} ${surname.trim()}`);
   }
 
   const inp: React.CSSProperties = {
-    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '12px 14px',
-    fontSize: 15, color: C.text, outline: 'none', width: '100%',
+    border: `1px solid ${C.g200}`, borderRadius: 10, padding: '10px 12px',
+    fontSize: 14, color: C.text, outline: 'none', width: '100%',
     boxSizing: 'border-box', fontFamily: 'inherit', background: C.white,
   };
   const lbl: React.CSSProperties = {
-    fontSize: 13, fontWeight: 700, color: C.g900, marginTop: 14, marginBottom: 5, display: 'block',
+    fontSize: 12, fontWeight: 700, color: C.g900, marginTop: 12, marginBottom: 4, display: 'block',
   };
 
   return (
-    <Screen style={{ padding: '24px 20px' }}>
-      <div style={{ width: 60, height: 60, borderRadius: 18, background: C.amber50, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-        <GraduationCap size={28} color={C.amber} />
+    <Screen style={{ padding: '20px 18px' }}>
+      <div style={{ width: 52, height: 52, borderRadius: 16, background: C.amber50, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+        <GraduationCap size={24} color={C.amber} />
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>Join a Class</div>
-      <div style={{ fontSize: 13, color: C.g500, marginBottom: 22, lineHeight: 1.5 }}>
-        Enter the code your teacher gave you to get started.
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 2 }}>Join a Class</div>
+      <div style={{ fontSize: 12, color: C.g500, marginBottom: 16, lineHeight: 1.5 }}>
+        Fill in your details below to get started.
       </div>
 
-      <label style={lbl}>Class Join Code</label>
-      <input
-        type="text"
-        value={joinCode}
-        onChange={e => setJoinCode(e.target.value.toUpperCase())}
-        maxLength={10}
-        placeholder="e.g. NR2A01"
-        style={{ ...inp, textTransform: 'uppercase', letterSpacing: '0.12em', textAlign: 'center', fontWeight: 800, fontSize: 20, border: `2px solid ${C.amber}` }}
-      />
-
-      <div style={{ display: 'flex', gap: 10, marginTop: 0 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
         <div style={{ flex: 1 }}>
           <label style={lbl}>First Name</label>
           <input type="text" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Chipo" style={inp} />
@@ -5259,22 +5255,49 @@ function StudentRegisterScreen({ onJoined }: { onJoined: (name: string) => void 
         </div>
       </div>
 
-      {error && <div style={{ marginTop: 10, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
+      {/* Add class manually — always visible */}
+      <div style={{
+        marginTop: 16, padding: '14px 14px 10px', borderRadius: 12,
+        border: `1px solid ${C.amber}`, background: C.amber50,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Add class manually</div>
+
+        <label style={{ ...lbl, marginTop: 0 }}>Class name</label>
+        <input
+          type="text"
+          value={manualClassName}
+          onChange={e => setManualClassName(e.target.value)}
+          placeholder="e.g. Form 2A"
+          style={inp}
+        />
+
+        <label style={lbl}>Join code (optional)</label>
+        <input
+          type="text"
+          value={joinCode}
+          onChange={e => setJoinCode(e.target.value.toUpperCase())}
+          maxLength={10}
+          placeholder="e.g. NR2A01"
+          style={{ ...inp, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700 }}
+        />
+      </div>
+
+      {error && <div style={{ marginTop: 8, fontSize: 12, color: C.red, fontWeight: 600 }}>{error}</div>}
 
       <button
         onClick={handleJoin}
         disabled={loading}
         style={{
-          marginTop: 22, width: '100%', background: loading ? C.amber100 : C.amber,
-          border: 'none', borderRadius: 10, padding: '15px 0',
+          marginTop: 16, width: '100%', background: loading ? C.amber100 : C.amber,
+          border: 'none', borderRadius: 10, padding: '14px 0',
           cursor: loading ? 'not-allowed' : 'pointer', color: C.white,
-          fontWeight: 700, fontSize: 16, fontFamily: 'inherit', boxSizing: 'border-box', transition: 'background 0.15s',
+          fontWeight: 700, fontSize: 15, fontFamily: 'inherit', boxSizing: 'border-box', transition: 'background 0.15s',
         }}
       >
         {loading ? 'Joining…' : 'Join Class →'}
       </button>
 
-      <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: C.g500 }}>
+      <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: C.g500 }}>
         Already registered?{' '}
         <button
           onClick={() => onJoined('Chipo Dube')}

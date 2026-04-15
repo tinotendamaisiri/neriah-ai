@@ -86,8 +86,7 @@ export default function StudentRegisterScreen() {
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedClassName, setSelectedClassName] = useState('');
 
-  // Manual entry panel (shown below fetched class list)
-  const [showManual, setShowManual] = useState(false);
+  // Manual entry panel (always shown below fetched class list)
   const [manualClassName, setManualClassName] = useState('');
   const [manualJoinCode, setManualJoinCode] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
@@ -223,7 +222,6 @@ export default function StudentRegisterScreen() {
       setSelectedClassName(name);
       setIsPendingClass(true);
     }
-    setShowManual(false);
     setStep('name');
   };
 
@@ -426,70 +424,49 @@ export default function StudentRegisterScreen() {
                   </TouchableOpacity>
                 ))}
 
-                {/* ── Manual entry panel ─────────────────────────────────── */}
-                {!showManual ? (
+                {/* ── Add class manually ─────────────────────────────────── */}
+                <View style={styles.manualPanel}>
+                  <Text style={styles.manualPanelTitle}>Add class manually</Text>
+
+                  <Text style={styles.label}>Class name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Form 2A"
+                    value={manualClassName}
+                    onChangeText={setManualClassName}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                  />
+
+                  <Text style={[styles.label, { marginTop: 10 }]}>Join code (optional)</Text>
+                  <TextInput
+                    style={[styles.input, { textTransform: 'uppercase', letterSpacing: 2 }]}
+                    placeholder="e.g. NR2A01"
+                    value={manualJoinCode}
+                    onChangeText={(t) => setManualJoinCode(t.toUpperCase())}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={8}
+                    returnKeyType="done"
+                    onSubmitEditing={handleManualAdd}
+                  />
+
+                  {manualError ? (
+                    <Text style={styles.manualError}>{manualError}</Text>
+                  ) : null}
+
                   <TouchableOpacity
-                    style={styles.manualToggle}
-                    onPress={() => { setShowManual(true); setManualError(''); }}
+                    style={[styles.button, { marginTop: 14 }, manualLoading && styles.buttonDisabled]}
+                    onPress={handleManualAdd}
+                    disabled={manualLoading}
                   >
-                    <Text style={styles.manualToggleText}>
-                      {classes.length === 0 ? "Add my class manually →" : "My class isn't listed →"}
-                    </Text>
+                    {manualLoading
+                      ? <ActivityIndicator color={COLORS.white} />
+                      : <Text style={styles.buttonText}>Add this class</Text>
+                    }
                   </TouchableOpacity>
-                ) : (
-                  <View style={styles.manualPanel}>
-                    <Text style={styles.manualPanelTitle}>Add your class</Text>
-                    <Text style={styles.manualPanelHint}>
-                      Enter your class name. If your teacher gave you a join code, add it too — otherwise your details will be saved and linked once your teacher sets up the class.
-                    </Text>
-
-                    <Text style={styles.label}>Class name</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. Form 2A"
-                      value={manualClassName}
-                      onChangeText={setManualClassName}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                      returnKeyType="next"
-                    />
-
-                    <Text style={[styles.label, { marginTop: 10 }]}>Join code (optional)</Text>
-                    <TextInput
-                      style={[styles.input, { textTransform: 'uppercase', letterSpacing: 2 }]}
-                      placeholder="e.g. NR2A01"
-                      value={manualJoinCode}
-                      onChangeText={(t) => setManualJoinCode(t.toUpperCase())}
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      maxLength={8}
-                      returnKeyType="done"
-                      onSubmitEditing={handleManualAdd}
-                    />
-
-                    {manualError ? (
-                      <Text style={styles.manualError}>{manualError}</Text>
-                    ) : null}
-
-                    <TouchableOpacity
-                      style={[styles.button, { marginTop: 14 }, manualLoading && styles.buttonDisabled]}
-                      onPress={handleManualAdd}
-                      disabled={manualLoading}
-                    >
-                      {manualLoading
-                        ? <ActivityIndicator color={COLORS.white} />
-                        : <Text style={styles.buttonText}>Add this class</Text>
-                      }
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.secondaryButton, { marginTop: 8 }]}
-                      onPress={() => { setShowManual(false); setManualError(''); }}
-                    >
-                      <Text style={styles.secondaryButtonText}>Cancel</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                </View>
               </>
             )}
           </>
@@ -758,13 +735,6 @@ const styles = StyleSheet.create({
   customInputContainer: { padding: 20, gap: 4 },
 
   // Manual entry
-  manualToggle: {
-    marginTop: 20, paddingVertical: 14, alignItems: 'center',
-    borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 10,
-    borderStyle: 'dashed',
-  },
-  manualToggleText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
-
   manualPanel: {
     marginTop: 20, padding: 16, borderRadius: 12,
     borderWidth: 1, borderColor: COLORS.amber300,
