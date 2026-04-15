@@ -128,13 +128,14 @@ export default function StudentRegisterScreen() {
   }, [schools, schoolQuery]);
 
   const handleSelectSchool = async (school: School) => {
+    console.log('[StudentRegister] School selected:', school);
     setSelectedSchoolId(school.id);
     setSelectedSchoolName(school.name);
     setSchoolModalVisible(false);
     setShowCustomInput(false);
     setSchoolQuery('');
     setStep('class_list');
-    await loadClassesForSchool(school.id);
+    await loadClassesForSchool(school.name);
   };
 
   const handleCustomSchoolConfirm = async () => {
@@ -154,22 +155,20 @@ export default function StudentRegisterScreen() {
   };
 
   // ── Load classes for selected school ───────────────────────────────────────
-  const loadClassesForSchool = async (school_id: string) => {
-    if (!school_id) {
-      console.log('[StudentRegister] loadClassesForSchool: no school_id, skipping');
+  const loadClassesForSchool = async (school_name: string) => {
+    if (!school_name) {
       setClasses([]);
       return;
     }
-    console.log('[StudentRegister] loadClassesForSchool: fetching classes for school_id=', school_id);
+    console.log('[StudentRegister] Fetching classes for school:', school_name);
+    console.log('[StudentRegister] API call:', `/api/classes/by-school?school=${encodeURIComponent(school_name)}`);
     setClassesLoading(true);
     try {
-      const result = await getClassesBySchool(school_id);
-      console.log('[StudentRegister] loadClassesForSchool: got', result.length, 'classes', JSON.stringify(result));
+      const result = await getClassesBySchool(school_name);
+      console.log('[StudentRegister] Response:', JSON.stringify(result));
       setClasses(result);
     } catch (err: any) {
-      const status = err?.status ?? err?.response?.status;
-      const msg = err?.message ?? err?.response?.data?.error ?? 'unknown error';
-      console.warn('[StudentRegister] loadClassesForSchool failed: status=', status, 'msg=', msg);
+      console.log('[StudentRegister] Error:', JSON.stringify(err?.response?.data ?? err?.message));
       setClasses([]);
     } finally {
       setClassesLoading(false);
@@ -329,8 +328,8 @@ export default function StudentRegisterScreen() {
                 style={styles.button}
                 onPress={() => {
                   setStep('class_list');
-                  if (selectedSchoolId && classes.length === 0 && !classesLoading) {
-                    loadClassesForSchool(selectedSchoolId);
+                  if (selectedSchoolName && classes.length === 0 && !classesLoading) {
+                    loadClassesForSchool(selectedSchoolName);
                   }
                 }}
               >
@@ -353,17 +352,17 @@ export default function StudentRegisterScreen() {
             ) : classes.length === 0 ? (
               <>
                 <Text style={styles.emptyText}>
-                  No classes found for this school yet.{'\n'}Your teacher needs to set up their class first.
+                  No classes found at {selectedSchoolName || 'this school'}.{'\n\n'}
+                  Ask your teacher for their class join code and use it to join directly.
                 </Text>
+                <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Phone')}>
+                  <Text style={styles.buttonText}>Sign in with join code</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.button, { marginTop: 24 }]}
-                  onPress={() => {
-                    setSelectedClassId('');
-                    setSelectedClassName('');
-                    setStep('name');
-                  }}
+                  style={[styles.secondaryButton, { marginTop: 8 }]}
+                  onPress={() => setStep('school')}
                 >
-                  <Text style={styles.buttonText}>Continue anyway</Text>
+                  <Text style={styles.secondaryButtonText}>Try a different school</Text>
                 </TouchableOpacity>
               </>
             ) : (

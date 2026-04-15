@@ -205,16 +205,16 @@ export const getClassJoinInfo = async (code: string): Promise<ClassJoinInfo> => 
   return res.data;
 };
 
-/** Public: fetch all classes for a school (no auth required). */
-export const getClassesBySchool = async (school_id: string): Promise<Array<{
+/** Public: fetch all classes for a school by name (no auth required). */
+export const getClassesBySchool = async (school_name: string): Promise<Array<{
   id: string;
   name: string;
   education_level: string;
   subject?: string;
   teacher: { first_name: string; surname: string };
 }>> => {
-  const res = await client.get(`/classes/school/${school_id}`);
-  return res.data;
+  const res = await client.get('/classes/by-school', { params: { school: school_name } });
+  return Array.isArray(res.data) ? res.data : [];
 };
 
 // ── Students ──────────────────────────────────────────────────────────────────

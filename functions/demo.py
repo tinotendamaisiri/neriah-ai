@@ -1385,7 +1385,7 @@ def demo_list_classes():
     teacher_id = request.args.get("teacher_id", DEMO_TEACHER_ID)
 
     # Read from Firestore — returns any classes created during the demo session
-    fs_classes = query("classes", "teacher_id", "==", teacher_id)
+    fs_classes = query("classes", [("teacher_id", "==", teacher_id)])
 
     if not fs_classes:
         # Fall back to the static seed class so the demo always shows something
@@ -1419,6 +1419,65 @@ def demo_list_classes():
         })
 
     return jsonify({"classes": result}), 200
+
+
+# ── GET /api/demo/classes/by-school ──────────────────────────────────────────
+
+@demo_bp.get("/demo/classes/by-school")
+def demo_classes_by_school():
+    """
+    Public demo — list classes for a school by name.
+    Used by the web demo student registration when a school is selected.
+
+    GET /api/demo/classes/by-school?school=Kuwadzana+High+School
+    """
+    if _guard():
+        return jsonify({"error": "Not available in production"}), 403
+
+    school = (request.args.get("school") or "").strip().lower()
+    logger.debug("[demo] GET /demo/classes/by-school school=%r", school)
+
+    # Find demo teachers at this school (case-insensitive)
+    all_teachers = query("teachers", [])
+    matching_teachers = [
+        t for t in all_teachers
+        if (t.get("school_name") or t.get("school_id") or "").lower() == school
+    ]
+
+    if not matching_teachers:
+        # Also check the seed demo teacher
+        matching_teachers = [{"id": DEMO_TEACHER_ID, "first_name": "Mr", "surname": "Demo"}]
+
+    classes: list[dict] = []
+    seen: set[str] = set()
+    for t in matching_teachers:
+        teacher_classes = query("classes", [("teacher_id", "==", t["id"])])
+        if not teacher_classes and t["id"] == DEMO_TEACHER_ID:
+            # Seed class fallback for demo teacher
+            teacher_classes = [{
+                "id":              DEMO_CLASS_ID,
+                "name":            "Form 2A",
+                "subject":         "Mathematics",
+                "education_level": "Form 2",
+                "teacher_id":      DEMO_TEACHER_ID,
+                "join_code":       "NR2A01",
+            }]
+        for cls in teacher_classes:
+            cid = cls.get("id", "")
+            if cid not in seen:
+                seen.add(cid)
+                classes.append({
+                    "id":              cid,
+                    "name":            cls.get("name", ""),
+                    "education_level": cls.get("education_level", ""),
+                    "subject":         cls.get("subject"),
+                    "teacher": {
+                        "first_name": t.get("first_name", ""),
+                        "surname":    t.get("surname", ""),
+                    },
+                })
+
+    return jsonify(classes), 200
 
 
 # ── POST /api/demo/classes ────────────────────────────────────────────────────
@@ -2254,9 +2313,9 @@ def demo_student_lookup():
 # ── GET /api/demo/classes/school/<school_id> ──────────────────────────────────
 
 @demo_bp.get("/demo/classes/school/<school_id>")
-def demo_classes_by_school(school_id: str):
+def demo_classes_by_school_id(school_id: str):
     """
-    Demo version of class list for a school.
+    Demo version of class list for a school (legacy path-param form).
     Returns the single demo class (Form 2A) for any school ID.
     """
     if _guard():

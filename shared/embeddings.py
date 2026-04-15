@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from shared.config import is_demo
+from shared.config import is_demo, settings
 
 logger = logging.getLogger(__name__)
 
