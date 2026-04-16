@@ -335,6 +335,8 @@ def create_answer_key():
     # Build user context once — used by all three processing paths (file, base64, text).
     user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id)
 
+    qp_image_url: str | None = None  # question paper image URL in GCS
+
     # ── File upload processing ────────────────────────────────────────────────
     if file and file.filename:
         file_bytes = file.read()
@@ -342,6 +344,18 @@ def create_answer_key():
         upload_err = _validate_upload(file_bytes, filename)
         if upload_err:
             return jsonify({"error": upload_err}), 400
+
+        # Store the original question paper file to GCS
+        try:
+            import uuid as _uuid
+            from shared.gcs_client import generate_signed_url, upload_bytes
+            blob_name = f"question_papers/{teacher_id}/{_uuid.uuid4()}/{filename}"
+            upload_bytes(settings.GCS_BUCKET_SCANS, blob_name, file_bytes, public=False)
+            qp_image_url = generate_signed_url(settings.GCS_BUCKET_SCANS, blob_name, expiry_minutes=60 * 24 * 365)
+            logger.info("[answer_keys] Stored question paper: %s", blob_name)
+        except Exception:
+            logger.warning("[answer_keys] Failed to store question paper to GCS — continuing without")
+
         qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
             file_bytes, filename, input_type, education_level, subject, user_ctx,
         )
@@ -368,6 +382,18 @@ def create_answer_key():
             file_bytes = base64.b64decode(file_data_b64)
         except Exception:
             return jsonify({"error": "Invalid base64 in file_data"}), 400
+
+        # Store the original question paper to GCS
+        try:
+            import uuid as _uuid
+            from shared.gcs_client import generate_signed_url, upload_bytes
+            ext = _MEDIA_TYPE_EXT.get(media_type, "bin")
+            blob_name = f"question_papers/{teacher_id}/{_uuid.uuid4()}/upload.{ext}"
+            upload_bytes(settings.GCS_BUCKET_SCANS, blob_name, file_bytes, public=False)
+            qp_image_url = generate_signed_url(settings.GCS_BUCKET_SCANS, blob_name, expiry_minutes=60 * 24 * 365)
+            logger.info("[answer_keys] Stored question paper (b64): %s", blob_name)
+        except Exception:
+            logger.warning("[answer_keys] Failed to store question paper to GCS — continuing")
         if len(file_bytes) > _MAX_UPLOAD_BYTES:
             return jsonify({"error": f"File too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)"}), 400
         ext = _MEDIA_TYPE_EXT.get(media_type, "bin")
@@ -424,8 +450,11 @@ def create_answer_key():
         status=status,
         question_paper_text=stored_qp_text,
     )
-    upsert("answer_keys", key.id, key.model_dump())
-    return jsonify(key.model_dump()), 201
+    doc = key.model_dump()
+    if qp_image_url:
+        doc["qp_image_url"] = qp_image_url
+    upsert("answer_keys", key.id, doc)
+    return jsonify(doc), 201
 
 
 @answer_keys_bp.put("/answer-keys/<key_id>")

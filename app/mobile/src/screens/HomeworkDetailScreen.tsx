@@ -5,6 +5,7 @@ import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -458,13 +459,24 @@ export default function HomeworkDetailScreen() {
                 <Text style={styles.regenerateLink}>{t('regenerate')}</Text>
               </TouchableOpacity>
             </View>
-            {/* Banner when question texts are missing */}
+            {/* Show question paper image when question texts are missing */}
             {answerKey.questions.length > 0 && !answerKey.questions.some(q => q.question_text) && (
-              <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#F5A623' }}>
-                <Text style={{ fontSize: 13, color: '#92400E', lineHeight: 18 }}>
-                  Question texts not available — only answers and marks are shown. Upload the question paper to add question texts.
-                </Text>
-              </View>
+              (answerKey as any).qp_image_url ? (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: COLORS.gray500, marginBottom: 8 }}>Question Paper</Text>
+                  <Image
+                    source={{ uri: (answerKey as any).qp_image_url }}
+                    style={{ width: '100%', height: 300, borderRadius: 10, backgroundColor: COLORS.gray50 }}
+                    resizeMode="contain"
+                  />
+                </View>
+              ) : (
+                <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#F5A623' }}>
+                  <Text style={{ fontSize: 13, color: '#92400E', lineHeight: 18 }}>
+                    Question paper not available. Re-upload the question paper photo to see the questions here.
+                  </Text>
+                </View>
+              )
             )}
             {answerKey.questions.map((q, idx) =>
               editingQIdx === idx ? (
