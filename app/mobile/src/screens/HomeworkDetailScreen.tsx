@@ -525,7 +525,16 @@ export default function HomeworkDetailScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.questionNum}>Q{q.number ?? idx + 1}</Text>
-                  <Text style={styles.questionAnswer} numberOfLines={1}>{q.correct_answer}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.questionText} numberOfLines={0}>
+                      {q.question_text || `Question ${q.number ?? idx + 1}`}
+                    </Text>
+                    {q.correct_answer ? (
+                      <Text style={styles.questionAnswer} numberOfLines={0}>
+                        Answer: {q.correct_answer}
+                      </Text>
+                    ) : null}
+                  </View>
                   <Text style={styles.questionMarks}>{(q.marks != null && q.marks > 0) ? `${q.marks} mk` : '—'}</Text>
                   <Text style={styles.editChevron}>›</Text>
                 </TouchableOpacity>
@@ -807,7 +816,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.background,
   },
   questionNum: { fontSize: 13, fontWeight: '700', color: COLORS.teal500, minWidth: 28 },
-  questionAnswer: { flex: 1, fontSize: 14, color: COLORS.text },
+  questionText: { fontSize: 14, fontWeight: '600', color: COLORS.text, lineHeight: 20 },
+  questionAnswer: { fontSize: 13, color: COLORS.gray500, marginTop: 3, lineHeight: 18 },
   questionMarks: { fontSize: 12, color: COLORS.gray500, minWidth: 32, textAlign: 'right' },
   editChevron: { fontSize: 18, color: COLORS.gray500, marginLeft: 2 },
 
