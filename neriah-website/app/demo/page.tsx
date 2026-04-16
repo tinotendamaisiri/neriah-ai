@@ -960,7 +960,16 @@ function WebCameraModal({ open, onCapture, onClose }: WebCameraModalProps) {
 }
 
 // ── Country list for phone input ──────────────────────────────────────────────
-interface PhoneCountry { flag: string; name: string; dialCode: string; code: string; }
+const PHONE_EXAMPLES: Record<string, string> = {
+  '+263': '77 123 4567', '+27': '82 123 4567', '+260': '97 123 4567',
+  '+265': '991 23 4567', '+254': '712 345 678', '+255': '712 345 678',
+  '+256': '712 345 678', '+233': '24 123 4567', '+234': '801 234 5678',
+  '+267': '71 234 567', '+258': '82 123 4567', '+264': '81 123 4567',
+  '+251': '91 123 4567', '+1': '(555) 123-4567', '+44': '7700 900123',
+  '+91': '98765 43210',
+};
+function getPhoneExample(dialCode: string): string { return PHONE_EXAMPLES[dialCode] ?? 'e.g. 712 345 678'; }
+interface PhoneCountry { flag: string; name: string; dialCode: string; code: string; digits?: number; }
 const PHONE_COUNTRIES: PhoneCountry[] = [
   { flag: '🇿🇼', name: 'Zimbabwe',       dialCode: '+263', code: 'ZW' },
   { flag: '🇿🇦', name: 'South Africa',   dialCode: '+27',  code: 'ZA' },
@@ -1126,7 +1135,7 @@ function PhoneInputRow({ value, onChange, compact = false }: { value: string; on
         value={value}
         onChange={e => { const d = e.target.value.replace(/\D/g, '').replace(/^0/, ''); if (d.length <= (country.digits ?? 9)) onChange(e.target.value.replace(/\D/g, ''), country.dialCode); }}
         maxLength={(country.digits ?? 9) + 1}
-        placeholder="771 234 567"
+        placeholder={getPhoneExample(country.dialCode)}
         style={{
           flex: 1, border: `1px solid ${C.g200}`, borderRadius: '0 10px 10px 0',
           padding: '14px 12px', fontSize: 15, color: C.text, outline: 'none',

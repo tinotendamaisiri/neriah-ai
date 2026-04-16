@@ -27,6 +27,30 @@ import * as Localization from 'expo-localization';
 import { COLORS } from '../constants/colors';
 import { COUNTRIES, Country, DEFAULT_COUNTRY_CODE, DEFAULT_DIGITS } from '../constants/countries';
 
+// ── Placeholder examples by dial code ────────────────────────────────────────
+
+const _PHONE_EXAMPLES: Record<string, string> = {
+  '+263': '77 123 4567',
+  '+1':   '(555) 123-4567',
+  '+260': '97 123 4567',
+  '+27':  '82 123 4567',
+  '+254': '712 345 678',
+  '+255': '712 345 678',
+  '+265': '991 23 4567',
+  '+267': '71 234 567',
+  '+264': '81 123 4567',
+  '+258': '82 123 4567',
+  '+256': '712 345 678',
+  '+233': '24 123 4567',
+  '+234': '801 234 5678',
+  '+44':  '7700 900123',
+  '+91':  '98765 43210',
+};
+
+function getPhoneExample(dialCode: string): string {
+  return _PHONE_EXAMPLES[dialCode] ?? 'e.g. 712 345 678';
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function detectDefaultCountry(): Country {
@@ -160,7 +184,7 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
           onChangeText={handleLocalChange}
           onBlur={handleBlur}
           keyboardType="phone-pad"
-          placeholder={`${expectedDigits} digits`}
+          placeholder={getPhoneExample(country.dial)}
           placeholderTextColor={COLORS.gray200}
           autoCorrect={false}
           autoCapitalize="none"
@@ -170,17 +194,10 @@ export default function PhoneInput({ onChangePhone, error, disabled }: PhoneInpu
         />
       </View>
 
-      {/* Digit counter */}
-      <Text style={[styles.counter, { color: counterColor }]}>
-        {localDigits}/{expectedDigits} digits
-      </Text>
-
-      {/* Inline validation error */}
+      {/* Inline validation hint — only after touch, when invalid */}
       {showInlineError && (
         <Text style={styles.inlineError}>
-          {localDigits < expectedDigits
-            ? `Too short — ${expectedDigits} digits required for ${country.name}`
-            : `Too long — max ${expectedDigits} digits for ${country.name}`}
+          Enter a valid phone number for {country.name}
         </Text>
       )}
 
