@@ -199,12 +199,6 @@ export default function MarkingScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.heading}>Mark Books</Text>
-        {className && <Text style={styles.subheading}>{className}</Text>}
-      </View>
-
       {!classId ? (
         <View style={styles.noClass}>
           <Text style={styles.noClassText}>
