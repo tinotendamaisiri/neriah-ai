@@ -458,6 +458,14 @@ export default function HomeworkDetailScreen() {
                 <Text style={styles.regenerateLink}>{t('regenerate')}</Text>
               </TouchableOpacity>
             </View>
+            {/* Banner when question texts are missing */}
+            {answerKey.questions.length > 0 && !answerKey.questions.some(q => q.question_text) && (
+              <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#F5A623' }}>
+                <Text style={{ fontSize: 13, color: '#92400E', lineHeight: 18 }}>
+                  Question texts not available — only answers and marks are shown. Upload the question paper to add question texts.
+                </Text>
+              </View>
+            )}
             {answerKey.questions.map((q, idx) =>
               editingQIdx === idx ? (
                 <View key={q.number ?? idx} style={styles.questionEditCard}>
@@ -526,16 +534,20 @@ export default function HomeworkDetailScreen() {
                 >
                   <Text style={styles.questionNum}>Q{q.number ?? idx + 1}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.questionText} numberOfLines={0}>
-                      {q.question_text || `Question ${q.number ?? idx + 1}`}
-                    </Text>
-                    {q.correct_answer ? (
+                    {q.question_text ? (
+                      <>
+                        <Text style={styles.questionText} numberOfLines={0}>{q.question_text}</Text>
+                        <Text style={styles.questionAnswer} numberOfLines={0}>Answer: {q.correct_answer ?? '—'}</Text>
+                      </>
+                    ) : (
                       <Text style={styles.questionAnswer} numberOfLines={0}>
-                        Answer: {q.correct_answer}
+                        {q.correct_answer ? `Answer: ${q.correct_answer}` : '—'}
                       </Text>
-                    ) : null}
+                    )}
                   </View>
-                  <Text style={styles.questionMarks}>{(q.marks != null && q.marks > 0) ? `${q.marks} mk` : '—'}</Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.questionMarks}>{(q.marks != null && q.marks > 0) ? `${q.marks} marks` : '—'}</Text>
+                  </View>
                   <Text style={styles.editChevron}>›</Text>
                 </TouchableOpacity>
               ),
