@@ -6,6 +6,7 @@
 
 import React, { useCallback, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   ScrollView,
@@ -269,34 +270,32 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
         </View>
       )}
 
-      {/* Homework list */}
+      {/* Homework filter dropdown */}
       {homeworks.length > 0 && (
-        <>
-          <Text style={styles.sectionTitle}>Homework</Text>
-          {homeworks.map((hw) => (
-            <TouchableOpacity
-              key={hw.id}
-              style={styles.homeworkRow}
-              onPress={() => navigation.navigate('HomeworkAnalytics', {
-                homework_id: hw.id,
-                homework_title: hw.title || hw.subject || 'Homework',
-                class_id,
-                class_name,
-              })}
-              activeOpacity={0.7}
-            >
-              <View style={styles.hwInfo}>
-                <Text style={styles.hwTitle} numberOfLines={1}>
-                  {hw.title || hw.subject || 'Untitled Homework'}
-                </Text>
-                {hw.due_date && (
-                  <Text style={styles.hwSub}>Due: {hw.due_date}</Text>
-                )}
-              </View>
-              <Text style={styles.hwChevron}>›</Text>
-            </TouchableOpacity>
-          ))}
-        </>
+        <TouchableOpacity
+          style={styles.homeworkPicker}
+          onPress={() => {
+            const options = [
+              { text: 'All Homework', onPress: () => {} },
+              ...homeworks.map(hw => ({
+                text: hw.title || hw.subject || 'Homework',
+                onPress: () => navigation.navigate('HomeworkAnalytics', {
+                  homework_id: hw.id,
+                  homework_title: hw.title || hw.subject || 'Homework',
+                  class_id,
+                  class_name,
+                }),
+              })),
+              { text: 'Cancel', style: 'cancel' as const },
+            ];
+            Alert.alert('View Homework Analytics', 'Select a homework to see detailed analytics', options);
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="document-text-outline" size={16} color={COLORS.teal500} />
+          <Text style={styles.homeworkPickerText}>Homework ({homeworks.length})</Text>
+          <Ionicons name="chevron-down" size={14} color={COLORS.teal500} />
+        </TouchableOpacity>
       )}
 
       {/* Student Rankings */}
@@ -564,6 +563,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 2,
   },
+  homeworkPicker: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: COLORS.teal50, borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16,
+  },
+  homeworkPickerText: { flex: 1, fontSize: 14, fontWeight: '600', color: COLORS.teal500 },
   homeworkRow: {
     flexDirection: 'row',
     alignItems: 'center',
