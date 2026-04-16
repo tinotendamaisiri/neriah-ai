@@ -326,25 +326,48 @@ Rules:
         return _FALLBACK
 
 
+_SYLLABUS_TOKEN_BUDGET = 800
+_EXAMPLES_TOKEN_BUDGET = 600
+_TOTAL_TOKEN_BUDGET = 1200
+_RAG_TIMEOUT_SECONDS = 2.0
+
+
+def _estimate_tokens(text: str) -> int:
+    """Approximate token count: words * 1.3."""
+    return int(len(text.split()) * 1.3)
+
+
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    """Truncate text to approximately max_tokens."""
+    words = text.split()
+    target_words = int(max_tokens / 1.3)
+    if len(words) <= target_words:
+        return text
+    return " ".join(words[:target_words]) + "..."
+
+
 def _build_rag_context(
     query_text: str,
     user_context: dict,
     include_grading_examples: bool = True,
 ) -> str:
     """
-    Retrieve relevant syllabus chunks (and optionally verified gradings) from
-    the vector DB using the user's profile as automatic filters.
+    Retrieve RAG context with strict token budgets and concurrent fetching.
 
-    Filters by curriculum, subject, and education_level (normalized to
-    syllabus tier via map_education_level). Falls back gracefully when
-    filters are too narrow.
+    Rules:
+      - Syllabus: at most 3 chunks from 1 single syllabus file, max 800 tokens
+      - Grading examples: at most 2 examples, max 600 tokens
+      - Combined total: max 1200 tokens
+      - Each fetch has a 2-second timeout
+      - All failures degrade gracefully — never blocks grading
 
-    Returns a formatted prompt section string, or "" if nothing found / on error.
+    Returns a formatted prompt section string, or "" if nothing found.
     Never raises.
     """
     if not user_context and not query_text:
         return ""
     try:
+        import concurrent.futures  # noqa: PLC0415
         from shared.vector_db import search_with_user_context  # noqa: PLC0415
 
         curriculum = user_context.get("curriculum", "")
@@ -352,48 +375,110 @@ def _build_rag_context(
         edu_level = user_context.get("education_level", "")
 
         logger.info(
-            "[rag] Building context: curriculum=%s subject=%s level=%s query=%.60s",
-            curriculum or "-", subject or "-", edu_level or "-", query_text[:60],
+            "[rag] Building context: curriculum=%s subject=%s level=%s",
+            curriculum or "-", subject or "-", edu_level or "-",
         )
 
-        syllabus_hits = search_with_user_context(
-            "syllabuses", query_text, user_context, top_k=3,
-        )
-
+        # ── Concurrent fetch with timeout ────────────────────────────────────
+        syllabus_hits: list[dict] = []
         grading_hits: list[dict] = []
-        if include_grading_examples:
-            grading_hits = search_with_user_context(
-                "grading_examples", query_text, user_context, top_k=3,
-            )
+
+        def fetch_syllabus():
+            # Fetch more than needed, then filter to single file
+            return search_with_user_context("syllabuses", query_text, user_context, top_k=6)
+
+        def fetch_examples():
+            if not include_grading_examples:
+                return []
+            return search_with_user_context("grading_examples", query_text, user_context, top_k=2)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            syl_future = pool.submit(fetch_syllabus)
+            ex_future = pool.submit(fetch_examples)
+
+            try:
+                syllabus_hits = syl_future.result(timeout=_RAG_TIMEOUT_SECONDS)
+            except Exception:
+                logger.warning("[rag] Syllabus fetch timed out or failed — skipping")
+
+            try:
+                grading_hits = ex_future.result(timeout=_RAG_TIMEOUT_SECONDS)
+            except Exception:
+                logger.warning("[rag] Examples fetch timed out or failed — skipping")
 
         if not syllabus_hits and not grading_hits:
             logger.info("[rag] No RAG context found for %s/%s/%s", curriculum, subject, edu_level)
             return ""
 
-        # Dynamic header reflecting actual curriculum/subject/level
+        # ── RULE 1: Single syllabus file, max 3 chunks ──────────────────────
+        syl_text = ""
+        syl_source = ""
+        if syllabus_hits:
+            # Group by source_file, pick the file with the most hits
+            by_file: dict[str, list[dict]] = {}
+            for hit in syllabus_hits:
+                src = hit.get("metadata", {}).get("source_file", "unknown")
+                by_file.setdefault(src, []).append(hit)
+
+            # Select the single best file (most hits = most relevant)
+            best_file = max(by_file, key=lambda f: len(by_file[f]))
+            best_chunks = by_file[best_file][:3]  # max 3 chunks from this file
+            syl_source = best_file
+
+            chunks_text = "\n".join(
+                f"• {h['text'][:500].strip().replace(chr(10), ' ')}" for h in best_chunks
+            )
+            syl_text = _truncate_to_tokens(chunks_text, _SYLLABUS_TOKEN_BUDGET)
+            logger.info("[rag] Attached %d chunks from %s", len(best_chunks), best_file)
+
+        # ── RULE 2: Max 2 grading examples ───────────────────────────────────
+        ex_text = ""
+        if grading_hits:
+            ex_lines = []
+            for i, hit in enumerate(grading_hits[:2], 1):
+                raw = hit.get("text", "")
+                # Extract key fields from the stored text
+                ex_lines.append(f"Example {i}: {raw[:250].strip().replace(chr(10), ' | ')}")
+            ex_text = _truncate_to_tokens("\n".join(ex_lines), _EXAMPLES_TOKEN_BUDGET)
+
+        # ── RULE 3: Total budget enforcement ─────────────────────────────────
+        syl_tokens = _estimate_tokens(syl_text)
+        ex_tokens = _estimate_tokens(ex_text)
+        total = syl_tokens + ex_tokens
+
+        if total > _TOTAL_TOKEN_BUDGET:
+            # Reduce examples first, then syllabus
+            ex_budget = max(0, _TOTAL_TOKEN_BUDGET - syl_tokens)
+            if ex_budget < ex_tokens:
+                ex_text = _truncate_to_tokens(ex_text, ex_budget) if ex_budget > 50 else ""
+                ex_tokens = _estimate_tokens(ex_text)
+            remaining = _TOTAL_TOKEN_BUDGET - ex_tokens
+            if remaining < syl_tokens:
+                syl_text = _truncate_to_tokens(syl_text, remaining)
+
+        if not syl_text and not ex_text:
+            return ""
+
+        # ── Build final context string ───────────────────────────────────────
         header_parts = [p for p in [curriculum.upper(), edu_level.upper().replace("_", " "), subject.upper()] if p]
         header = " ".join(header_parts) if header_parts else "CURRICULUM"
 
-        lines: list[str] = [f"\n--- {header} SYLLABUS CONTEXT ---"]
-        for hit in syllabus_hits:
-            snippet = hit["text"][:400].strip().replace("\n", " ")
-            source = hit.get("metadata", {}).get("source_file", "")
-            lines.append(f"• {snippet}")
-            if source:
-                logger.debug("[rag] Syllabus chunk from: %s", source)
+        parts: list[str] = []
+        if syl_text:
+            parts.append(f"\n--- {header} SYLLABUS CONTEXT ---")
+            parts.append(syl_text)
+            parts.append("--- END SYLLABUS CONTEXT ---")
 
-        if grading_hits:
-            lines.append(f"\n--- TEACHER-VERIFIED GRADINGS ({header}) ---")
-            for hit in grading_hits:
-                snippet = hit["text"][:300].strip().replace("\n", " ")
-                lines.append(f"• {snippet}")
+        if ex_text:
+            parts.append("\n--- PREVIOUSLY APPROVED GRADING EXAMPLES ---")
+            parts.append(ex_text)
+            parts.append("--- END EXAMPLES ---")
 
-        lines.append("--- END SYLLABUS CONTEXT ---\n")
-        result = "\n".join(lines)
+        result = "\n".join(parts) + "\n"
         logger.info(
-            "[rag] Context injected: %d chars (%d syllabus + %d grading hits) for %s/%s/%s",
-            len(result), len(syllabus_hits), len(grading_hits),
-            curriculum or "-", subject or "-", edu_level or "-",
+            "[rag] Injected %d tokens (%d syl + %d ex) from %s for %s/%s/%s",
+            _estimate_tokens(result), _estimate_tokens(syl_text), _estimate_tokens(ex_text),
+            syl_source or "none", curriculum or "-", subject or "-", edu_level or "-",
         )
         return result
 
