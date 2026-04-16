@@ -6986,7 +6986,8 @@ class TestStudentJoinClass:
 
         with patch("functions.auth.query_single", side_effect=fake_query_single), \
              patch("functions.auth.get_doc", side_effect=fake_get_doc), \
-             patch("functions.auth.upsert", side_effect=fake_upsert):
+             patch("functions.auth.upsert", side_effect=fake_upsert), \
+             patch("functions.auth.increment_field"):
             rv = client.post("/api/auth/student/join-class",
                 json={"join_code": CLASS_JOIN_CODE},
                 headers=student_headers)
@@ -7507,7 +7508,8 @@ class TestPartialSchoolSearch:
 
         with patch("functions.auth.query_single", return_value=None), \
              patch("functions.auth.get_doc", side_effect=fake_get), \
-             patch("functions.auth.upsert", side_effect=fake_upsert):
+             patch("functions.auth.upsert", side_effect=fake_upsert), \
+             patch("functions.auth.increment_field"):
             rv = client.post("/api/auth/student/join-class",
                 json={"class_id": "cls-test"},
                 headers={"Authorization": f"Bearer {token}"})

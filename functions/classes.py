@@ -7,7 +7,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
-from shared.firestore_client import delete_doc, get_doc, query, query_single, upsert
+from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Class
 
 logger = logging.getLogger(__name__)
@@ -277,5 +277,5 @@ def class_join():
 
     # Update student's class_id
     upsert("students", student_id, {"class_id": cls["id"]})
-    upsert("classes", cls["id"], {"student_count": cls.get("student_count", 0) + 1})
+    increment_field("classes", cls["id"], "student_count", 1)
     return jsonify({"message": "joined", "class": cls}), 200

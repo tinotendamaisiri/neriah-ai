@@ -18,7 +18,7 @@ from shared.auth import (
     verify_pin,
 )
 from shared.config import is_demo
-from shared.firestore_client import delete_doc, get_doc, query, query_single, upsert
+from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Student, Teacher
 from shared.sms_client import send_otp as _dispatch_otp
 
@@ -300,11 +300,12 @@ def auth_verify():
                 class_id=class_id,
             )
             upsert("students", student.id, student.model_dump())
-            # Increment student_count on the class
+            # Atomic increment student_count on the class
             if class_id and class_id != "pending":
-                cls = get_doc("classes", class_id)
-                if cls:
-                    upsert("classes", class_id, {"student_count": cls.get("student_count", 0) + 1})
+                try:
+                    increment_field("classes", class_id, "student_count", 1)
+                except Exception:
+                    pass
             token = create_jwt(student.id, "student", 0)
             logger.info("[demo] Auto-verified OTP (student) for %s", phone)
             return jsonify({"token": token, "user": _safe(student.model_dump())}), 200
@@ -1040,8 +1041,8 @@ def auth_student_join_class():
     new_ids = list(set(existing_ids + [cls["id"]]))
     upsert("students", student_id, {"class_ids": new_ids, "class_id": cls["id"]})
 
-    # Bump student count on the class
-    upsert("classes", cls["id"], {"student_count": cls.get("student_count", 0) + 1})
+    # Atomic increment — avoids read-then-write race condition
+    increment_field("classes", cls["id"], "student_count", 1)
 
     logger.info("[auth] student/%s joined class %s (%s)", student_id, cls["id"], cls.get("name"))
     return jsonify({
@@ -1119,10 +1120,11 @@ def auth_student_leave_class():
     new_active = new_ids[0] if new_ids else None
     upsert("students", student_id, {"class_ids": new_ids, "class_id": new_active})
 
-    # Decrement student count on the class
-    cls = get_doc("classes", class_id)
-    if cls:
-        upsert("classes", class_id, {"student_count": max(0, cls.get("student_count", 1) - 1)})
+    # Atomic decrement — avoids read-then-write race condition
+    try:
+        increment_field("classes", class_id, "student_count", -1)
+    except Exception:
+        pass  # class may have been deleted
 
     logger.info("[auth] student/%s left class %s, remaining=%d", student_id, class_id, len(new_ids))
     return jsonify({"success": True, "remaining_classes": len(new_ids), "active_class_id": new_active}), 200
