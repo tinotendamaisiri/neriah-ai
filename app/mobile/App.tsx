@@ -162,14 +162,14 @@ function TeacherTabs() {
         options={{ tabBarLabel: t('my_classes') }}
       />
       <TeacherTab.Screen
-        name="Analytics"
-        component={AnalyticsScreen}
-        options={{ tabBarLabel: t('analytics') }}
-      />
-      <TeacherTab.Screen
         name="Assistant"
         component={TeacherAssistantScreen}
         options={{ tabBarLabel: t('assistant') }}
+      />
+      <TeacherTab.Screen
+        name="Analytics"
+        component={AnalyticsScreen}
+        options={{ tabBarLabel: t('analytics') }}
       />
       <TeacherTab.Screen
         name="Settings"

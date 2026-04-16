@@ -4254,8 +4254,8 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
       }}>
         {[
           { icon: <Home size={16} />, label: 'Classes',   active: true,  onClick: undefined as (() => void) | undefined },
-          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
           { icon: <Sparkles size={16} />, label: 'Assistant', active: false, onClick: onAssistant },
+          { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
         ].map(tab => (
           <div
             key={tab.label}
