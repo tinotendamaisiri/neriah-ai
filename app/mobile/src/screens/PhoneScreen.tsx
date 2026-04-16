@@ -33,6 +33,8 @@ type Nav = NativeStackNavigationProp<AuthStackParamList, 'Phone'>;
 
 export default function PhoneScreen() {
   const navigation = useNavigation<Nav>();
+  const route = (navigation as any).getState?.()?.routes?.find?.((r: any) => r.name === 'Phone');
+  const intendedRole: 'teacher' | 'student' | undefined = route?.params?.role;
   const { t } = useLanguage();
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,7 +51,7 @@ export default function PhoneScreen() {
 
     setLoading(true);
     try {
-      const res = await requestLoginOtp(cleanPhone);
+      const res = await requestLoginOtp(cleanPhone, intendedRole);
       navigation.navigate('OTP', {
         phone: cleanPhone,
         verification_id: res.verification_id,
@@ -57,7 +59,13 @@ export default function PhoneScreen() {
         ...(res.channel   ? { channel:   res.channel   } : {}),
       });
     } catch (err: any) {
-      if (err.status === 404 || err.response?.status === 404 || err._raw?.response?.status === 404) {
+      const status = err.status ?? err.response?.status ?? err._raw?.response?.status;
+      if (status === 403) {
+        // Cross-role login attempt — show the backend's specific message
+        const msg = err.message ?? err.response?.data?.error ?? 'Wrong account type for this login.';
+        Alert.alert('Wrong account type', msg);
+        setPhone('');
+      } else if (status === 404) {
         Alert.alert(
           t('no_account_found'),
           t('no_account_msg'),

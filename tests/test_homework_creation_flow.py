@@ -7555,3 +7555,100 @@ class TestSchoolAutocomplete:
         rv = client.get("/api/schools/search?q=xyznonexistent")
         assert rv.status_code == 200
         assert rv.get_json()["schools"] == []
+
+
+# ── Cross-role auth gate ─────────────────────────────────────────────────────
+
+class TestCrossRoleAuthGate:
+    """Prevent teacher phone from logging in as student and vice versa."""
+
+    @feature_test("teacher_phone_blocked_on_student_login")
+    def test_teacher_phone_returns_403_on_student_login(self, client):
+        """POST /api/auth/login with role=student but phone is a teacher → 403."""
+        teacher = {"id": "t-cross-1", "phone": "+263771111111", "role": "teacher"}
+
+        def fake_query_single(collection, filters):
+            if collection == "teachers":
+                return teacher
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
+            rv = client.post("/api/auth/login", json={"phone": "+263771111111", "role": "student"})
+
+        assert rv.status_code == 403
+        assert "teacher account" in rv.get_json()["error"].lower()
+
+    @feature_test("student_phone_blocked_on_teacher_login")
+    def test_student_phone_returns_403_on_teacher_login(self, client):
+        """POST /api/auth/login with role=teacher but phone is a student → 403."""
+        student = {"id": "s-cross-1", "phone": "+263772222222", "role": "student"}
+
+        def fake_query_single(collection, filters):
+            if collection == "students":
+                return student
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
+            rv = client.post("/api/auth/login", json={"phone": "+263772222222", "role": "teacher"})
+
+        assert rv.status_code == 403
+        assert "student account" in rv.get_json()["error"].lower()
+
+    @feature_test("login_without_role_still_works")
+    def test_login_without_role_param_still_works(self, client):
+        """POST /api/auth/login without role param proceeds normally (backwards compat)."""
+        teacher = {"id": "t-compat-1", "phone": "+263773333333", "role": "teacher"}
+
+        def fake_query_single(collection, filters):
+            if collection == "teachers":
+                return teacher
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})), \
+             patch("functions.auth._store_otp", return_value=("123456", {})), \
+             patch("functions.auth._send_otp", return_value="sms"):
+            rv = client.post("/api/auth/login", json={"phone": "+263773333333"})
+
+        assert rv.status_code == 200
+
+    @feature_test("teacher_register_blocked_if_student_phone")
+    def test_teacher_register_rejects_student_phone(self, client):
+        """POST /api/auth/register with phone already used by a student → 409."""
+        def fake_query_single(collection, filters):
+            if collection == "teachers":
+                return None
+            if collection == "students":
+                return {"id": "s-dup-1", "phone": "+263774444444", "role": "student"}
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
+            rv = client.post("/api/auth/register", json={
+                "phone": "+263774444444", "first_name": "Test", "surname": "Teacher"
+            })
+
+        assert rv.status_code == 409
+        assert "student account" in rv.get_json()["error"].lower()
+
+    @feature_test("student_register_blocked_if_teacher_phone")
+    def test_student_register_rejects_teacher_phone(self, client):
+        """POST /api/auth/student/register with phone already used by a teacher → 409."""
+        def fake_query_single(collection, filters):
+            if collection == "students":
+                return None
+            if collection == "teachers":
+                return {"id": "t-dup-1", "phone": "+263775555555", "role": "teacher"}
+            return None
+
+        with patch("functions.auth.query_single", side_effect=fake_query_single), \
+             patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
+            rv = client.post("/api/auth/student/register", json={
+                "phone": "+263775555555", "first_name": "Test", "surname": "Student",
+                "class_id": "cls-test"
+            })
+
+        assert rv.status_code == 409
+        assert "teacher account" in rv.get_json()["error"].lower()

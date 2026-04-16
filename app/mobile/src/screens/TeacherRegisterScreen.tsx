@@ -175,7 +175,7 @@ export default function TeacherRegisterScreen() {
           'Account already exists',
           'An account with this phone number already exists. Would you like to sign in instead?',
           [
-            { text: 'Sign in', onPress: () => navigation.navigate('Phone') },
+            { text: 'Sign in', onPress: () => navigation.navigate('Phone', { role: 'teacher' }) },
             { text: 'Cancel', style: 'cancel' },
           ],
         );
@@ -301,7 +301,7 @@ export default function TeacherRegisterScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.altLink} onPress={() => navigation.navigate('Phone')}>
+          <TouchableOpacity style={styles.altLink} onPress={() => navigation.navigate('Phone', { role: 'teacher' })}>
             <Text style={styles.altLinkText}>{t('already_account_sign_in')}</Text>
           </TouchableOpacity>
 

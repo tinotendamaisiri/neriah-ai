@@ -366,7 +366,7 @@ export interface StudentClassAnalytics {
 
 export type AuthStackParamList = {
   RoleSelect: undefined;    // Landing screen — role selection or "sign in"
-  Phone: undefined;         // Login flow (existing users)
+  Phone: { role?: 'teacher' | 'student' } | undefined;  // Login flow — role gates cross-role login
   OTP: { phone: string; verification_id: string; debug_otp?: string; channel?: 'whatsapp' | 'sms' | 'email' };
   TeacherRegister: undefined;
   StudentRegister: undefined;

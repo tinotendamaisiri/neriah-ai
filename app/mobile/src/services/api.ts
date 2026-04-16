@@ -114,9 +114,9 @@ client.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-/** Request an OTP for login (teacher account must exist). */
-export const requestLoginOtp = async (phone: string): Promise<OtpSentResponse> => {
-  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/login', { phone });
+/** Request an OTP for login. Pass role to enforce role-gated auth. */
+export const requestLoginOtp = async (phone: string, role?: 'teacher' | 'student'): Promise<OtpSentResponse> => {
+  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/login', { phone, ...(role ? { role } : {}) });
   return res.data;
 };
 

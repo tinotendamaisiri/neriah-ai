@@ -263,7 +263,7 @@ export default function StudentRegisterScreen() {
           'This phone number already has an account.',
           [
             { text: 'OK', style: 'cancel' },
-            { text: 'Sign in instead', onPress: () => navigation.navigate('Phone') },
+            { text: 'Sign in instead', onPress: () => navigation.navigate('Phone', { role: 'student' }) },
           ],
         );
       } else {
@@ -334,7 +334,7 @@ export default function StudentRegisterScreen() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.altLink} onPress={() => navigation.navigate('Phone')}>
+            <TouchableOpacity style={styles.altLink} onPress={() => navigation.navigate('Phone', { role: 'student' })}>
               <Text style={styles.altLinkText}>Already have an account? Sign in</Text>
             </TouchableOpacity>
           </>

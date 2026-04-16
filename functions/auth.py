@@ -190,7 +190,9 @@ def auth_register():
         return resp
 
     if query_single("teachers", [("phone", "==", phone)]):
-        return jsonify({"error": "Phone already registered"}), 409
+        return jsonify({"error": "Phone already registered as a teacher. Please sign in."}), 409
+    if query_single("students", [("phone", "==", phone)]):
+        return jsonify({"error": "This number is already registered as a student account."}), 409
 
     # Don't create the teacher doc yet — store registration data in the OTP doc.
     # Teacher is only created in Firestore after OTP is successfully verified.
@@ -220,6 +222,7 @@ def auth_register():
 def auth_login():
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
+    intended_role = (body.get("role") or "").strip().lower()  # "teacher" or "student"
 
     if not phone:
         return jsonify({"error": "phone is required"}), 400
@@ -239,6 +242,12 @@ def auth_login():
     student = None if teacher else query_single("students", [("phone", "==", phone)])
     if not teacher and not student:
         return jsonify({"error": "Phone not registered"}), 404
+
+    # ── Role gate: reject cross-role login ────────────────────────────────────
+    if intended_role == "student" and teacher and not student:
+        return jsonify({"error": "This number is registered as a teacher account. Please use the teacher login."}), 403
+    if intended_role == "teacher" and student and not teacher:
+        return jsonify({"error": "This number is registered as a student account. Please use the student login."}), 403
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
@@ -877,9 +886,11 @@ def auth_student_register():
             class_id = cls["id"]
             logger.info("[auth] student/register resolved join_code=%s to class_id=%s", class_join_code, class_id)
 
-    # Reject duplicate phone (student already exists)
+    # Reject duplicate phone
     if query_single("students", [("phone", "==", phone)]):
-        return jsonify({"error": "Phone already registered"}), 409
+        return jsonify({"error": "You already have a student account. Please sign in."}), 409
+    if query_single("teachers", [("phone", "==", phone)]):
+        return jsonify({"error": "This number is already registered as a teacher account."}), 409
 
     # IP rate limit
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
