@@ -6655,15 +6655,19 @@ function AnalyticsScreen({
         <>
           <FileText size={48} color={C.g200} />
           <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>No homework assigned yet</div>
-          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Create and grade homework to see class analytics here.</div>
+          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Analytics will appear once students start submitting homework.</div>
         </>
       ) : (
         <>
           <BarChart2 size={48} color={C.g200} />
-          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Not enough data yet</div>
-          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Analytics will appear once you have graded at least one student submission.</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>This class doesn't have any submissions yet</div>
+          <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.5 }}>Analytics will appear here once homework is marked.</div>
         </>
       )}
+      {/* Students are always viewable even without data */}
+      <button onClick={() => onViewStudent(analytics.students[0] ?? { student_id: '', name: 'Student', latest_score: 0, average_score: 0, submission_count: 0, trend: 'stable' })} style={{ marginTop: 16, background: 'none', border: `1.5px solid ${C.teal}`, borderRadius: 10, padding: '10px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', color: C.teal, fontWeight: 600, fontSize: 13 }}>
+        <Users size={14} /><span>View Students</span>
+      </button>
     </div>
   ) : null;
 

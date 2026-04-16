@@ -66,31 +66,17 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
   const score   = item.average_score ?? 0;
   const barW    = Math.min(Math.max(score, 0), 100);
 
-  // Per-class "not enough data" states
+  const studentCount = item.total_students ?? (item as any).student_count ?? 0;
+  const emptyMessage = !hasData
+    ? (reason === 'no_homeworks'
+      ? 'No homework assigned yet. Analytics will appear once students submit.'
+      : "This class doesn't have any submissions yet. Analytics will appear once homework is marked.")
+    : '';
+
+  // Cards are always tappable — even empty classes navigate to drill-down
   if (!hasData) {
-    if (reason === 'no_homeworks') {
-      return (
-        <View style={[styles.card, styles.cardEmpty]}>
-          <View style={styles.cardHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.className} numberOfLines={1}>{item.class_name}</Text>
-              <Text style={styles.classLevel}>
-                {LEVEL_DISPLAY[item.education_level] ?? item.education_level}
-                {item.subject ? ` · ${item.subject}` : ''}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.emptyCardBody}>
-            <Ionicons name="document-text-outline" size={28} color={COLORS.gray200} />
-            <Text style={styles.emptyCardTitle}>No homework assigned yet</Text>
-            <Text style={styles.emptyCardSub}>Create homework to unlock analytics for this class.</Text>
-          </View>
-        </View>
-      );
-    }
-    // no_graded_submissions
     return (
-      <View style={[styles.card, styles.cardEmpty]}>
+      <TouchableOpacity style={[styles.card, styles.cardEmpty]} onPress={onPress} activeOpacity={0.75}>
         <View style={styles.cardHeader}>
           <View style={{ flex: 1 }}>
             <Text style={styles.className} numberOfLines={1}>{item.class_name}</Text>
@@ -99,16 +85,18 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
               {item.subject ? ` · ${item.subject}` : ''}
             </Text>
           </View>
-          <View style={styles.hwBadge}>
-            <Text style={styles.hwBadgeText}>{(item as any).homework_count ?? 0} homework</Text>
-          </View>
+          <Text style={{ fontSize: 12, color: COLORS.gray500 }}>{studentCount} students</Text>
         </View>
         <View style={styles.emptyCardBody}>
-          <Ionicons name="bar-chart-outline" size={28} color={COLORS.gray200} />
-          <Text style={styles.emptyCardTitle}>Not enough data yet</Text>
-          <Text style={styles.emptyCardSub}>Grade at least one submission to see analytics.</Text>
+          <Ionicons name="bar-chart-outline" size={24} color={COLORS.gray200} />
+          <Text style={styles.emptyCardTitle}>{emptyMessage}</Text>
         </View>
-      </View>
+        <View style={styles.viewStudentsRow}>
+          <Ionicons name="people-outline" size={14} color={COLORS.teal500} />
+          <Text style={styles.viewStudentsText}>View Students</Text>
+          <Text style={{ color: COLORS.teal500, fontSize: 16 }}>›</Text>
+        </View>
+      </TouchableOpacity>
     );
   }
 
@@ -136,7 +124,7 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
       {/* Stats row */}
       <View style={styles.statsRow}>
         <Text style={styles.statItem}>
-          <Text style={styles.statValue}>{item.total_students}</Text>
+          <Text style={styles.statValue}>{studentCount}</Text>
           {' '}{t('students')}
         </Text>
         <Text style={styles.statItem}>
@@ -149,6 +137,13 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
             {`${score}%`}
           </Text>
         </Text>
+      </View>
+
+      {/* View Students link */}
+      <View style={styles.viewStudentsRow}>
+        <Ionicons name="people-outline" size={14} color={COLORS.teal500} />
+        <Text style={styles.viewStudentsText}>View Students</Text>
+        <Text style={{ color: COLORS.teal500, fontSize: 16 }}>›</Text>
       </View>
     </TouchableOpacity>
   );
@@ -294,4 +289,10 @@ const styles = StyleSheet.create({
   statsRow: { flexDirection: 'row', justifyContent: 'space-between' },
   statItem: { fontSize: 12, color: COLORS.gray500 },
   statValue: { fontWeight: '700', color: COLORS.text },
+  viewStudentsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 12, paddingTop: 10,
+    borderTopWidth: 1, borderTopColor: COLORS.background,
+  },
+  viewStudentsText: { fontSize: 13, fontWeight: '600', color: COLORS.teal500, flex: 1 },
 });
