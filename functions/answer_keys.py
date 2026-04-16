@@ -227,7 +227,33 @@ def _questions_from_file(
             return [_normalise_question(q, i) for i, q in enumerate(qs)], result.get("title"), None
     elif ext in ("pdf", "docx", "doc", "txt"):
         text = _extract_text_from_file(file_bytes, filename)
-        return None, text, None  # caller must call generate_marking_scheme with education_level
+        if text and text.strip():
+            return None, text, None  # caller calls generate_marking_scheme
+
+        # Scanned PDF — no text layer. Convert first page to image and use Gemma vision.
+        if ext == "pdf":
+            logger.info("[answer_keys] PDF has no text layer — treating as scanned image")
+            try:
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                    if pdf.pages:
+                        page_img = pdf.pages[0].to_image(resolution=200)
+                        img_buf = io.BytesIO()
+                        page_img.save(img_buf, format="JPEG", quality=85)
+                        img_bytes = img_buf.getvalue()
+                        scheme = generate_marking_scheme_from_image(
+                            img_bytes, education_level, subject, user_context=user_ctx,
+                        )
+                        if "error" not in scheme:
+                            qs = scheme.get("questions", [])
+                            return [_normalise_question(q, i) for i, q in enumerate(qs)], scheme.get("title"), None
+                        logger.warning("[answer_keys] Gemma failed on scanned PDF image: %s", scheme.get("error"))
+            except Exception:
+                logger.exception("[answer_keys] Scanned PDF image extraction failed")
+
+            return None, None, "Could not read this PDF. Try taking a photo of the question paper instead."
+
+        return None, text, None
     return None, None, f"Unsupported file type: .{ext}"
 
 
