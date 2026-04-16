@@ -18,6 +18,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { getClassesAnalytics } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsSummary, RootStackParamList } from '../types';
@@ -156,6 +158,7 @@ const ClassCard = React.memo(({ item, onPress, t }: ClassCardProps) => {
 
 export default function AnalyticsScreen() {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const navigation = useNavigation<NavProp>();
 
   const [data, setData] = useState<ClassAnalyticsSummary[]>([]);
@@ -207,7 +210,13 @@ export default function AnalyticsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.screenHeading}>{t('analytics')}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 }}>
+        <Text style={styles.screenHeading}>{t('analytics')}</Text>
+        <AvatarWithStatus
+          initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}
+          onPress={() => navigation.navigate('Settings' as any)}
+        />
+      </View>
       <FlatList
         data={data}
         keyExtractor={(item) => item.class_id}
