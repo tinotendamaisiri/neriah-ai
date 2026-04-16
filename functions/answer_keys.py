@@ -235,11 +235,14 @@ def _questions_from_file(
             logger.info("[answer_keys] PDF has no text layer — treating as scanned image")
             try:
                 import pdfplumber
+                from PIL import Image as PILImage
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     if pdf.pages:
                         page_img = pdf.pages[0].to_image(resolution=200)
+                        # Convert to RGB (handles palette mode P, RGBA, etc.)
+                        pil_img = page_img.original.convert("RGB")
                         img_buf = io.BytesIO()
-                        page_img.save(img_buf, format="JPEG", quality=85)
+                        pil_img.save(img_buf, format="JPEG", quality=85)
                         img_bytes = img_buf.getvalue()
                         scheme = generate_marking_scheme_from_image(
                             img_bytes, education_level, subject, user_context=user_ctx,
