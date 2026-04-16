@@ -16,6 +16,7 @@ import {
   Dimensions,
   FlatList,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BarChart, LineChart } from 'react-native-chart-kit';
