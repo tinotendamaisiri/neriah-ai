@@ -21,7 +21,7 @@ import { getStudentSubmissions, withdrawSubmission } from '../services/api';
 import { StudentSubmission, StudentRootStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
-import AIStatusDot from '../components/AIStatusDot';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -113,10 +113,10 @@ export default function StudentResultsScreen() {
             {gradedCount} graded · {pendingCount} pending
           </Text>
         </View>
-        <TouchableOpacity style={styles.avatarCircle} onPress={() => (navigation as any).navigate('StudentSettings')}>
-          <Text style={styles.avatarInitial}>{(user?.first_name ?? 'S')[0].toUpperCase()}</Text>
-          <AIStatusDot />
-        </TouchableOpacity>
+        <AvatarWithStatus
+          initial={(user?.first_name ?? 'S')[0].toUpperCase()}
+          onPress={() => (navigation as any).navigate('StudentSettings')}
+        />
       </View>
 
       <FlatList

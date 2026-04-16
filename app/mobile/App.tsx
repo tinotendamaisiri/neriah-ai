@@ -147,13 +147,12 @@ function TeacherTabs() {
         tabBarInactiveTintColor: COLORS.textLight,
         tabBarStyle: { borderTopColor: COLORS.border },
         tabBarIcon: ({ color, size }) => {
-          const icons: Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap> = {
+          const icons: Partial<Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap>> = {
             Home: 'home-outline',
             Analytics: 'bar-chart-outline',
             Assistant: 'sparkles-outline',
-            Settings: 'settings-outline',
           };
-          return <Ionicons name={icons[route.name]} size={size} color={color} />;
+          return <Ionicons name={icons[route.name] ?? 'ellipse-outline'} size={size} color={color} />;
         },
       })}
     >
@@ -175,7 +174,7 @@ function TeacherTabs() {
       <TeacherTab.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{ tabBarLabel: t('settings') }}
+        options={{ tabBarLabel: t('settings'), tabBarButton: () => null }}
       />
     </TeacherTab.Navigator>
   );

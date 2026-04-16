@@ -41,7 +41,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { sendTutorMessage, TutorChatMessage } from '../services/api';
 import InAppCamera from '../components/InAppCamera';
-import AIStatusDot from '../components/AIStatusDot';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 import { COLORS } from '../constants/colors';
 
 // ── Palette (matches Teacher AI exactly) ──────────────────────────────────────
@@ -443,12 +443,10 @@ export default function StudentTutorScreen() {
               <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah</Text>
-            <TouchableOpacity onPress={() => (navigation as any).navigate('StudentSettings')} style={{ position: 'relative' }}>
-              <View style={s.headerAvatar}>
-                <Text style={s.headerAvatarText}>{firstName[0].toUpperCase()}</Text>
-              </View>
-              <AIStatusDot />
-            </TouchableOpacity>
+            <AvatarWithStatus
+              initial={firstName[0].toUpperCase()}
+              onPress={() => (navigation as any).navigate('StudentSettings')}
+            />
           </View>
 
           {/* ── Context pills (read-only) ── */}

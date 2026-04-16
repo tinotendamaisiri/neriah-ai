@@ -38,6 +38,7 @@ import {
   teacherAssistantExport,
 } from '../services/api';
 import InAppCamera from '../components/InAppCamera';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useAuth } from '../context/AuthContext';
 import { Class, RootStackParamList } from '../types';
 
@@ -738,9 +739,11 @@ export default function TeacherAssistantScreen() {
               <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
-            <TouchableOpacity style={s.hBtn} onPress={clearHistory}>
-              <Ionicons name="create-outline" size={22} color={AI.userText} />
-            </TouchableOpacity>
+            <AvatarWithStatus
+              initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}
+              onPress={() => navigation.navigate('Settings' as any)}
+              size={36}
+            />
           </View>
 
           {/* ── Context pills ── */}

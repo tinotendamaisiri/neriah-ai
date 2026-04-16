@@ -21,7 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { AnswerKey, Class, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
-import AIStatusDot from '../components/AIStatusDot';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useModel } from '../context/ModelContext';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
@@ -315,7 +315,10 @@ export default function HomeScreen() {
             <Text style={styles.greeting}>{t('hello')}, {user ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? 'Teacher'}`.trim() : 'Teacher'}</Text>
             <Text style={styles.heading}>{t('my_classes')}</Text>
           </View>
-          <AIStatusDot />
+          <AvatarWithStatus
+            initial={(user?.first_name?.[0] ?? user?.surname?.[0] ?? 'T').toUpperCase()}
+            onPress={() => navigation.navigate('Settings' as any)}
+          />
         </View>
       </View>
 

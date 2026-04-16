@@ -4052,9 +4052,16 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
       <div style={{
         background: C.white, paddingInline: 18, paddingTop: 12, paddingBottom: 10,
         borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+        display: 'flex', alignItems: 'center',
       }}>
-        <div style={{ fontSize: 11, color: C.g500 }}>Hello, Mr Maisiri</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>My Classes</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: C.g500 }}>Hello, Mr Maisiri</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 2 }}>My Classes</div>
+        </div>
+        <div onClick={onSettings} style={{ width: 38, height: 38, borderRadius: 19, background: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>
+          <span style={{ color: C.white, fontSize: 16, fontWeight: 700 }}>M</span>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, background: C.green400, border: `2px solid ${C.white}` }} />
+        </div>
       </div>
 
       {/* List */}
@@ -4240,7 +4247,6 @@ function ClassesScreen({ onAddHomework, onOpenHomework, onHomeworkList, onSettin
           { icon: <Home size={16} />, label: 'Classes',   active: true,  onClick: undefined as (() => void) | undefined },
           { icon: <BarChart2 size={16} />, label: 'Analytics', active: false, onClick: onAnalytics },
           { icon: <Sparkles size={16} />, label: 'Assistant', active: false, onClick: onAssistant },
-          { icon: <Settings size={16} />, label: 'Settings',  active: false, onClick: onSettings },
         ].map(tab => (
           <div
             key={tab.label}

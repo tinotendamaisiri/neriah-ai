@@ -24,7 +24,7 @@ import {
 import { Assignment, StudentMark, StudentClassAnalytics, StudentRootStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
-import AIStatusDot from '../components/AIStatusDot';
+import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useLanguage } from '../context/LanguageContext';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
@@ -170,10 +170,10 @@ export default function StudentHomeScreen() {
           <Text style={styles.subGreeting}>{t('hello_name').replace('{name}', firstName)}</Text>
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
-          <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('StudentSettings' as any)}>
-            <Text style={styles.avatarText}>{firstName[0].toUpperCase()}</Text>
-            <AIStatusDot />
-          </TouchableOpacity>
+          <AvatarWithStatus
+            initial={firstName[0].toUpperCase()}
+            onPress={() => navigation.navigate('StudentSettings' as any)}
+          />
         </View>
       </View>
 
