@@ -6510,7 +6510,7 @@ function StudentClassManagementScreen({ onBack, demoToken }: { onBack: () => voi
           <div style={{ background: C.white, borderRadius: '20px 20px 0 0', width: '100%', maxHeight: '85%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
               <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Join a Class</span>
-              <button onClick={() => { setJoinOpen(false); setAvailClasses([]); setSearchedSchool(''); setShowCode(false); setJoinCode(''); setJoinInfo(null); setJoinErr(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: C.g500 }}>\u2715</button>
+              <button onClick={() => { setJoinOpen(false); setAvailClasses([]); setSearchedSchool(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: C.g500 }}>✕</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 24px' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.g500, marginTop: 16, marginBottom: 6 }}>School</div>
