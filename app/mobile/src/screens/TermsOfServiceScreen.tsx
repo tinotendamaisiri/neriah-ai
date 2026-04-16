@@ -91,7 +91,7 @@ const PRIVACY_SECTIONS: Section[] = [
   },
   {
     title: '7. Contact',
-    body: 'For privacy-related questions or data requests:\n\nEmail: privacy@neriah.ai\nWebsite: neriah.ai',
+    body: 'For privacy-related questions or data requests:\n\nEmail: support@neriah.ai\nWebsite: neriah.ai',
   },
 ];
 
