@@ -95,6 +95,39 @@ def update_class(class_id: str):
     return jsonify({**cls, **updates}), 200
 
 
+@classes_bp.post("/classes/fix-counts")
+def fix_student_counts():
+    """
+    Recount actual students per class and fix stale student_count fields.
+    Safe to run multiple times — idempotent.
+    """
+    all_classes = query("classes", [])
+    all_students = query("students", [])
+
+    # Build actual count per class_id
+    actual: dict[str, int] = {}
+    for s in all_students:
+        cid = s.get("class_id", "")
+        if cid:
+            actual[cid] = actual.get(cid, 0) + 1
+        # Also count from class_ids array
+        for cid2 in (s.get("class_ids") or []):
+            if cid2 and cid2 != cid:
+                actual[cid2] = actual.get(cid2, 0) + 1
+
+    fixed = []
+    for cls in all_classes:
+        cid = cls["id"]
+        stored = cls.get("student_count", 0)
+        real = actual.get(cid, 0)
+        if stored != real:
+            upsert("classes", cid, {"student_count": real})
+            fixed.append({"class_id": cid, "name": cls.get("name", ""), "was": stored, "now": real})
+
+    logger.info("[classes] fix-counts: checked %d classes, fixed %d", len(all_classes), len(fixed))
+    return jsonify({"checked": len(all_classes), "fixed": fixed}), 200
+
+
 @classes_bp.delete("/classes/<class_id>")
 def delete_class(class_id: str):
     teacher_id, err = require_role(request, "teacher")
