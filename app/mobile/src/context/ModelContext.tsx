@@ -431,6 +431,65 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     if (suppress) setShowWifiNudge(false);
   }, []);
 
+  // ── Auto-download on Wi-Fi ──────────────────────────────────────────────────
+  // Watches connectivity: starts download when Wi-Fi connects, pauses when it drops.
+
+  const autoDownloadStartedRef = useRef(false);
+  const AUTO_NOTIFIED_KEY = 'offline_model_auto_notified';
+
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(async (state) => {
+      const onWifi = state.type === 'wifi' && state.isConnected === true;
+      const v = variantRef.current;
+
+      if (onWifi && v) {
+        // Model already downloaded or currently downloading — skip
+        const downloaded = await SecureStore.getItemAsync(MODEL_DOWNLOADED_KEY).catch(() => null);
+        if (downloaded === 'true') return;
+        if (autoDownloadStartedRef.current) return; // already triggered this session
+
+        // Check if model is on disk (stale flag cleared earlier)
+        const onDisk = await isModelOnDisk(v);
+        if (onDisk) return;
+
+        // Auto-start download
+        autoDownloadStartedRef.current = true;
+        console.log('[ModelProvider] Wi-Fi detected — auto-starting model download');
+
+        // One-time notification (first auto-download ever)
+        const notified = await SecureStore.getItemAsync(AUTO_NOTIFIED_KEY).catch(() => null);
+        if (notified !== 'true') {
+          await SecureStore.setItemAsync(AUTO_NOTIFIED_KEY, 'true').catch(() => {});
+          // Mark prompt as shown so the manual prompt never appears
+          await SecureStore.setItemAsync(DOWNLOAD_PROMPTED_KEY, 'true').catch(() => {});
+          Alert.alert(
+            'Downloading offline AI',
+            'Neriah is downloading the AI model in the background. Once complete, marking and tutoring work without internet.',
+          );
+        }
+
+        setStatus('downloading');
+        setProgress(0);
+        setErrorMessage(null);
+
+        await startDownload(
+          v,
+          (pct) => setProgress(pct),
+          () => { setStatus('done'); setModelReady(true); setProgress(100); },
+          (msg) => { setStatus('error'); setErrorMessage(msg); autoDownloadStartedRef.current = false; },
+        );
+      } else if (!onWifi && status === 'downloading') {
+        // Wi-Fi dropped mid-download — pause
+        console.log('[ModelProvider] Wi-Fi lost — pausing download');
+        await pauseMgr();
+        setStatus('paused');
+        autoDownloadStartedRef.current = false; // allow resume on next Wi-Fi connect
+      }
+    });
+
+    return unsubscribe;
+  }, [status]);
+
   // ── Context value ──────────────────────────────────────────────────────────
 
   const value: ModelContextValue = {
