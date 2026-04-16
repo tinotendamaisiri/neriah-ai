@@ -492,6 +492,19 @@ def update_answer_key(key_id: str):
         if file and file.filename:
             file_bytes = file.read()
             filename = (file.filename or "upload").lower()
+            logger.info("[answer_keys] PUT file upload: %s (%d bytes)", filename, len(file_bytes))
+
+            # Store the question paper to GCS
+            try:
+                import uuid as _uuid
+                from shared.gcs_client import generate_signed_url, upload_bytes
+                blob_name = f"question_papers/{teacher_id}/{_uuid.uuid4()}/{filename}"
+                upload_bytes(settings.GCS_BUCKET_SCANS, blob_name, file_bytes, public=False)
+                qp_url = generate_signed_url(settings.GCS_BUCKET_SCANS, blob_name, expiry_minutes=60 * 24 * 365)
+                updates["qp_image_url"] = qp_url
+            except Exception:
+                logger.warning("[answer_keys] Failed to store question paper on PUT")
+
             education_level = updates.get("education_level") or key.get("education_level", "")
             qs_from_file, extracted_title_or_text, file_err = _questions_from_file(
                 file_bytes, filename,
@@ -550,7 +563,9 @@ def update_answer_key(key_id: str):
                     updates.setdefault("title", scheme.get("title") or key.get("title"))
 
     if not updates:
-        return jsonify({"error": "No updatable fields"}), 400
+        logger.warning("[answer_keys] PUT /answer-keys/%s: no updates. is_multipart=%s has_file=%s",
+                       key_id, is_multipart, bool(request.files.get("file") if is_multipart else False))
+        return jsonify({"error": "Could not generate marking scheme from the uploaded file. Try a clearer image or paste the question text instead."}), 400
 
     # Fill empty question_text from question paper text before saving
     if "questions" in updates:
