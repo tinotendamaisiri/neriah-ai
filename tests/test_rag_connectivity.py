@@ -72,14 +72,14 @@ def _mock_get_doc(collection, doc_id):
 
 @feature_test("rag_chromadb_connection")
 def test_chromadb_connects_and_returns_results():
-    """search_similar() routes to _chroma_search and returns documents."""
+    """search_similar() routes to Firestore and returns documents."""
     from shared.vector_db import search_similar
 
     expected = [{"text": MOCK_SYLLABUS_CONTEXT, "metadata": {}, "score": 0.15}]
     # Force ChromaDB path by making _use_firestore_vectors() return False
-    with patch("shared.vector_db._chroma_search", return_value=expected), \
+    with patch("shared.vector_db._firestore_search", return_value=expected), \
          patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
-         patch("shared.vector_db._use_firestore_vectors", return_value=False):
+         patch("shared.vector_db._fs_collection", return_value="rag_syllabuses"):
         results = search_similar("syllabuses", "quadratic equations", top_k=3)
 
     assert len(results) > 0
@@ -121,8 +121,7 @@ def test_syllabus_pdf_chunked_and_stored():
     from shared.vector_db import store_document
 
     with patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
-         patch("shared.vector_db._use_firestore_vectors", return_value=False), \
-         patch("shared.vector_db._chroma_upsert") as mock_upsert, \
+         patch("shared.vector_db._fs_collection", return_value="rag_syllabuses"), \
          patch("shared.firestore_client.get_db") as mock_db:
         mock_db.return_value.collection.return_value.document.return_value.set.return_value = None
         store_document(
@@ -136,12 +135,12 @@ def test_syllabus_pdf_chunked_and_stored():
             },
         )
 
-    # Must have attempted to write the embedding to ChromaDB
-    mock_upsert.assert_called_once()
-    call_args = mock_upsert.call_args[1] if mock_upsert.call_args[1] else {}
-    pos_args = mock_upsert.call_args[0]
-    # collection name is first positional arg
-    assert pos_args[0] == "syllabuses"
+    # Must have attempted to write to Firestore
+    mock_set = mock_db.return_value.collection.return_value.document.return_value.set
+    mock_set.assert_called_once()
+    stored = mock_set.call_args[0][0]  # first positional arg is the dict
+    assert "embedding" in stored
+    assert "text" in stored
 
 
 # ============================================================
@@ -267,8 +266,7 @@ def test_approved_grading_stored_in_vector_db():
     from shared.vector_db import store_document
 
     with patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
-         patch("shared.vector_db._use_firestore_vectors", return_value=False), \
-         patch("shared.vector_db._chroma_upsert") as mock_upsert, \
+         patch("shared.vector_db._fs_collection", return_value="rag_syllabuses"), \
          patch("shared.firestore_client.get_db") as mock_db:
         mock_db.return_value.collection.return_value.document.return_value.set.return_value = None
         store_document(
@@ -285,8 +283,10 @@ def test_approved_grading_stored_in_vector_db():
             },
         )
 
-    mock_upsert.assert_called_once()
-    assert mock_upsert.call_args[0][0] == "grading_examples"
+    mock_set = mock_db.return_value.collection.return_value.document.return_value.set
+    mock_set.assert_called()
+    stored = mock_set.call_args[0][0]
+    assert "embedding" in stored
 
 
 # ============================================================
@@ -480,8 +480,7 @@ def test_new_country_syllabus_upload_indexes_correctly():
     from shared.vector_db import store_document
 
     with patch("shared.vector_db.get_embedding", return_value=[0.1] * 384), \
-         patch("shared.vector_db._use_firestore_vectors", return_value=False), \
-         patch("shared.vector_db._chroma_upsert") as mock_upsert, \
+         patch("shared.vector_db._fs_collection", return_value="rag_syllabuses"), \
          patch("shared.firestore_client.get_db") as mock_db:
         mock_db.return_value.collection.return_value.document.return_value.set.return_value = None
         store_document(
@@ -496,13 +495,12 @@ def test_new_country_syllabus_upload_indexes_correctly():
             },
         )
 
-    mock_upsert.assert_called_once()
-    # Collection name correct
-    assert mock_upsert.call_args[0][0] == "syllabuses"
-    # Metadata includes country
-    stored_meta = mock_upsert.call_args[0][4]
-    assert stored_meta.get("country") == "Kenya"
-    assert stored_meta.get("curriculum") == "KNEC"
+    mock_set = mock_db.return_value.collection.return_value.document.return_value.set
+    mock_set.assert_called()
+    stored = mock_set.call_args[0][0]
+    assert "embedding" in stored
+    assert stored.get("metadata", {}).get("country") == "Kenya"
+    assert stored.get("metadata", {}).get("curriculum") == "KNEC"
 
 
 @feature_test("rag_country_expansion_zero_code_changes")

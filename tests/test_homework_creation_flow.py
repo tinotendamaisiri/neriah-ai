@@ -7436,20 +7436,15 @@ class TestRAGPipelineAudit:
         assert "CURRICULUM CONTEXT" in result
         assert "quadratic equations" in result
 
-    @feature_test("search_falls_back_to_chroma")
-    def test_search_falls_back_to_chroma_when_firestore_fails(self):
-        """search_similar falls back to ChromaDB when Firestore vector search returns empty."""
-        chroma_results = [{"text": "fallback result", "metadata": {}, "score": 0.2}]
-
-        with patch("shared.vector_db._use_firestore_vectors", return_value=True), \
-             patch("shared.vector_db._firestore_search", return_value=[]), \
-             patch("shared.vector_db._chroma_search", return_value=chroma_results), \
+    @feature_test("search_returns_empty_when_firestore_fails")
+    def test_search_returns_empty_when_firestore_fails(self):
+        """search_similar returns [] gracefully when Firestore vector search fails."""
+        with patch("shared.vector_db._firestore_search", return_value=[]), \
              patch("shared.vector_db.get_embedding", return_value=[0.1] * 768):
             from shared.vector_db import search_similar
             results = search_similar("syllabuses", "test query")
 
-        assert len(results) == 1
-        assert results[0]["text"] == "fallback result"
+        assert results == []
 
 
 # ── Partial school search ────────────────────────────────────────────────────
