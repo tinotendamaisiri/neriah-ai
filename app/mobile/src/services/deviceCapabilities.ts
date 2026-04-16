@@ -28,11 +28,12 @@ function bytesToGB(bytes: number): number {
 }
 
 function classify(ramGB: number, freeStorageGB: number): DeviceCapability {
-  // Never block the user — runtime detection only.
-  // If there's enough storage for the model file, allow download.
-  // The model will run on any device; it may just be slower on low-RAM devices.
+  // Storage check — must have room for the model file
+  if (freeStorageGB < STOR_E2B_GB) return 'cloud-only';
+  // RAM check — determines which model variant
   if (ramGB >= RAM_E4B_GB && freeStorageGB >= STOR_E4B_GB) return 'e4b-capable';
-  return 'e2b-capable';
+  if (ramGB >= RAM_E2B_GB) return 'e2b-capable';
+  return 'cloud-only';
 }
 
 function isValidCapability(value: string | null): value is DeviceCapability {
@@ -67,8 +68,25 @@ export async function detectAndStoreCapability(): Promise<DeviceCapability> {
   }
 
   // ── Read RAM ──────────────────────────────────────────────────────────────
-  const totalMemoryBytes: number | null = Device.totalMemory ?? null;
-  const ramGB = totalMemoryBytes != null ? bytesToGB(totalMemoryBytes) : 0;
+  // On iOS, Device.totalMemory returns app-available memory (~1-3 GB) not
+  // physical RAM. Use device model to determine actual RAM at runtime.
+  let ramGB = 0;
+  if (Platform.OS === 'ios') {
+    // iOS: infer from device model — all iPhones since iPhone 11 have ≥ 4 GB
+    const model = (Device.modelName ?? '').toLowerCase();
+    // iPhone 15 Pro/Max, 14 Pro/Max, 13 Pro/Max = 6 GB
+    // iPhone 15, 14, 13, 12, 11 = 4 GB
+    // iPhone SE, older = 3 GB
+    if (model.includes('pro') || model.includes('max')) ramGB = 6;
+    else if (model.includes('iphone')) ramGB = 4;
+    else if (model.includes('ipad')) ramGB = 4;
+    else ramGB = 4; // default — modern iOS devices have ≥ 4 GB
+    console.log(`[deviceCapabilities] iOS model="${Device.modelName}" → inferred RAM=${ramGB} GB`);
+  } else {
+    // Android: Device.totalMemory is accurate
+    const totalMemoryBytes: number | null = Device.totalMemory ?? null;
+    ramGB = totalMemoryBytes != null ? bytesToGB(totalMemoryBytes) : 0;
+  }
 
   // ── Read free storage ─────────────────────────────────────────────────────
   let freeStorageGB = 0;
