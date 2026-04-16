@@ -330,47 +330,56 @@ export default function StudentSettingsScreen() {
         </View>
       </View>
 
-      {/* ── OFFLINE AI MODEL ────────────────────────────────────────── */}
+      {/* ── OFFLINE MODE ─────────────────────────────────────────── */}
       <View style={s.section}>
-        <Text style={s.sectionTitle}>Offline AI Model</Text>
+        <Text style={s.sectionTitle}>Offline Mode</Text>
         <View style={s.card}>
-          <View style={[s.capBadge, modelCapability === 'cloud-only' ? s.capBadgeCloud : s.capBadgeCapable]}>
-            <Ionicons name={modelCapability === 'cloud-only' ? 'cloud-outline' : 'hardware-chip-outline'} size={13} color={modelCapability === 'cloud-only' ? COLORS.gray500 : COLORS.success} style={{ marginRight: 5 }} />
-            <Text style={[s.capBadgeText, modelCapability === 'cloud-only' ? { color: COLORS.gray500 } : { color: COLORS.success }]}>
-              {modelCapability === 'cloud-only' ? 'Cloud only' : 'On-device AI supported'}
-            </Text>
-          </View>
-
-          <View style={s.modelRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.modelName}>Neriah AI</Text>
-              <Text style={s.modelSize}>Powered by {modelVariant ? MODEL_DISPLAY_NAME[modelVariant] : 'Gemma 4 E2B'} · {modelVariant ? MODEL_SIZE_LABEL[modelVariant] : '2.5 GB'}</Text>
-            </View>
-            <View style={[s.modelBadge, modelStatus === 'done' ? s.badgeDone : modelStatus === 'error' ? s.badgeError : s.badgeIdle]}>
-              <Text style={[s.modelBadgeText, { color: modelStatus === 'done' ? COLORS.success : modelStatus === 'error' ? COLORS.error : COLORS.gray500 }]}>
-                {modelStatus === 'done' ? 'Ready' : modelStatus === 'downloading' ? `${modelProgress}%` : modelStatus === 'error' ? 'Error' : 'Not downloaded'}
+          <View style={[s.settingsRow, { justifyContent: 'space-between', borderTopWidth: 0 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={s.settingsRowLabel}>Enable offline mode</Text>
+              <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>
+                Faster grading without internet. Downloads over Wi-Fi only.
               </Text>
             </View>
+            <Switch
+              value={modelStatus === 'done' || modelStatus === 'downloading' || modelStatus === 'paused'}
+              onValueChange={(on) => {
+                if (on && modelStatus !== 'done') {
+                  Alert.alert('Download offline model?', 'This will download about 2.5 GB over Wi-Fi. You can pause and resume anytime.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Download', onPress: acceptDownload },
+                  ]);
+                } else if (!on && modelStatus === 'done') {
+                  Alert.alert('Remove offline model?', 'You will need internet until you re-download.', [
+                    { text: 'Keep', style: 'cancel' },
+                    { text: 'Remove', style: 'destructive', onPress: deleteModel },
+                  ]);
+                }
+              }}
+              disabled={modelCapability === 'cloud-only'}
+              trackColor={{ true: COLORS.teal500, false: COLORS.border }}
+              thumbColor={COLORS.white}
+            />
           </View>
-
           {(modelStatus === 'downloading' || modelStatus === 'paused') && (
-            <View style={s.progressTrack}><View style={[s.progressFill, { width: `${modelProgress}%` as any }]} /></View>
+            <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+              <View style={s.progressTrack}><View style={[s.progressFill, { width: `${modelProgress}%` as any }]} /></View>
+              <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
+                {modelStatus === 'paused' ? `Paused — ${modelProgress}% complete` : `Downloading — ${modelProgress}% complete`}
+              </Text>
+            </View>
           )}
-
-          <TouchableOpacity style={[s.settingsRow, (modelStatus === 'done' || modelCapability === 'cloud-only') && { opacity: 0.4 }]} onPress={acceptDownload} disabled={modelStatus === 'done' || modelCapability === 'cloud-only'}>
-            <Text style={s.settingsRowLabel}>Download model</Text><Text style={s.chevron}>›</Text>
-          </TouchableOpacity>
-
           {modelStatus === 'done' && (
-            <TouchableOpacity style={s.settingsRow} onPress={() => Alert.alert('Delete model', 'Remove the AI model?', [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: deleteModel }])}>
-              <Text style={[s.settingsRowLabel, { color: COLORS.error }]}>Delete model</Text><Text style={s.chevron}>›</Text>
+            <View style={{ paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={{ fontSize: 13, color: COLORS.success, fontWeight: '600' }}>Offline mode ready</Text>
+            </View>
+          )}
+          {modelStatus === 'error' && (
+            <TouchableOpacity onPress={acceptDownload} style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+              <Text style={{ fontSize: 13, color: COLORS.error }}>Download failed — tap to retry</Text>
             </TouchableOpacity>
           )}
-
-          <View style={[s.settingsRow, { justifyContent: 'space-between' }]}>
-            <Text style={[s.settingsRowLabel, { color: COLORS.gray900 }]}>Wi-Fi only downloads</Text>
-            <Switch value={wifiOnly} onValueChange={setWifiOnly} trackColor={{ true: COLORS.teal500, false: COLORS.border }} thumbColor={COLORS.white} />
-          </View>
         </View>
       </View>
 

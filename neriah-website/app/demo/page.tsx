@@ -8019,45 +8019,11 @@ function TeacherSettingsWebScreen({ onBack, onAnalytics, onEditProfile }: { onBa
         </div>
 
         {/* ── OFFLINE AI MODEL section ── */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Offline AI Model</div>
-        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, overflow: 'hidden' }}>
-          {/* Cloud badge */}
-          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}` }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '5px 10px' }}>
-              <Cloud size={12} color={C.g500} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Cloud only — grading and assistant require internet</span>
-            </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.g500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Offline Mode</div>
+        <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, marginBottom: 14, padding: '14px 16px' }}>
+          <div style={{ fontSize: 14, color: C.g500, lineHeight: 1.5 }}>
+            Offline mode is available on the mobile app. Download the Neriah app to grade homework without internet.
           </div>
-          {/* Model info */}
-          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.g900 }}>Neriah AI</div>
-              <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E4B</div>
-              <div style={{ fontSize: 11, color: C.g500, marginTop: 4 }}>
-                Works offline for: <span style={{ color: C.g900, fontWeight: 600 }}>Homework Grading · Teacher Assistant</span>
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-              <div style={{ fontSize: 12, color: C.g400 }}>Not downloaded</div>
-              <div style={{ fontSize: 12, color: C.g400, marginTop: 2 }}>3.5 GB</div>
-            </div>
-          </div>
-          {/* Download row */}
-          <button style={{ width: '100%', background: 'none', border: 'none', borderBottom: `1px solid ${C.g100}`, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: 'inherit' }}>
-            <span style={{ fontSize: 14, color: C.text }}>Download model</span>
-            <ChevronLeft size={14} color={C.g400} style={{ transform: 'rotate(180deg)' }} />
-          </button>
-          {/* Wi-Fi toggle */}
-          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.g100}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 14, color: C.text }}>Wi-Fi only downloads</span>
-            <div style={{ width: 36, height: 20, borderRadius: 10, background: C.g200, position: 'relative', cursor: 'pointer' }}>
-              <div style={{ width: 16, height: 16, borderRadius: 8, background: C.white, position: 'absolute', top: 2, left: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-            </div>
-          </div>
-          {/* Never ask */}
-          <button style={{ width: '100%', background: 'none', border: 'none', padding: '10px 16px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
-            <span style={{ fontSize: 13, color: C.red }}>Never ask again</span>
-          </button>
         </div>
 
         {/* ── ABOUT section ── */}
@@ -8245,23 +8211,11 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
           )}
         </div>
 
-        {/* ── Offline AI Model ── */}
-        <div style={secLbl}>Offline AI Model</div>
+        {/* ── Offline Mode ── */}
+        <div style={secLbl}>Offline Mode</div>
         <div style={cardS}>
-          <div style={{ padding: 14 }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.g100, borderRadius: 8, padding: '5px 10px', marginBottom: 10 }}>
-              <Cloud size={13} color={C.g500} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Web uses Cloud AI</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.g900 }}>Neriah AI</div>
-                <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>Powered by Gemma 4 E2B · 2.5 GB</div>
-              </div>
-              <div style={{ background: C.g100, borderRadius: 6, padding: '4px 10px' }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: C.g500 }}>Mobile only</span>
-              </div>
-            </div>
+          <div style={{ padding: '14px 16px', fontSize: 14, color: C.g500, lineHeight: 1.5 }}>
+            Offline mode is available on the mobile app.
           </div>
         </div>
 
