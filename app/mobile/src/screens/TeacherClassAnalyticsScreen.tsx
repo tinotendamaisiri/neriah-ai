@@ -19,7 +19,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BarChart, LineChart } from 'react-native-chart-kit';
 
-import { getClassAnalytics } from '../services/api';
+import { getClassAnalytics, listAnswerKeys } from '../services/api';
+import type { AnswerKey } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsDetail, RootStackParamList } from '../types';
@@ -68,6 +69,7 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
   const { t } = useLanguage();
 
   const [data, setData] = useState<ClassAnalyticsDetail | null>(null);
+  const [homeworks, setHomeworks] = useState<AnswerKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,8 +77,12 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
     setLoading(true);
     setError(null);
     try {
-      const res = await getClassAnalytics(class_id);
+      const [res, keys] = await Promise.all([
+        getClassAnalytics(class_id),
+        listAnswerKeys(class_id),
+      ]);
       setData(res);
+      setHomeworks(keys);
     } catch (e: any) {
       setError(e?.message ?? t('error'));
     } finally {
@@ -110,29 +116,33 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
     );
   }
 
-  const { summary, score_distribution, performance_over_time, students } = data;
+  // Null-safe destructure — API may return partial data
+  const summary = data.summary ?? { class_average: 0, highest_score: 0, lowest_score: 0, total_submissions: 0, graded_submissions: 0, total_students: 0 };
+  const score_distribution = data.score_distribution ?? {};
+  const performance_over_time = data.performance_over_time ?? [];
+  const students = data.students ?? [];
 
   // ── Score distribution bar chart data ────────────────────────────────────────
   const distKeys = ['0-20', '21-40', '41-60', '61-80', '81-100'] as const;
   const distAsObj = score_distribution as unknown as Record<string, number>;
   const distValues = distKeys.map((k) => distAsObj[k] ?? 0);
-  const hasDistData = summary.total_submissions > 0;
+  const hasDistData = (summary.total_submissions ?? 0) > 0;
 
   // ── Performance over time line chart ─────────────────────────────────────────
   const hasPotData = performance_over_time.length >= 2;
   const potSlice = performance_over_time.slice(-8);
-  const potLabels = potSlice.map((e) => e.homework_title.substring(0, 6));
-  const potValues = potSlice.map((e) => e.average_score);
+  const potLabels = potSlice.map((e) => (e?.homework_title ?? '').substring(0, 6));
+  const potValues = potSlice.map((e) => e?.average_score ?? 0);
 
   // ── AI Insights ───────────────────────────────────────────────────────────────
-  const showInsights = summary.total_submissions >= 10;
+  const showInsights = (summary.total_submissions ?? 0) >= 10;
 
   const insightStrengths: string[] = [];
   const insightImprovements: string[] = [];
   const insightRecommendations: string[] = [];
 
   if (showInsights && performance_over_time.length > 0) {
-    const highHW = performance_over_time.filter((e) => e.average_score > 70);
+    const highHW = performance_over_time.filter((e) => (e?.average_score ?? 0) > 70);
     highHW.forEach((e) => {
       insightStrengths.push(
         `Strong performance on ${e.homework_title} — ${e.average_score}% average`,
@@ -259,6 +269,36 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
         </View>
       )}
 
+      {/* Homework list */}
+      {homeworks.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>Homework</Text>
+          {homeworks.map((hw) => (
+            <TouchableOpacity
+              key={hw.id}
+              style={styles.homeworkRow}
+              onPress={() => navigation.navigate('HomeworkAnalytics', {
+                homework_id: hw.id,
+                homework_title: hw.title || hw.subject || 'Homework',
+                class_id,
+                class_name,
+              })}
+              activeOpacity={0.7}
+            >
+              <View style={styles.hwInfo}>
+                <Text style={styles.hwTitle} numberOfLines={1}>
+                  {hw.title || hw.subject || 'Untitled Homework'}
+                </Text>
+                {hw.due_date && (
+                  <Text style={styles.hwSub}>Due: {hw.due_date}</Text>
+                )}
+              </View>
+              <Text style={styles.hwChevron}>›</Text>
+            </TouchableOpacity>
+          ))}
+        </>
+      )}
+
       {/* Student Rankings */}
       <Text style={styles.sectionTitle}>{t('student_rankings')}</Text>
       {students.length === 0 ? (
@@ -266,17 +306,17 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
           <Text style={styles.noDataText}>{t('analytics_no_classes')}</Text>
         </View>
       ) : (
-        students.map((s, idx) => (
+        students.filter(Boolean).map((s, idx) => (
           <TouchableOpacity
-            key={s.id}
+            key={s.id ?? idx}
             style={styles.studentRow}
             onPress={() =>
-              navigation.navigate('TeacherStudentAnalytics', {
+              s.id ? navigation.navigate('TeacherStudentAnalytics', {
                 student_id: s.id,
-                student_name: s.name,
+                student_name: s.name ?? 'Student',
                 class_id,
                 class_name,
-              })
+              }) : undefined
             }
           >
             <View
@@ -524,4 +564,19 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 2,
   },
+  homeworkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  hwInfo: { flex: 1 },
+  hwTitle: { fontSize: 14, fontWeight: '600', color: COLORS.text },
+  hwSub: { fontSize: 11, color: COLORS.gray500, marginTop: 2 },
+  hwChevron: { fontSize: 20, color: COLORS.gray200, marginLeft: 8 },
 });

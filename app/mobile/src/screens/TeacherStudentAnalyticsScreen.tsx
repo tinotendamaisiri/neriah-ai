@@ -88,12 +88,12 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
   const weaknesses = data.weaknesses ?? [];
   const submissions = data.submissions ?? [];
 
-  // ── Performance chart ─────────────────────────────────────────────────────────
+  // ── Performance chart (guard every field — chart-kit crashes on NaN/undefined) ─
   const hasPotData = performance_over_time.length >= 2;
   const potSlice = performance_over_time.slice(-8);
-  const potLabels = potSlice.map((e) => e.homework_title.substring(0, 6));
-  const studentPcts = potSlice.map((e) => e.score_pct);
-  const classAvgs = potSlice.map((e) => e.class_average);
+  const potLabels = potSlice.map((e) => (e?.homework_title ?? '').substring(0, 6));
+  const studentPcts = potSlice.map((e) => e?.score_pct ?? 0);
+  const classAvgs = potSlice.map((e) => e?.class_average ?? 0);
   const hasClassAvg = classAvgs.some((v) => v > 0);
 
   const chartDatasets = hasPotData
@@ -229,11 +229,11 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
         <>
           <Text style={styles.sectionTitle}>{t('class_strengths')}</Text>
           <View style={styles.listCard}>
-            {strengths.map((item, i) => (
+            {strengths.map((item, i) => item ? (
               <Text key={i} style={[styles.bulletItem, { color: COLORS.success }]}>
-                {`✓ ${item.homework_title}: ${item.score}% (class avg: ${item.class_average}%)`}
+                {`✓ ${item.homework_title ?? 'Assignment'}: ${item.score ?? 0}% (class avg: ${item.class_average ?? 0}%)`}
               </Text>
-            ))}
+            ) : null)}
           </View>
         </>
       )}
@@ -243,11 +243,11 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
         <>
           <Text style={styles.sectionTitle}>{t('areas_for_improvement')}</Text>
           <View style={styles.listCard}>
-            {weaknesses.map((item, i) => (
+            {weaknesses.map((item, i) => item ? (
               <Text key={i} style={[styles.bulletItem, { color: COLORS.error }]}>
-                {`✗ ${item.homework_title}: ${item.score}% (class avg: ${item.class_average}%)`}
+                {`✗ ${item.homework_title ?? 'Assignment'}: ${item.score ?? 0}% (class avg: ${item.class_average ?? 0}%)`}
               </Text>
-            ))}
+            ) : null)}
           </View>
         </>
       )}
@@ -259,31 +259,31 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
           <Text style={styles.noDataText}>{t('no_chart_data')}</Text>
         </View>
       ) : (
-        submissions.map((sub) => (
+        submissions.map((sub) => sub ? (
           <TouchableOpacity
-            key={sub.id}
+            key={sub.id ?? Math.random().toString()}
             style={styles.submissionRow}
             onPress={() =>
-              navigation.navigate('GradingDetail', {
+              sub.id ? navigation.navigate('GradingDetail', {
                 mark_id: sub.id,
-                student_name: student.name,
+                student_name: student.name || student_name,
                 class_name,
-                answer_key_title: sub.homework_title,
-              })
+                answer_key_title: sub.homework_title ?? '',
+              }) : undefined
             }
           >
             <View style={styles.submissionLeft}>
-              <Text style={styles.submissionTitle} numberOfLines={1}>{sub.homework_title}</Text>
-              <Text style={styles.submissionDate}>{sub.date}</Text>
+              <Text style={styles.submissionTitle} numberOfLines={1}>{sub.homework_title ?? 'Assignment'}</Text>
+              <Text style={styles.submissionDate}>{sub.date ?? ''}</Text>
               {sub.feedback_preview ? (
                 <Text style={styles.feedbackPreview} numberOfLines={2}>{sub.feedback_preview}</Text>
               ) : null}
             </View>
             <View style={styles.submissionRight}>
-              <Text style={styles.submissionScore}>{sub.score}/{sub.max_score}</Text>
+              <Text style={styles.submissionScore}>{sub.score ?? 0}/{sub.max_score ?? 0}</Text>
             </View>
           </TouchableOpacity>
-        ))
+        ) : null)
       )}
 
       {/* Commendations */}
