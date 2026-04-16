@@ -521,6 +521,7 @@ def update_answer_key(key_id: str):
                 updates["generated"] = True
             elif extracted_title_or_text:
                 question_paper_text = extracted_title_or_text
+                updates["question_paper_text"] = question_paper_text
 
         if not updates.get("questions") and question_paper_text:
             education_level = updates.get("education_level") or key.get("education_level", "")
