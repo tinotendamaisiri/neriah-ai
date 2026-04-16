@@ -34,6 +34,57 @@ from shared.embeddings import get_embedding
 
 logger = logging.getLogger(__name__)
 
+
+# ── Education level normalization ─────────────────────────────────────────────
+
+def map_education_level(level: str) -> str | None:
+    """
+    Map a specific education level string to the syllabus tier used in indexed
+    documents. Returns None for unknown levels (no filter applied).
+
+    Examples:
+        "grade_3"    → "primary"
+        "form_2"     → "o_level"
+        "form_5"     → "a_level"
+        "university" → "tertiary"
+    """
+    if not level:
+        return None
+    lv = level.lower().strip().replace(" ", "_").replace("-", "_")
+
+    # Primary: grade 1–7 or "primary" itself
+    if lv == "primary":
+        return "primary"
+    if any(lv.startswith(p) for p in ("grade_", "grade")):
+        return "primary"
+
+    # O-Level: form 1–4
+    if lv in ("form_1", "form_2", "form_3", "form_4",
+              "form1", "form2", "form3", "form4"):
+        return "o_level"
+    if lv in ("o_level", "olevel", "ordinary_level"):
+        return "o_level"
+
+    # A-Level: form 5–6
+    if lv in ("form_5", "form_6", "form5", "form6",
+              "form_5_(a_level)", "form_6_(a_level)"):
+        return "a_level"
+    if lv in ("a_level", "alevel", "advanced_level"):
+        return "a_level"
+    if "a_level" in lv or "a-level" in lv:
+        return "a_level"
+
+    # Tertiary
+    if lv in ("college", "university", "tertiary", "diploma",
+              "degree", "college/university"):
+        return "tertiary"
+
+    # Form 1-to-4 ranges
+    if "form_1_to_4" in lv or "forms_1_4" in lv or "forms14" in lv:
+        return "o_level"
+
+    return None
+
 # Firestore collection names
 _FS_COLLECTIONS = {
     "syllabuses":       "rag_syllabuses",
@@ -144,9 +195,23 @@ def _firestore_search(
         for snap in query.stream():
             d = snap.to_dict()
             meta = d.get("metadata") or {}
-            # Apply metadata filters in Python (Firestore vector query can't filter yet)
+            # Apply metadata filters in Python (Firestore vector query can't pre-filter)
             if filters:
-                if not all(meta.get(k) == v for k, v in filters.items()):
+                match = True
+                for k, v in filters.items():
+                    doc_val = meta.get(k, "")
+                    if k == "education_level":
+                        # Compare normalized tiers (both sides may be raw or mapped)
+                        if map_education_level(doc_val) != v and doc_val != v:
+                            match = False; break
+                    elif k == "subject":
+                        # Case-insensitive substring match for subject
+                        if v.lower() not in doc_val.lower() and doc_val.lower() not in v.lower():
+                            match = False; break
+                    else:
+                        if doc_val != v:
+                            match = False; break
+                if not match:
                     continue
             results.append({
                 "text":     d.get("text", ""),
@@ -197,16 +262,51 @@ def search_with_user_context(
     top_k: int = 5,
 ) -> list[dict]:
     """
-    Convenience wrapper: build metadata filters from *user_context* and call
-    search_similar.
+    Build metadata filters from *user_context* and search.
 
-    user_context keys used as filters (when present and non-empty):
-      curriculum, subject, education_level, country
+    Normalizes education_level to syllabus tier (e.g. "form_2" → "o_level")
+    so queries match the indexed document metadata.
+
+    If strict filters return no results, retries with just curriculum filter
+    to avoid returning nothing when the subject/level combo is too narrow.
     """
     filters: dict[str, str] = {}
-    for key in ("curriculum", "subject", "education_level", "country"):
-        val = user_context.get(key, "")
-        if val:
-            filters[key] = val
 
-    return search_similar(collection, query_text, filters=filters or None, top_k=top_k)
+    # Curriculum — pass through as-is
+    curriculum = user_context.get("curriculum", "")
+    if curriculum:
+        filters["curriculum"] = curriculum
+
+    # Subject — normalize to lowercase for matching
+    subject = user_context.get("subject", "")
+    if subject:
+        filters["subject"] = subject
+
+    # Education level — map to syllabus tier
+    raw_level = user_context.get("education_level", "")
+    mapped_level = map_education_level(raw_level)
+    if mapped_level:
+        filters["education_level"] = mapped_level
+
+    # Try with all filters
+    results = search_similar(collection, query_text, filters=filters or None, top_k=top_k)
+    if results:
+        return results
+
+    # Fallback 1: drop education_level filter (subject match still useful)
+    if "education_level" in filters and len(filters) > 1:
+        relaxed = {k: v for k, v in filters.items() if k != "education_level"}
+        results = search_similar(collection, query_text, filters=relaxed, top_k=top_k)
+        if results:
+            logger.debug("[vector_db] Relaxed level filter for '%s', got %d results", collection, len(results))
+            return results
+
+    # Fallback 2: curriculum only
+    if curriculum:
+        results = search_similar(collection, query_text, filters={"curriculum": curriculum}, top_k=top_k)
+        if results:
+            logger.debug("[vector_db] Relaxed to curriculum-only for '%s', got %d results", collection, len(results))
+            return results
+
+    # Fallback 3: no filters at all
+    return search_similar(collection, query_text, filters=None, top_k=top_k)
