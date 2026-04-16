@@ -28,11 +28,11 @@ function bytesToGB(bytes: number): number {
 }
 
 function classify(ramGB: number, freeStorageGB: number): DeviceCapability {
+  // Never block the user — runtime detection only.
+  // If there's enough storage for the model file, allow download.
+  // The model will run on any device; it may just be slower on low-RAM devices.
   if (ramGB >= RAM_E4B_GB && freeStorageGB >= STOR_E4B_GB) return 'e4b-capable';
-  if (ramGB >= RAM_E2B_GB && freeStorageGB >= STOR_E2B_GB) return 'e2b-capable';
-  // Even low-end devices get e2b — let the user try, the model will just be slower
-  if (freeStorageGB >= STOR_E2B_GB) return 'e2b-capable';
-  return 'cloud-only';
+  return 'e2b-capable';
 }
 
 function isValidCapability(value: string | null): value is DeviceCapability {

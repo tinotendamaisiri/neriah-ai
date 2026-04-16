@@ -345,10 +345,6 @@ export default function StudentSettingsScreen() {
               value={modelStatus === 'done' || modelStatus === 'downloading' || modelStatus === 'paused'}
               onValueChange={(on) => {
                 if (on && modelStatus !== 'done') {
-                  if (modelCapability === 'cloud-only') {
-                    Alert.alert('Not enough storage', 'Your device needs at least 1.5 GB of free storage. Free up some space and try again.');
-                    return;
-                  }
                   Alert.alert('Download offline model?', 'This will download about 2 GB over Wi-Fi. You can pause and resume anytime.', [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Download', onPress: acceptDownload },
