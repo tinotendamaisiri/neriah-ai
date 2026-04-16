@@ -338,7 +338,7 @@ export default function StudentSettingsScreen() {
             <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={s.settingsRowLabel}>Enable offline mode</Text>
               <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>
-                Faster grading without internet. Downloads over Wi-Fi only.
+                Get help from your AI tutor without internet. Downloads over Wi-Fi only.
               </Text>
             </View>
             <Switch
