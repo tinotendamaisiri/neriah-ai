@@ -532,6 +532,8 @@ Generate a complete marking scheme for the question paper below.
 Question paper:
 {question_paper_text}
 
+CRITICAL: question_text MUST contain the full question as written on the paper. Never leave it empty.
+
 Return ONLY valid JSON:
 {{
   "title": "<subject or paper title>",
@@ -539,7 +541,7 @@ Return ONLY valid JSON:
   "questions": [
     {{
       "question_number": 1,
-      "question_text": "<question>",
+      "question_text": "<REQUIRED: the full question text from the paper>",
       "answer": "<model answer>",
       "marks": <integer>,
       "marking_notes": "<what to accept, what to penalise>"
@@ -548,6 +550,7 @@ Return ONLY valid JSON:
 }}
 
 Rules:
+- question_text must never be empty — transcribe every question from the paper.
 - Assign realistic mark allocations proportional to question complexity.
 - For maths/science, include worked solutions in the answer field.
 - For essays, list key points required.
@@ -607,7 +610,8 @@ def generate_scheme_from_text(
         f"{curriculum_line}\n"
         f"Grading standard: {_intensity(education_level)}.\n"
         f"{marks_constraint}{rag_section}\n"
-        "Generate a complete marking scheme for the question paper below.\n\n"
+        "Generate a complete marking scheme for the question paper below.\n"
+        "CRITICAL: question_text MUST contain the full question from the paper. Never leave it empty.\n\n"
         f"Question paper:\n{question_paper_text}\n\n"
         "Return ONLY valid JSON with no markdown fences, no extra text:\n"
         "{\n"
@@ -616,7 +620,7 @@ def generate_scheme_from_text(
         '  "questions": [\n'
         '    {\n'
         '      "question_number": 1,\n'
-        '      "question_text": "<full question text>",\n'
+        '      "question_text": "<REQUIRED: the full question text from the paper>",\n'
         '      "correct_answer": "<model answer>",\n'
         '      "marks": <integer>,\n'
         '      "marking_notes": "<what to accept, partial credit rules>"\n'
@@ -691,6 +695,10 @@ Education level: {education_level}
 Keep correct_answer concise — one sentence maximum per question.
 Assign marks proportionally based on question complexity and education level.
 
+CRITICAL: For every question, you MUST transcribe the full question text from the image into question_text.
+Do NOT leave question_text empty. Copy the question exactly as written on the paper.
+If a question has multiple choice options, include them in question_text.
+
 Respond ONLY with valid JSON matching this schema exactly — no text before or after the JSON:
 {{
   "title": "string — short title for this marking scheme",
@@ -698,7 +706,7 @@ Respond ONLY with valid JSON matching this schema exactly — no text before or 
   "questions": [
     {{
       "number": int,
-      "question_text": "string — the question as read from the image",
+      "question_text": "string — REQUIRED: the full question text transcribed from the image",
       "correct_answer": "string — concise expected answer, one sentence max",
       "max_marks": number,
       "marking_notes": "string or null — brief guidance on partial credit only"
