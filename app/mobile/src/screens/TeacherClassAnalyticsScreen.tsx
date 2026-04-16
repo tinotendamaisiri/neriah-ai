@@ -16,7 +16,7 @@ import {
   Dimensions,
   FlatList,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BarChart, LineChart } from 'react-native-chart-kit';
 
@@ -65,8 +65,9 @@ function mean(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-export default function TeacherClassAnalyticsScreen({ route, navigation }: Props) {
-  const { class_id, class_name } = route.params;
+export default function TeacherClassAnalyticsScreen({ route }: Props) {
+  const navigation = useNavigation<any>();
+  const { class_id = '', class_name = '' } = route?.params ?? {};
   const { t } = useLanguage();
 
   const [data, setData] = useState<ClassAnalyticsDetail | null>(null);
