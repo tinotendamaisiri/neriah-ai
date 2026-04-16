@@ -31,6 +31,7 @@ import NetInfo from '@react-native-community/netinfo';
 import * as SecureStore from 'expo-secure-store';
 
 import {
+  detectCapability,
   getStoredCapability,
   type DeviceCapability,
 } from '../services/deviceCapabilities';
@@ -200,8 +201,8 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
       const wifiPref = await SecureStore.getItemAsync(WIFI_ONLY_KEY).catch(() => null);
       if (wifiPref === 'true') setWifiOnlyState(true);
 
-      // Check if model already downloaded
-      const cap = await getStoredCapability();
+      // Always re-detect capability (storage may have changed since last check)
+      const cap = await detectCapability();
       if (!cap) return;
       setCapability(cap);
       const v = capabilityToVariant(cap);

@@ -19,9 +19,9 @@ export type DeviceCapability = 'e4b-capable' | 'e2b-capable' | 'cloud-only';
 export const CAPABILITY_STORE_KEY = 'device_capability';
 
 const RAM_E4B_GB  = 6;
-const RAM_E2B_GB  = 4;
+const RAM_E2B_GB  = 3;   // lowered from 4 — most African devices have 3-4 GB
 const STOR_E4B_GB = 3.5;
-const STOR_E2B_GB = 2;
+const STOR_E2B_GB = 1.5; // lowered from 2 — model is ~1 GB compressed
 
 function bytesToGB(bytes: number): number {
   return bytes / (1024 * 1024 * 1024);
@@ -30,6 +30,8 @@ function bytesToGB(bytes: number): number {
 function classify(ramGB: number, freeStorageGB: number): DeviceCapability {
   if (ramGB >= RAM_E4B_GB && freeStorageGB >= STOR_E4B_GB) return 'e4b-capable';
   if (ramGB >= RAM_E2B_GB && freeStorageGB >= STOR_E2B_GB) return 'e2b-capable';
+  // Even low-end devices get e2b — let the user try, the model will just be slower
+  if (freeStorageGB >= STOR_E2B_GB) return 'e2b-capable';
   return 'cloud-only';
 }
 

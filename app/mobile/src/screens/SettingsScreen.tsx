@@ -283,6 +283,13 @@ export default function SettingsScreen() {
               value={modelStatus === 'done' || modelStatus === 'downloading' || modelStatus === 'paused'}
               onValueChange={(on) => {
                 if (on && modelStatus !== 'done') {
+                  if (modelCapability === 'cloud-only') {
+                    Alert.alert(
+                      'Not enough storage',
+                      'Your device needs at least 1.5 GB of free storage to download the offline model. Free up some space and try again.',
+                    );
+                    return;
+                  }
                   Alert.alert(
                     'Download offline model?',
                     'This will download about 3 GB over Wi-Fi. You can pause and resume anytime.',
@@ -302,7 +309,6 @@ export default function SettingsScreen() {
                   );
                 }
               }}
-              disabled={modelCapability === 'cloud-only'}
               trackColor={{ true: COLORS.teal500, false: COLORS.border }}
               thumbColor={COLORS.white}
             />
