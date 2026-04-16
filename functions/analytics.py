@@ -44,12 +44,22 @@ def _class_analytics_data(class_id: str) -> dict:
     homework_count = len(homeworks)
     logger.info("Analytics: class=%s homework_count=%d", class_id, homework_count)
 
+    # Always fetch students so the roster is available even without analytics data
+    all_students = query("students", [("class_id", "==", class_id)])
+    roster = [
+        {"student_id": s["id"], "name": _student_name(s), "average_score": 0,
+         "submission_count": 0, "trend": "stable", "no_submissions": True}
+        for s in all_students
+    ]
+
     if homework_count == 0:
         return {
             "has_data": False,
             "reason": "no_homeworks",
             "homework_count": 0,
             "graded_submissions_count": 0,
+            "students": roster,
+            "total_students": len(roster),
             "message": "No homework has been assigned for this class yet.",
         }
 
@@ -65,6 +75,8 @@ def _class_analytics_data(class_id: str) -> dict:
             "reason": "no_graded_submissions",
             "homework_count": homework_count,
             "graded_submissions_count": 0,
+            "students": roster,
+            "total_students": len(roster),
             "message": "No submissions have been graded yet. Grade student work to see analytics.",
         }
 

@@ -191,15 +191,15 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
       <Text style={styles.sectionTitle}>{t('class_summary')}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.summaryScroll}>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{summary.average_score}%</Text>
+          <Text style={styles.summaryValue}>{(summary.total_submissions ?? 0) > 0 ? `${summary.average_score ?? 0}%` : '—'}</Text>
           <Text style={styles.summaryLabel}>{t('avg_score')}</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{summary.total_submissions}</Text>
+          <Text style={styles.summaryValue}>{summary.total_submissions ?? 0}</Text>
           <Text style={styles.summaryLabel}>{t('submissions_label')}</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{summary.completion_rate}%</Text>
+          <Text style={styles.summaryValue}>{(summary.total_submissions ?? 0) > 0 ? `${summary.completion_rate ?? 0}%` : '—'}</Text>
           <Text style={styles.summaryLabel}>{t('completion_rate')}</Text>
         </View>
         <View style={styles.summaryCard}>
@@ -303,7 +303,7 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
       <Text style={styles.sectionTitle}>{t('student_rankings')}</Text>
       {students.length === 0 ? (
         <View style={styles.noDataBox}>
-          <Text style={styles.noDataText}>{t('analytics_no_classes')}</Text>
+          <Text style={styles.noDataText}>No students enrolled yet</Text>
         </View>
       ) : (
         students.filter(Boolean).map((s, idx) => (
@@ -340,7 +340,7 @@ export default function TeacherClassAnalyticsScreen({ route, navigation }: Props
                   { color: rankColor(idx + 1, students.length) },
                 ]}
               >
-                {s.average_score}%
+                {(s.submission_count ?? s.submissions_count ?? 0) > 0 ? `${s.average_score ?? 0}%` : '—'}
               </Text>
               <Text style={[styles.trendArrow, { color: trendColor(s.trend) }]}>
                 {trendArrow(s.trend)}
