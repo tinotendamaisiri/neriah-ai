@@ -3,8 +3,8 @@
 // Stores result in SecureStore under key "device_capability".
 //
 // Capability tiers:
-//   "e4b-capable"  — RAM >= 6 GB AND free storage >= 3.5 GB (teacher grading model)
-//   "e2b-capable"  — RAM >= 4 GB AND free storage >= 2 GB   (student tutor model)
+//   "e4b-capable"  — RAM >= 6 GB AND free storage >= 3.5 GB (teacher grading model ~3 GB)
+//   "e2b-capable"  — RAM >= 4 GB AND free storage >= 2 GB   (student tutor model ~2 GB)
 //   "cloud-only"   — below thresholds; all inference routed to cloud
 //
 // Subsequent launches read the stored result and skip hardware checks entirely.

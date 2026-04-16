@@ -4,9 +4,9 @@
 // Downloads Gemma 4 task files from GCS into the device's document directory.
 // Supports pause / resume across app restarts via AsyncStorage savable state.
 //
-// Models live at: gs://neriah-scans/models/
-//   Student (E2B): gemma-4-e2b-it.task  — 2.5 GB
-//   Teacher (E4B): gemma-4-e4b-it.task  — 3.5 GB
+// Models hosted at: gs://neriah-ai-models/models/ (Johannesburg region)
+//   Student (E2B): gemma-4-E2B-it-web.task  — 2.0 GB
+//   Teacher (E4B): gemma-4-E4B-it-web.task  — 2.96 GB
 //
 // Files are stored outside the app bundle so they survive app updates.
 
@@ -25,32 +25,36 @@ export const DOWNLOAD_PROMPTED_KEY      = 'model_download_prompted';
 export const WIFI_ONLY_KEY              = 'wifi_only_downloads';
 export const WIFI_NUDGE_LAST_DATE_KEY   = 'neriah_wifi_nudge_last_date';
 export const WIFI_NUDGE_NEVER_KEY       = 'neriah_wifi_nudge_never';
-const RESUMABLE_KEY                     = 'model_download_savable';
+/** Per-variant resumable snapshot key. */
+function resumableKey(variant: ModelVariant): string {
+  return `model_download_snapshot_${variant}`;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+// Model files hosted in GCS Johannesburg region for low-latency African downloads.
 
-const GCS_BASE = 'https://storage.googleapis.com/neriah-scans/models';
+const GCS_BASE = 'https://storage.googleapis.com/neriah-ai-models/models';
 
 export const MODEL_DIR = `${FileSystem.documentDirectory ?? ''}models/`;
 
 export const MODEL_PATHS: Record<ModelVariant, string> = {
-  e2b: `${MODEL_DIR}gemma-4-e2b-it.task`,
-  e4b: `${MODEL_DIR}gemma-4-e4b-it.task`,
+  e2b: `${MODEL_DIR}gemma-4-E2B-it-web.task`,
+  e4b: `${MODEL_DIR}gemma-4-E4B-it-web.task`,
 };
 
 const GCS_URLS: Record<ModelVariant, string> = {
-  e2b: `${GCS_BASE}/gemma-4-e2b-it.task`,
-  e4b: `${GCS_BASE}/gemma-4-e4b-it.task`,
+  e2b: `${GCS_BASE}/gemma-4-E2B-it-web.task`,
+  e4b: `${GCS_BASE}/gemma-4-E4B-it-web.task`,
 };
 
 export const MODEL_SIZES_BYTES: Record<ModelVariant, number> = {
-  e2b: 2_500_000_000,
-  e4b: 3_500_000_000,
+  e2b: 2_000_000_000,   // ~2.0 GB
+  e4b: 2_960_000_000,   // ~2.96 GB
 };
 
 export const MODEL_SIZE_LABEL: Record<ModelVariant, string> = {
-  e2b: '2.5 GB',
-  e4b: '3.5 GB',
+  e2b: '2 GB',
+  e4b: '3 GB',
 };
 
 export const MODEL_DISPLAY_NAME: Record<ModelVariant, string> = {
@@ -120,7 +124,7 @@ export async function startDownload(
   };
 
   // ── Resume if a savable exists ────────────────────────────────────────────
-  const savableRaw = await AsyncStorage.getItem(RESUMABLE_KEY).catch(() => null);
+  const savableRaw = await AsyncStorage.getItem(resumableKey(variant)).catch(() => null);
   if (savableRaw) {
     try {
       const savable: FileSystem.DownloadPauseState = JSON.parse(savableRaw);
@@ -137,7 +141,7 @@ export async function startDownload(
       }
     } catch {
       // Corrupted savable — fall through to fresh download
-      await AsyncStorage.removeItem(RESUMABLE_KEY).catch(() => {});
+      await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
     }
   }
 
@@ -157,7 +161,7 @@ async function _run(
     const result = await _active.downloadAsync();
     _active = null;
     if (result?.uri) {
-      await AsyncStorage.removeItem(RESUMABLE_KEY).catch(() => {});
+      await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
       await SecureStore.setItemAsync(MODEL_DOWNLOADED_KEY, 'true');
       onProgress(100);
       onComplete();
@@ -185,7 +189,7 @@ export async function pauseDownload(): Promise<void> {
     const savable = await _active.pauseAsync();
     _active = null;
     if (savable) {
-      await AsyncStorage.setItem(RESUMABLE_KEY, JSON.stringify(savable)).catch(() => {});
+      await AsyncStorage.setItem(resumableKey(variant), JSON.stringify(savable)).catch(() => {});
     }
   } catch {
     _active = null;
@@ -200,7 +204,7 @@ export async function cancelDownload(variant: ModelVariant): Promise<void> {
     try { await _active.pauseAsync(); } catch {}
     _active = null;
   }
-  await AsyncStorage.removeItem(RESUMABLE_KEY).catch(() => {});
+  await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
   try {
     const info = await FileSystem.getInfoAsync(MODEL_PATHS[variant]);
     if (info.exists) {
@@ -217,7 +221,7 @@ export async function deleteModelFile(variant: ModelVariant): Promise<void> {
     try { await _active.pauseAsync(); } catch {}
     _active = null;
   }
-  await AsyncStorage.removeItem(RESUMABLE_KEY).catch(() => {});
+  await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
   try {
     const info = await FileSystem.getInfoAsync(MODEL_PATHS[variant]);
     if (info.exists) {

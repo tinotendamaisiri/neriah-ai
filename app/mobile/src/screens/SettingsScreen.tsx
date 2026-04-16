@@ -285,7 +285,7 @@ export default function SettingsScreen() {
                 if (on && modelStatus !== 'done') {
                   Alert.alert(
                     'Download offline model?',
-                    'This will download about 2.5 GB over Wi-Fi. You can pause and resume anytime.',
+                    'This will download about 3 GB over Wi-Fi. You can pause and resume anytime.',
                     [
                       { text: 'Cancel', style: 'cancel' },
                       { text: 'Download', onPress: acceptDownload },
