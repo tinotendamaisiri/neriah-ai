@@ -138,7 +138,13 @@ def method_not_allowed(e):
 @app.errorhandler(500)
 def internal_error(e):
     logger.exception("Unhandled 500")
-    return jsonify({"error": "internal server error"}), 500
+    return jsonify({"error": "Neriah is having trouble right now. Please try again in a moment."}), 500
+
+
+@app.errorhandler(Exception)
+def unhandled_exception(e):
+    logger.exception("Unhandled exception: %s", e)
+    return jsonify({"error": "Neriah is having trouble right now. Please try again in a moment."}), 500
 
 
 # ─── Functions Framework entry point ─────────────────────────────────────────

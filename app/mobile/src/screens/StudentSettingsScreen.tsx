@@ -558,7 +558,7 @@ export default function StudentSettingsScreen() {
               <Text style={m.label}>Enter the 6-digit code sent to {maskPhone(user?.phone ?? '')}</Text>
               <TextInput ref={otpInputRef} style={[m.input, { fontSize: 22, fontWeight: '700', letterSpacing: 6, textAlign: 'center' }]} value={otp} onChangeText={t => setOtp(t.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" maxLength={6} />
               {otpLoading && <ActivityIndicator color={COLORS.teal500} style={{ marginTop: 12 }} />}
-              <TouchableOpacity disabled={resendCooldown > 0 || otpLoading} onPress={async () => { if (!user?.phone) return; try { const r = await requestProfileOtp(user.phone); setVerificationId(r.verification_id); setResendCooldown(60); } catch {} }} style={{ marginTop: 14, alignItems: 'center' }}>
+              <TouchableOpacity disabled={resendCooldown > 0 || otpLoading} onPress={async () => { if (!user?.phone) return; try { const r = await requestProfileOtp(user.phone); setVerificationId(r.verification_id); setResendCooldown(60); } catch { Alert.alert('Error', 'Could not resend code. Please try again.'); } }} style={{ marginTop: 14, alignItems: 'center' }}>
                 <Text style={{ color: resendCooldown > 0 ? COLORS.gray500 : COLORS.teal500, fontSize: 14, fontWeight: '600' }}>
                   {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                 </Text>
