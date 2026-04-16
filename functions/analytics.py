@@ -263,7 +263,13 @@ def analytics_student(student_id: str):
 
     logger.info("Analytics/student: teacher_id=%s student_id=%s", teacher_id, student_id)
 
-    marks = query("marks", [("student_id", "==", student_id)], order_by="timestamp")
+    try:
+        marks = query("marks", [("student_id", "==", student_id)], order_by="timestamp")
+    except Exception:
+        # Fallback: query without order_by if composite index not ready
+        logger.warning("[analytics] marks index not ready, falling back to unordered query")
+        marks = query("marks", [("student_id", "==", student_id)])
+        marks.sort(key=lambda m: m.get("timestamp", ""), reverse=False)
     approved = [m for m in marks if m.get("approved") or m.get("status") in ("approved", "graded")]
 
     if not approved:
@@ -363,7 +369,11 @@ def analytics_homework(homework_id: str):
 
     logger.info("Analytics/homework: teacher_id=%s homework_id=%s", teacher_id, homework_id)
 
-    all_marks = query("marks", [("answer_key_id", "==", homework_id)], order_by="timestamp")
+    try:
+        all_marks = query("marks", [("answer_key_id", "==", homework_id)], order_by="timestamp")
+    except Exception:
+        logger.warning("[analytics] marks index not ready for answer_key_id+timestamp")
+        all_marks = query("marks", [("answer_key_id", "==", homework_id)])
     approved = [m for m in all_marks if m.get("approved") or m.get("status") in ("approved", "graded")]
 
     if not approved:

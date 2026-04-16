@@ -37,8 +37,24 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "student_id", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "marks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_id", "order": "ASCENDING" },
         { "fieldPath": "approved", "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "marks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "answer_key_id", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
       ]
     },
     {
