@@ -292,13 +292,19 @@ def auth_verify():
         delete_doc("otp_verifications", phone)
 
         if pending_data and pending_data.get("role") == "student":
+            class_id = pending_data.get("class_id") or "pending"
             student = Student(
                 first_name=pending_data["first_name"],
                 surname=pending_data["surname"],
                 phone=pending_data["phone"],
-                class_id=pending_data.get("class_id") or "pending",
+                class_id=class_id,
             )
             upsert("students", student.id, student.model_dump())
+            # Increment student_count on the class
+            if class_id and class_id != "pending":
+                cls = get_doc("classes", class_id)
+                if cls:
+                    upsert("classes", class_id, {"student_count": cls.get("student_count", 0) + 1})
             token = create_jwt(student.id, "student", 0)
             logger.info("[demo] Auto-verified OTP (student) for %s", phone)
             return jsonify({"token": token, "user": _safe(student.model_dump())}), 200
@@ -394,13 +400,19 @@ def auth_verify():
 
     if pending_data and pending_data.get("role") == "student":
         # Student registration flow
+        class_id = pending_data.get("class_id") or "pending"
         student = Student(
             first_name=pending_data["first_name"],
             surname=pending_data["surname"],
             phone=pending_data["phone"],
-            class_id=pending_data.get("class_id") or "pending",
+            class_id=class_id,
         )
         upsert("students", student.id, student.model_dump())
+        # Increment student_count on the class
+        if class_id and class_id != "pending":
+            cls = get_doc("classes", class_id)
+            if cls:
+                upsert("classes", class_id, {"student_count": cls.get("student_count", 0) + 1})
         token = create_jwt(student.id, "student", 0)
         resp = make_response(jsonify({"token": token, "user": _safe(student.model_dump())}), 200)
         for k, v in _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - attempts, reset_ts).items():

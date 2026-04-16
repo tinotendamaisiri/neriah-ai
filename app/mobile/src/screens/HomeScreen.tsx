@@ -253,8 +253,12 @@ export default function HomeScreen() {
       // Only show the full loading spinner on cold start (no data yet).
       if (classes.length === 0) setLoading(true);
       load();
-      // Check Wi-Fi nudge — all gates are inside; safe to call every focus.
       checkWifiNudge();
+
+      // Poll every 30s while screen is focused — keeps student_count and
+      // homework count fresh without full-page reload.
+      const poll = setInterval(() => { load(); }, 30_000);
+      return () => clearInterval(poll);
     }, [load, checkWifiNudge]),
   );
 
