@@ -1,6 +1,7 @@
 // src/screens/OTPScreen.tsx
 // 6-digit OTP verification screen.
 // Works for both login and registration — the backend determines which based on the verification_id.
+// Shows dynamic channel message: WhatsApp (green) or SMS (teal) based on route param.
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -13,6 +14,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { verifyOtp, resendOtp } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -34,7 +36,7 @@ function formatCountdown(seconds: number): string {
 export default function OTPScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<Route>();
-  const { phone, verification_id: initialVerificationId, debug_otp } = route.params;
+  const { phone, verification_id: initialVerificationId, debug_otp, channel } = route.params;
   const { login } = useAuth();
   const { t } = useLanguage();
 
@@ -137,6 +139,22 @@ export default function OTPScreen() {
 
   const maskedPhone = maskPhone(phone);
 
+  // Channel-specific display — default to SMS if channel is undefined/null
+  const displayChannel = channel || 'sms';
+  const isWhatsApp = displayChannel === 'whatsapp';
+  const isEmail    = displayChannel === 'email';
+  const channelColor = isWhatsApp ? '#25D366' : COLORS.teal500;
+  const channelIcon  = isWhatsApp
+    ? <Ionicons name="logo-whatsapp" size={28} color="#25D366" />
+    : isEmail
+    ? <Ionicons name="mail-outline"  size={28} color={COLORS.teal500} />
+    : <Ionicons name="chatbubble-ellipses-outline" size={28} color={COLORS.teal500} />;
+  const channelLabel = isWhatsApp
+    ? t('check_your_whatsapp')
+    : isEmail
+    ? t('check_your_email')
+    : t('check_your_sms');
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -152,6 +170,14 @@ export default function OTPScreen() {
             <Text style={styles.devBannerText}>Dev OTP: {debug_otp} — tap to fill</Text>
           </TouchableOpacity>
         )}
+
+        {/* Channel icon + dynamic heading */}
+        <View style={styles.channelRow}>
+          {channelIcon}
+          <Text style={[styles.heading, { color: channelColor, marginBottom: 0 }]}>
+            {channelLabel}
+          </Text>
+        </View>
 
         <Text style={styles.heading}>{t('enter_code')}</Text>
         <Text style={styles.subheading}>
@@ -216,8 +242,9 @@ export default function OTPScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.white },
   container: { flex: 1, padding: 24, paddingTop: 60 },
-  backButton: { marginBottom: 32 },
+  backButton: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
+  channelRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   heading: { fontSize: 28, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
   subheading: { fontSize: 15, color: COLORS.gray500, lineHeight: 22, marginBottom: 32 },
   phone: { color: COLORS.text, fontWeight: '600' },

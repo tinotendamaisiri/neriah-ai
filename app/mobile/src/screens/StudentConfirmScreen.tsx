@@ -62,7 +62,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
       formData.append('answer_key_id', answer_key_id);
       formData.append('source', 'app');
 
-      images.forEach((uri, index) => {
+      (images ?? []).forEach((uri, index) => {
         formData.append('images', {
           uri,
           name: `page_${index + 1}.jpg`,

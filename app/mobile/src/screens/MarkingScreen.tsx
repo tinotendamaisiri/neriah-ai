@@ -92,7 +92,7 @@ export default function MarkingScreen() {
       setAnswerKeys(keys);
       // Pre-select answer key if navigated from HomeworkDetail
       if (routeAnswerKeyId) {
-        const preSelected = keys.find(k => k.id === routeAnswerKeyId) ?? null;
+        const preSelected = (keys ?? []).find(k => k.id === routeAnswerKeyId) ?? null;
         if (preSelected) setSelectedAnswerKey(preSelected);
       }
     } catch {

@@ -81,14 +81,17 @@ export default function StudentAnalyticsScreen({ route, navigation }: Props) {
   const myColor = myAvg >= 70 ? C.green : myAvg >= 50 ? C.amber : C.red;
 
   // Trend line data
-  const trendData = analytics.trend && analytics.trend.length > 1
-    ? analytics.trend.slice(-10)
+  const trend = analytics?.trend ?? [];
+  const trendData = trend.length > 1
+    ? trend.slice(-10)
     : null;
 
   // Rank
   const showRank = analytics.rank_enabled && analytics.student_rank != null && analytics.total_students != null;
-  const percentile = showRank
-    ? Math.round(((analytics.total_students! - analytics.student_rank!) / analytics.total_students!) * 100)
+  const totalStudents = analytics?.total_students ?? 0;
+  const studentRank = analytics?.student_rank ?? 0;
+  const percentile = showRank && totalStudents > 0
+    ? Math.round(((totalStudents - studentRank) / totalStudents) * 100)
     : null;
 
   return (
@@ -146,8 +149,8 @@ export default function StudentAnalyticsScreen({ route, navigation }: Props) {
                   (a.title ?? '').length > 6 ? (a.title ?? '').slice(0, 6) + '…' : (a.title ?? ''),
                 ),
                 datasets: [
-                  { data: analytics.per_assignment.map(a => a.student_score), color: () => C.teal },
-                  { data: analytics.per_assignment.map(a => a.class_average), color: () => C.gray },
+                  { data: analytics.per_assignment.map(a => a?.student_score ?? 0), color: () => C.teal },
+                  { data: analytics.per_assignment.map(a => a?.class_average ?? 0), color: () => C.gray },
                 ],
               }}
               width={CHART_WIDTH - 32}

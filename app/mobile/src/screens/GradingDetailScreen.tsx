@@ -111,7 +111,7 @@ export default function GradingDetailScreen() {
       };
 
       if (hasVerdicts) {
-        const parsed = verdicts.map(v => ({
+        const parsed = (verdicts ?? []).map(v => ({
           question_number: v.question_number,
           verdict: v.verdict,
           awarded_marks: parseFloat(v.awarded_marks) || 0,
@@ -191,7 +191,7 @@ export default function GradingDetailScreen() {
         {hasVerdicts ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Question Breakdown</Text>
-            {verdicts.map(v => (
+            {(verdicts ?? []).map(v => (
               <View key={v.question_number} style={styles.verdictCard}>
                 <View style={styles.verdictTop}>
                   <View style={[styles.iconCircle, { backgroundColor: verdictColor(v.verdict) }]}>

@@ -54,7 +54,7 @@ export default function StudentHomeScreen() {
   const [classPickerOpen, setClassPickerOpen] = useState(false);
 
   useEffect(() => {
-    const classes: ClassInfo[] = (user as any)?.classes ?? [];
+    const classes: ClassInfo[] = ((user as unknown as Record<string, unknown>)?.classes as ClassInfo[] ?? []);
     if (classes.length > 0) {
       setEnrolledClasses(classes);
       AsyncStorage.getItem('active_class_id').then(saved => {

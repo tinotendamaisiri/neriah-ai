@@ -120,10 +120,10 @@ export default function StudentRegisterScreen() {
   const schoolSections = useMemo(() => {
     const q = schoolQuery.trim().toLowerCase();
     const filtered = q
-      ? schools.filter(
+      ? (schools ?? []).filter(
           (s) => s.name.toLowerCase().includes(q) || s.city?.toLowerCase().includes(q),
         )
-      : schools;
+      : (schools ?? []);
     const byCity: Record<string, School[]> = {};
     filtered.forEach((s) => {
       const city = s.city || 'Other';
@@ -418,7 +418,7 @@ export default function StudentRegisterScreen() {
                       <Text style={styles.classSubject}>{cls.subject}</Text>
                     )}
                     <Text style={styles.classTeacher}>
-                      {cls.teacher.first_name} {cls.teacher.surname}
+                      {cls?.teacher?.first_name ?? 'Teacher'} {cls?.teacher?.surname ?? ''}
                       {cls.education_level ? `  ·  ${LEVEL_LABELS[cls.education_level] ?? cls.education_level}` : ''}
                     </Text>
                   </TouchableOpacity>

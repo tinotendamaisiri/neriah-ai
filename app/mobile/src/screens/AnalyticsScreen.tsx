@@ -218,7 +218,7 @@ export default function AnalyticsScreen() {
         />
       </View>
       <FlatList
-        data={data}
+        data={(data ?? []).filter(Boolean)}
         keyExtractor={(item) => item.class_id}
         renderItem={({ item }) => (
           <ClassCard

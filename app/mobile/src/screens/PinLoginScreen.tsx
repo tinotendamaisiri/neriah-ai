@@ -267,8 +267,8 @@ export default function PinLoginScreen() {
   // ── Derived display values ───────────────────────────────────────────────────
 
   const displayName = user
-    ? `${user.title ? user.title + ' ' : ''}${user.surname ?? user.first_name ?? 'back'}`.trim()
-    : 'back';
+    ? [user?.title, user?.surname ?? user?.first_name].filter(Boolean).join(' ') || 'Teacher'
+    : 'Teacher';
 
   const minutesLeft = locked
     ? Math.max(1, Math.ceil((lockUntil - Date.now()) / 60000))

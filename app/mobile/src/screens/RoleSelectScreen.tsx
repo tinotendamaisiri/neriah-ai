@@ -60,12 +60,6 @@ export default function RoleSelectScreen() {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.hint}>
-          {t('already_account')}{' '}
-          <Text style={styles.hintLink} onPress={() => navigation.navigate('Phone')}>
-            {t('sign_in')}
-          </Text>
-        </Text>
       </View>
     </SafeAreaView>
   );
@@ -98,6 +92,4 @@ const styles = StyleSheet.create({
   cardStudent: { backgroundColor: COLORS.amber300 },
   cardTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.white },
   cardSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.85)', textAlign: 'center' },
-  hint: { marginTop: 36, textAlign: 'center', fontSize: 14, color: COLORS.gray500 },
-  hintLink: { color: COLORS.teal500, fontWeight: '600' },
 });

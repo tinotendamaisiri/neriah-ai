@@ -92,7 +92,7 @@ export default function ClassManagementScreen() {
         console.log('[ClassMgmt] school results:', results);
         // Fallback: if no API results but student's own school matches, show it
         if (results.length === 0 && user) {
-          const userSchool = (user as any).school || (user as any).school_name || '';
+          const userSchool = ((user as unknown as Record<string, unknown>)?.school as string) ?? ((user as unknown as Record<string, unknown>)?.school_name as string) ?? '';
           if (userSchool && text.trim().toLowerCase().split(' ').some((w: string) => userSchool.toLowerCase().includes(w))) {
             results = [userSchool];
           }
@@ -113,7 +113,7 @@ export default function ClassManagementScreen() {
     try {
       const data = await getClassesBySchool(schoolName, '');
       console.log('[ClassMgmt] classes at', schoolName, ':', data?.length ?? 0);
-      const enrolledIds = new Set(classes.map(c => c.class_id));
+      const enrolledIds = new Set((classes ?? []).map(c => c?.class_id).filter(Boolean));
       const unenrolled = (data || []).filter((c: any) => !enrolledIds.has(c.id));
       const alreadyEnrolledCount = (data || []).length - unenrolled.length;
       setAvailableClasses(unenrolled);

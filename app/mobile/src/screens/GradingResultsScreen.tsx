@@ -116,7 +116,7 @@ export default function GradingResultsScreen() {
   const handleApproveAll = useCallback(() => {
     const pendingIds = submissions
       .filter(s => isPending(s) && s.mark_id)
-      .map(s => s.mark_id!);
+      .map(s => s.mark_id ?? '');
     if (pendingIds.length === 0) return;
     Alert.alert(
       'Approve All',
@@ -148,7 +148,7 @@ export default function GradingResultsScreen() {
   const graded = submissions.filter(isGraded);
   const pending = submissions.filter(isPending);
 
-  const gradedPcts = graded.map(s => s.max_score ? ((s.score ?? 0) / s.max_score) : 0);
+  const gradedPcts = graded.map(s => (s.max_score ?? 0) > 0 ? ((s.score ?? 0) / (s.max_score ?? 1)) : 0);
   const avgPct = gradedPcts.length > 0
     ? Math.round(gradedPcts.reduce((a, b) => a + b, 0) / gradedPcts.length * 100)
     : null;
@@ -335,7 +335,7 @@ export default function GradingResultsScreen() {
         </View>
       ) : (
         <FlatList
-          data={visibleList}
+          data={(visibleList ?? []).filter(Boolean)}
           keyExtractor={item => item.id}
           renderItem={tab === 'pending' ? renderPendingRow : renderGradedRow}
           ListHeaderComponent={listHeader}
