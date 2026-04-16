@@ -217,7 +217,7 @@ export default function StudentSettingsScreen() {
                   const { deleteStudentAccount } = await import('../services/api');
                   await deleteStudentAccount(user?.id ?? '');
                   logout();
-                } catch { Alert.alert('Error', 'Could not delete account. Contact support@neriah.africa'); }
+                } catch { Alert.alert('Error', 'Could not delete account. Contact support@neriah.ai'); }
               },
             },
           ],

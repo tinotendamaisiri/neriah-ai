@@ -48,7 +48,7 @@ const TERMS_SECTIONS: Section[] = [
   },
   {
     title: '7. Termination',
-    body: 'We reserve the right to suspend or terminate accounts that violate these terms, engage in fraudulent activity, or misuse the platform. You may delete your account at any time by contacting support@neriah.africa.',
+    body: 'We reserve the right to suspend or terminate accounts that violate these terms, engage in fraudulent activity, or misuse the platform. You may delete your account at any time by contacting support@neriah.ai.',
   },
   {
     title: '8. Limitation of Liability',
@@ -60,7 +60,7 @@ const TERMS_SECTIONS: Section[] = [
   },
   {
     title: '10. Contact',
-    body: 'For questions about these terms, contact us at:\n\nEmail: support@neriah.africa\nWebsite: neriah.africa',
+    body: 'For questions about these terms, contact us at:\n\nEmail: support@neriah.ai\nWebsite: neriah.ai',
   },
 ];
 
@@ -83,7 +83,7 @@ const PRIVACY_SECTIONS: Section[] = [
   },
   {
     title: '5. Your Rights',
-    body: '• You may request a copy of your personal data by contacting support@neriah.africa.\n• You may request account and data deletion by contacting support@neriah.africa.\n• We will acknowledge and process all requests within 48 hours.',
+    body: '• You may request a copy of your personal data by contacting support@neriah.ai.\n• You may request account and data deletion by contacting support@neriah.ai.\n• We will acknowledge and process all requests within 48 hours.',
   },
   {
     title: '6. Children',
@@ -91,7 +91,7 @@ const PRIVACY_SECTIONS: Section[] = [
   },
   {
     title: '7. Contact',
-    body: 'For privacy-related questions or data requests:\n\nEmail: privacy@neriah.africa\nWebsite: neriah.africa',
+    body: 'For privacy-related questions or data requests:\n\nEmail: privacy@neriah.ai\nWebsite: neriah.ai',
   },
 ];
 

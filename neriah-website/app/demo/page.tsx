@@ -8235,7 +8235,7 @@ function StudentSettingsWebScreen({ onBack, onResults, onClasses, studentName }:
           <div style={rowS} onClick={() => window.open('https://neriah.ai/privacy', '_blank')}>
             <span style={{ fontSize: 14, color: C.g900 }}>Privacy Policy</span><span style={{ fontSize: 18, color: C.g500 }}>›</span>
           </div>
-          <div style={rowS} onClick={() => setToast('Contact support@neriah.africa to delete your account.')}>
+          <div style={rowS} onClick={() => setToast('Contact support@neriah.ai to delete your account.')}>
             <span style={{ fontSize: 14, color: C.red, fontWeight: 600 }}>Delete Account</span><span style={{ fontSize: 18, color: C.g500 }}>›</span>
           </div>
         </div>

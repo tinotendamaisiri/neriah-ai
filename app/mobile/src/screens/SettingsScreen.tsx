@@ -186,7 +186,7 @@ export default function SettingsScreen() {
           onPress: () => {
             const subject = encodeURIComponent('Account Deletion Request');
             const body = encodeURIComponent(`Hi Neriah Support,\n\nI would like to delete my account.\n\nPhone: ${user?.phone ?? ''}`);
-            Linking.openURL(`mailto:support@neriah.africa?subject=${subject}&body=${body}`);
+            Linking.openURL(`mailto:support@neriah.ai?subject=${subject}&body=${body}`);
           },
         },
         { text: 'Cancel', style: 'cancel' },

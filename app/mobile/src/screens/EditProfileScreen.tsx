@@ -174,7 +174,7 @@ export default function EditProfileScreen() {
   const handleSchoolPress = () => {
     Alert.alert(
       'School cannot be changed',
-      'Please contact Neriah Support at support@neriah.africa to update your school.',
+      'Please contact Neriah Support at support@neriah.ai to update your school.',
       [{ text: 'OK' }],
     );
   };
