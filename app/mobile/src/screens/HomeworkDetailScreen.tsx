@@ -263,7 +263,7 @@ export default function HomeworkDetailScreen() {
         questions: updatedQuestions.map(q => ({
           number: q.number,
           question_text: q.question_text,
-          correct_answer: q.correct_answer,
+          correct_answer: (q.correct_answer || q.answer || ''),
           marks: q.marks,
           marking_notes: q.marking_notes,
         })),
@@ -539,7 +539,7 @@ export default function HomeworkDetailScreen() {
                   onPress={() => {
                     setEditingQIdx(idx);
                     setQDraftText(q.question_text ?? '');
-                    setQDraftAnswer(q.correct_answer ?? '');
+                    setQDraftAnswer((q.correct_answer || q.answer || '') ?? '');
                     setQDraftMarks(String(q.marks ?? 1));
                   }}
                   activeOpacity={0.7}
@@ -549,11 +549,11 @@ export default function HomeworkDetailScreen() {
                     {q.question_text ? (
                       <>
                         <Text style={styles.questionText} numberOfLines={0}>{q.question_text}</Text>
-                        <Text style={styles.questionAnswer} numberOfLines={0}>Answer: {q.correct_answer ?? '—'}</Text>
+                        <Text style={styles.questionAnswer} numberOfLines={0}>Answer: {(q.correct_answer || q.answer || '') ?? '—'}</Text>
                       </>
                     ) : (
                       <Text style={styles.questionAnswer} numberOfLines={0}>
-                        {q.correct_answer ? `Answer: ${q.correct_answer}` : '—'}
+                        {(q.correct_answer || q.answer || '') ? `Answer: ${(q.correct_answer || q.answer || '')}` : '—'}
                       </Text>
                     )}
                   </View>

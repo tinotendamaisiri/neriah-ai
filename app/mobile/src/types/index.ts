@@ -67,8 +67,10 @@ export interface Student {
 
 export interface Question {
   number: number;
+  question_number?: number;
   question_text?: string;
-  correct_answer: string;
+  answer?: string;
+  correct_answer?: string;
   marks: number;
   marking_notes?: string;
 }

@@ -548,6 +548,7 @@ def update_answer_key(key_id: str):
                 updates["questions"] = qs_from_file
                 updates["total_marks"] = sum(q.get("marks", 0) for q in qs_from_file)
                 updates["generated"] = True
+                updates["status"] = "draft"  # teacher must review before opening
             elif extracted_title_or_text:
                 question_paper_text = extracted_title_or_text
                 updates["question_paper_text"] = question_paper_text
@@ -557,10 +558,11 @@ def update_answer_key(key_id: str):
             scheme = generate_marking_scheme(question_paper_text, education_level,
                                              user_context=upd_user_ctx)
             qs = [_normalise_question(q, i) for i, q in enumerate(scheme.get("questions", []))]
-            if qs:  # Don't overwrite existing questions with empty Gemma output
+            if qs:
                 updates["questions"] = qs
                 updates["total_marks"] = sum(q.get("marks", 0) for q in qs)
                 updates["generated"] = True
+                updates["status"] = "draft"
                 if not key.get("title") or key.get("title") == "Auto-generated scheme":
                     updates.setdefault("title", scheme.get("title") or key.get("title"))
 
