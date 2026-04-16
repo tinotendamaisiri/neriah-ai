@@ -6945,7 +6945,7 @@ function StudentAnalyticsScreen({
       setSuggestions(res.suggestions);
     } else {
       // Fallback: map from local data
-      setSuggestions(analytics.weak_topics.map(t => ({
+      setSuggestions((analytics.weak_topics ?? []).map(t => ({
         topic: t,
         suggestion: `Before I explain ${t}, what do you already know about it? Can you describe it in your own words?`,
       })));
@@ -6954,9 +6954,9 @@ function StudentAnalyticsScreen({
     setSugShown(true);
   }
 
-  const trendData = analytics.score_trend.map(e => ({
-    name: e.homework_title.length > 8 ? e.homework_title.slice(0, 8) : e.homework_title,
-    score: e.score_pct,
+  const trendData = (analytics.score_trend ?? []).map(e => ({
+    name: (e.homework_title ?? '').length > 8 ? (e.homework_title ?? '').slice(0, 8) : (e.homework_title ?? ''),
+    score: e.score_pct ?? 0,
   }));
 
   return (

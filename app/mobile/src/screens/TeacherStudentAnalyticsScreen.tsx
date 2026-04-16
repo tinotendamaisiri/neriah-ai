@@ -81,7 +81,12 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
     );
   }
 
-  const { student, performance_over_time, strengths, weaknesses, submissions } = data;
+  // Null-safe destructure — API may return partial data for new students
+  const student = data.student ?? { name: student_name, average_score: 0, total_submissions: 0, register_number: '', first_submission_date: '' };
+  const performance_over_time = data.performance_over_time ?? [];
+  const strengths = data.strengths ?? [];
+  const weaknesses = data.weaknesses ?? [];
+  const submissions = data.submissions ?? [];
 
   // ── Performance chart ─────────────────────────────────────────────────────────
   const hasPotData = performance_over_time.length >= 2;
@@ -123,7 +128,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
   };
 
   // ── Commendations ─────────────────────────────────────────────────────────────
-  const showCommendations = student.total_submissions >= 10;
+  const showCommendations = (student.total_submissions ?? 0) >= 10;
   let commendation = '';
 
   if (showCommendations) {
@@ -139,8 +144,8 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
       commendation = `Great improvement! Score increased by ${Math.round(diff)}% over last 5 submissions`;
     } else if (student.average_score >= 80) {
       commendation = 'Excellent consistency — averaging above 80%';
-    } else if (student.average_score < 40 && weaknesses.length > 0) {
-      commendation = `Keep going — focus on ${weaknesses[0].homework_title} for improvement`;
+    } else if ((student.average_score ?? 0) < 40 && weaknesses.length > 0) {
+      commendation = `Keep going — focus on ${weaknesses[0]?.homework_title ?? 'weak areas'} for improvement`;
     } else {
       commendation = 'Good progress! Keep it up.';
     }
@@ -161,23 +166,33 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
       <View style={styles.studentCard}>
         <View style={styles.studentCardRow}>
           <View style={styles.studentCardLeft}>
-            <Text style={styles.studentCardName}>{student.name}</Text>
+            <Text style={styles.studentCardName}>{student.name || student_name}</Text>
             {student.register_number ? (
               <Text style={styles.studentCardSub}>Reg: {student.register_number}</Text>
             ) : null}
             <Text style={styles.studentCardSub}>
-              {student.total_submissions} {t('submissions_label').toLowerCase()}
+              {student.total_submissions ?? 0} {t('submissions_label').toLowerCase()}
               {student.first_submission_date
                 ? `  ·  ${t('since_label')} ${student.first_submission_date}`
                 : ''}
             </Text>
           </View>
           <View style={styles.scoreBadge}>
-            <Text style={styles.scoreBadgeValue}>{student.average_score}%</Text>
+            <Text style={styles.scoreBadgeValue}>{student.average_score ?? 0}%</Text>
             <Text style={styles.scoreBadgeLabel}>{t('avg_score')}</Text>
           </View>
         </View>
       </View>
+
+      {/* Empty state — no submissions yet */}
+      {submissions.length === 0 && performance_over_time.length === 0 && (
+        <View style={styles.noDataBox}>
+          <Text style={[styles.noDataText, { fontWeight: '700', fontSize: 15 }]}>No submissions yet</Text>
+          <Text style={[styles.noDataText, { marginTop: 4 }]}>
+            This student has not submitted any homework yet. Grades will appear here once work is marked.
+          </Text>
+        </View>
+      )}
 
       {/* Performance Over Time */}
       <Text style={styles.sectionTitle}>{t('performance_chart')}</Text>
