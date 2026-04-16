@@ -740,6 +740,7 @@ export default function TeacherAssistantScreen() {
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
             <AvatarWithStatus
+              variant="light"
               initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}
               onPress={() => navigation.navigate('Settings' as any)}
               size={36}

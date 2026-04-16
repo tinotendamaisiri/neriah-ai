@@ -114,6 +114,7 @@ export default function StudentResultsScreen() {
           </Text>
         </View>
         <AvatarWithStatus
+              variant="light"
           initial={(user?.first_name ?? 'S')[0].toUpperCase()}
           onPress={() => (navigation as any).navigate('StudentSettings')}
         />

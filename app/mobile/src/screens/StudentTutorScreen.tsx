@@ -444,6 +444,7 @@ export default function StudentTutorScreen() {
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah</Text>
             <AvatarWithStatus
+              variant="light"
               initial={firstName[0].toUpperCase()}
               onPress={() => (navigation as any).navigate('StudentSettings')}
             />

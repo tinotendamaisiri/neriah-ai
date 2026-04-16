@@ -10,25 +10,28 @@ interface Props {
   initial: string;
   onPress: () => void;
   size?: number;
+  /** Use 'light' on teal headers, 'solid' on white headers (default). */
+  variant?: 'solid' | 'light';
 }
 
-export default function AvatarWithStatus({ initial, onPress, size = 42 }: Props) {
+export default function AvatarWithStatus({ initial, onPress, size = 42, variant = 'solid' }: Props) {
   const radius = size / 2;
+  const bg = variant === 'light' ? 'rgba(255,255,255,0.2)' : '#0D7377';
+  const dotBorder = variant === 'light' ? '#0D7377' : '#FFFFFF';
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.avatar, { width: size, height: size, borderRadius: radius }]}
+      style={[styles.avatar, { width: size, height: size, borderRadius: radius, backgroundColor: bg }]}
       activeOpacity={0.7}
     >
-      <Text style={[styles.initial, { fontSize: size * 0.42 }]}>{initial}</Text>
-      <AIStatusDot />
+      <Text style={[styles.initial, { fontSize: size * 0.42 }]}>{initial || 'T'}</Text>
+      <AIStatusDot borderColor={dotBorder} />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   avatar: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },

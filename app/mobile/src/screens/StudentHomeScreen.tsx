@@ -171,6 +171,7 @@ export default function StudentHomeScreen() {
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
           <AvatarWithStatus
+              variant="light"
             initial={firstName[0].toUpperCase()}
             onPress={() => navigation.navigate('StudentSettings' as any)}
           />

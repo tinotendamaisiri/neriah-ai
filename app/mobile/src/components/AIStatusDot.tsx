@@ -12,16 +12,15 @@ import { View, StyleSheet } from 'react-native';
 import { useAIRouter } from '../services/router';
 import { useModel } from '../context/ModelContext';
 
-export default function AIStatusDot() {
+export default function AIStatusDot({ borderColor = '#0D7377' }: { borderColor?: string }) {
   const { isOnline } = useAIRouter();
   const { status: modelStatus } = useModel();
   const modelReady = modelStatus === 'done';
 
-  // Tri-state: green online, amber offline+model, red offline+no-model
   const color = isOnline ? '#22C55E' : modelReady ? '#F5A623' : '#EF4444';
 
   return (
-    <View style={[styles.dot, { backgroundColor: color }]} />
+    <View style={[styles.dot, { backgroundColor: color, borderColor }]} />
   );
 }
 
@@ -34,6 +33,5 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: '#0D7377', // matches teal header background
   },
 });
