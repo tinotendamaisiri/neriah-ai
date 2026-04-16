@@ -335,6 +335,10 @@ def _build_rag_context(
     Retrieve relevant syllabus chunks (and optionally verified gradings) from
     the vector DB using the user's profile as automatic filters.
 
+    Filters by curriculum, subject, and education_level (normalized to
+    syllabus tier via map_education_level). Falls back gracefully when
+    filters are too narrow.
+
     Returns a formatted prompt section string, or "" if nothing found / on error.
     Never raises.
     """
@@ -342,6 +346,15 @@ def _build_rag_context(
         return ""
     try:
         from shared.vector_db import search_with_user_context  # noqa: PLC0415
+
+        curriculum = user_context.get("curriculum", "")
+        subject = user_context.get("subject", "")
+        edu_level = user_context.get("education_level", "")
+
+        logger.info(
+            "[rag] Building context: curriculum=%s subject=%s level=%s query=%.60s",
+            curriculum or "-", subject or "-", edu_level or "-", query_text[:60],
+        )
 
         syllabus_hits = search_with_user_context(
             "syllabuses", query_text, user_context, top_k=3,
@@ -354,23 +367,34 @@ def _build_rag_context(
             )
 
         if not syllabus_hits and not grading_hits:
+            logger.info("[rag] No RAG context found for %s/%s/%s", curriculum, subject, edu_level)
             return ""
 
-        lines: list[str] = ["\n--- CURRICULUM CONTEXT (use to calibrate marking) ---"]
+        # Dynamic header reflecting actual curriculum/subject/level
+        header_parts = [p for p in [curriculum.upper(), edu_level.upper().replace("_", " "), subject.upper()] if p]
+        header = " ".join(header_parts) if header_parts else "CURRICULUM"
+
+        lines: list[str] = [f"\n--- {header} SYLLABUS CONTEXT ---"]
         for hit in syllabus_hits:
             snippet = hit["text"][:400].strip().replace("\n", " ")
+            source = hit.get("metadata", {}).get("source_file", "")
             lines.append(f"• {snippet}")
+            if source:
+                logger.debug("[rag] Syllabus chunk from: %s", source)
 
         if grading_hits:
-            lines.append("\n--- SIMILAR TEACHER-VERIFIED GRADINGS ---")
+            lines.append(f"\n--- TEACHER-VERIFIED GRADINGS ({header}) ---")
             for hit in grading_hits:
                 snippet = hit["text"][:300].strip().replace("\n", " ")
                 lines.append(f"• {snippet}")
 
-        lines.append("--- END OF CONTEXT ---\n")
+        lines.append("--- END SYLLABUS CONTEXT ---\n")
         result = "\n".join(lines)
-        logger.info("RAG context injected: %d chars (%d syllabus + %d grading hits)",
-                    len(result), len(syllabus_hits), len(grading_hits))
+        logger.info(
+            "[rag] Context injected: %d chars (%d syllabus + %d grading hits) for %s/%s/%s",
+            len(result), len(syllabus_hits), len(grading_hits),
+            curriculum or "-", subject or "-", edu_level or "-",
+        )
         return result
 
     except Exception:
@@ -812,6 +836,10 @@ def student_tutor(
         curriculum_note = (
             "\n\nCURRICULUM REFERENCE (your student's actual syllabus — "
             "use this to give curriculum-aligned hints):\n" + rag_section
+            + "\nIMPORTANT: If the student asks about a topic NOT covered in the "
+            "syllabus context above, say: \"That topic is not in your current syllabus. "
+            "Let's focus on what you're studying right now.\" Do not answer freely about "
+            "topics outside the syllabus scope."
         )
 
     weakness_note = ""

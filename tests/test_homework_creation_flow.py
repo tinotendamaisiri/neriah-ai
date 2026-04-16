@@ -7433,7 +7433,7 @@ class TestRAGPipelineAudit:
             from shared.gemma_client import _build_rag_context
             result = _build_rag_context("quadratic equations", {"subject": "Mathematics", "education_level": "Form 2"})
 
-        assert "CURRICULUM CONTEXT" in result
+        assert "SYLLABUS CONTEXT" in result
         assert "quadratic equations" in result
 
     @feature_test("search_returns_empty_when_firestore_fails")
