@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { useRoute, useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { listStudents, listAnswerKeys, submitMark } from '../services/api';
 import {
   resolveRoute,
@@ -65,6 +66,8 @@ export default function MarkingScreen() {
   // Modal state for pickers
   const [studentPickerVisible, setStudentPickerVisible] = useState(false);
   const [answerKeyPickerVisible, setAnswerKeyPickerVisible] = useState(false);
+  const [questionsModalVisible, setQuestionsModalVisible] = useState(false);
+  const [validationError, setValidationError] = useState('');
 
   const classId = routeClassId;
   const className = routeClassName ?? 'Select class';
@@ -211,11 +214,27 @@ export default function MarkingScreen() {
       ) : loadingData ? (
         <ActivityIndicator style={styles.centre} size="large" color={COLORS.teal500} />
       ) : (
-        <>
-          {/* Student picker */}
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+          {/* 1. QUESTIONS (top — teacher reviews questions first) */}
+          <TouchableOpacity
+            style={styles.selector}
+            onPress={() => selectedAnswerKey ? setQuestionsModalVisible(true) : setAnswerKeyPickerVisible(true)}
+          >
+            <Text style={styles.selectorLabel}>Questions</Text>
+            <Text style={styles.selectorValue}>
+              {selectedAnswerKey
+                ? `${selectedAnswerKey.questions?.length ?? 0} questions · ${selectedAnswerKey.total_marks ?? 0} marks`
+                : 'Select answer key to view'}
+            </Text>
+            {selectedAnswerKey && (
+              <Text style={{ fontSize: 12, color: COLORS.teal500, fontWeight: '600', marginTop: 4 }}>Tap to view questions →</Text>
+            )}
+          </TouchableOpacity>
+
+          {/* 2. STUDENT (select who you're marking) */}
           <TouchableOpacity
             style={[styles.selector, !selectedStudent && styles.selectorRequired]}
-            onPress={() => setStudentPickerVisible(true)}
+            onPress={() => { setValidationError(''); setStudentPickerVisible(true); }}
           >
             <Text style={styles.selectorLabel}>Student</Text>
             <Text style={styles.selectorValue}>
@@ -225,7 +244,7 @@ export default function MarkingScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* Answer key picker */}
+          {/* 3. ANSWER KEY (marking scheme) */}
           <TouchableOpacity
             style={[styles.selector, !selectedAnswerKey && styles.selectorRequired]}
             onPress={() => setAnswerKeyPickerVisible(true)}
@@ -238,18 +257,49 @@ export default function MarkingScreen() {
             </Text>
           </TouchableOpacity>
 
+          {/* Validation error */}
+          {validationError ? (
+            <View style={{ marginHorizontal: 20, marginTop: 8, backgroundColor: '#FEF2F2', borderRadius: 8, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="alert-circle" size={18} color={COLORS.error} />
+              <Text style={{ color: COLORS.error, fontSize: 13, fontWeight: '500', flex: 1 }}>{validationError}</Text>
+            </View>
+          ) : null}
+
+          {/* Camera / capture button */}
           {marking ? (
             <View style={styles.centre}>
               <ActivityIndicator size="large" color={COLORS.teal500} />
               <Text style={styles.markingText}>Marking...</Text>
             </View>
           ) : (
+            <TouchableOpacity
+              style={[styles.captureBtn, (!selectedStudent || !selectedAnswerKey) && { opacity: 0.5 }]}
+              onPress={() => {
+                if (!selectedStudent) {
+                  setValidationError('Please select a student first');
+                  return;
+                }
+                if (!selectedAnswerKey) {
+                  setValidationError('Please select an answer key first');
+                  return;
+                }
+                setValidationError('');
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="camera" size={22} color={COLORS.white} />
+              <Text style={styles.captureBtnText}>Take Picture</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* ScanButton hidden — only triggered after validation passes */}
+          {selectedStudent && selectedAnswerKey && !marking && (
             <ScanButton
               onCapture={handleCapture}
-              disabled={!selectedStudent || !selectedAnswerKey}
+              disabled={false}
             />
           )}
-        </>
+        </ScrollView>
       )}
 
       {/* Student picker modal */}
@@ -283,6 +333,42 @@ export default function MarkingScreen() {
           setAnswerKeyPickerVisible(false);
         }}
       />
+
+      {/* Questions modal */}
+      <Modal visible={questionsModalVisible} animationType="slide" onRequestClose={() => setQuestionsModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: COLORS.white }}>
+          <View style={[modal.header, { paddingTop: 56 }]}>
+            <Text style={modal.title}>Questions</Text>
+            <TouchableOpacity onPress={() => setQuestionsModalVisible(false)}>
+              <Text style={modal.close}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          {selectedAnswerKey?.question_paper_text ? (
+            <ScrollView style={{ padding: 20 }}>
+              <Text style={{ fontSize: 15, color: COLORS.text, lineHeight: 22 }}>{selectedAnswerKey.question_paper_text}</Text>
+            </ScrollView>
+          ) : (selectedAnswerKey?.questions ?? []).length > 0 ? (
+            <FlatList
+              data={selectedAnswerKey?.questions ?? []}
+              keyExtractor={(_, i) => String(i)}
+              contentContainerStyle={{ padding: 20 }}
+              renderItem={({ item: q }) => (
+                <View style={{ marginBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.background, paddingBottom: 12 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.text }}>Q{q.question_number ?? q.number}: {q.question_text ?? ''}</Text>
+                  <Text style={{ fontSize: 13, color: COLORS.gray500, marginTop: 4 }}>Answer: {q.answer ?? q.correct_answer ?? ''}</Text>
+                  <Text style={{ fontSize: 12, color: COLORS.teal500, marginTop: 2 }}>{q.marks ?? q.max_marks ?? 0} marks</Text>
+                </View>
+              )}
+            />
+          ) : (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+              <Ionicons name="document-text-outline" size={48} color={COLORS.gray200} />
+              <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginTop: 12 }}>No question paper</Text>
+              <Text style={{ fontSize: 13, color: COLORS.gray500, marginTop: 4, textAlign: 'center' }}>The question paper hasn't been uploaded yet.</Text>
+            </View>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -352,6 +438,12 @@ const styles = StyleSheet.create({
   selectorLabel: { fontSize: 11, color: COLORS.textLight, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
   selectorValue: { fontSize: 15, color: COLORS.text },
   markingText: { marginTop: 12, fontSize: 16, color: COLORS.gray500 },
+  captureBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: COLORS.teal500, marginHorizontal: 20, marginTop: 20,
+    borderRadius: 12, paddingVertical: 16,
+  },
+  captureBtnText: { color: COLORS.white, fontSize: 16, fontWeight: '700' },
   nextButton: {
     backgroundColor: COLORS.teal500, margin: 16, borderRadius: 10,
     padding: 16, alignItems: 'center',
