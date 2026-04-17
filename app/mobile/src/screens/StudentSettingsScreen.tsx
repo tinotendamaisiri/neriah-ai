@@ -39,9 +39,18 @@ type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
 function SmoothProgress({ progress, paused }: { progress: number; paused: boolean }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const [displayPct, setDisplayPct] = useState(Math.round(progress));
+  const lastUpdate = useRef(0);
+
   useEffect(() => {
-    Animated.timing(anim, { toValue: progress, duration: 800, useNativeDriver: false }).start();
+    Animated.timing(anim, { toValue: progress, duration: 1000, useNativeDriver: false }).start();
+    const now = Date.now();
+    if (now - lastUpdate.current > 1000 || progress >= 100 || progress === 0) {
+      setDisplayPct(Math.round(progress));
+      lastUpdate.current = now;
+    }
   }, [progress]);
+
   const w = anim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' });
   return (
     <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
@@ -49,7 +58,7 @@ function SmoothProgress({ progress, paused }: { progress: number; paused: boolea
         <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: paused ? COLORS.amber300 : COLORS.teal500, width: w }} />
       </View>
       <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
-        {paused ? `Paused — ${progress}% complete` : `Downloading — ${progress}% complete`}
+        {paused ? `Paused — ${displayPct}% complete` : `Downloading — ${displayPct}% complete`}
       </Text>
     </View>
   );
