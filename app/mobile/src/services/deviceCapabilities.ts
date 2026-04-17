@@ -53,6 +53,8 @@ export async function detectCapability(): Promise<DeviceCapability> {
  * Always re-detects — never skips based on cached values.
  */
 export async function detectAndStoreCapability(): Promise<DeviceCapability> {
+  // Clear any stale cached value — always re-detect fresh
+  try { await SecureStore.deleteItemAsync(CAPABILITY_STORE_KEY); } catch {}
 
   // ── Web platform — always cloud-only ──────────────────────────────────────
   if (Platform.OS === 'web') {
