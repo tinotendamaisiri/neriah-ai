@@ -90,8 +90,13 @@ export async function detectAndStoreCapability(): Promise<DeviceCapability> {
     const freeBytes = await FileSystem.getFreeDiskStorageAsync();
     freeStorageGB = bytesToGB(freeBytes);
   } catch {
-    // API unavailable in some environments; treat as 0 (conservative)
     freeStorageGB = 0;
+  }
+  // If API returned 0 (deprecated API on Expo 54+ returns 0), don't block —
+  // the OS will reject the download if there's truly no space.
+  if (freeStorageGB <= 0) {
+    console.log('[deviceCapabilities] Free storage API returned 0 — assuming sufficient storage');
+    freeStorageGB = 10; // assume capable; OS handles actual storage errors
   }
 
   const capability = classify(ramGB, freeStorageGB);
