@@ -259,38 +259,21 @@ export default function MarkingScreen() {
             </View>
           ) : null}
 
-          {/* Camera / capture button */}
+          {/* Capture button */}
           {marking ? (
             <View style={styles.centre}>
               <ActivityIndicator size="large" color={COLORS.teal500} />
               <Text style={styles.markingText}>Marking...</Text>
             </View>
           ) : (
-            <TouchableOpacity
-              style={[styles.captureBtn, (!selectedStudent || !selectedAnswerKey) && { opacity: 0.5 }]}
-              onPress={() => {
-                if (!selectedStudent) {
-                  setValidationError('Please select a student first');
-                  return;
-                }
-                if (!selectedAnswerKey) {
-                  setValidationError('Please select an answer key first');
-                  return;
-                }
-                setValidationError('');
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="camera" size={22} color={COLORS.white} />
-              <Text style={styles.captureBtnText}>Take Picture</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* ScanButton hidden — only triggered after validation passes */}
-          {selectedStudent && selectedAnswerKey && !marking && (
             <ScanButton
               onCapture={handleCapture}
-              disabled={false}
+              disabled={!selectedStudent || !selectedAnswerKey}
+              label="Capture Homework"
+              onDisabledPress={() => {
+                if (!selectedStudent) setValidationError('Please select a student first');
+                else if (!selectedAnswerKey) setValidationError('Please select an answer key first');
+              }}
             />
           )}
         </ScrollView>
