@@ -31,7 +31,10 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 function DownloadProgress({ progress, paused }: { progress: number; paused: boolean }) {
   const animWidth = useRef(new Animated.Value(0)).current;
   const [displayPct, setDisplayPct] = useState(Math.round(progress));
+  const [stalled, setStalled] = useState(false);
   const lastUpdate = useRef(0);
+  const lastProgress = useRef(progress);
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     Animated.timing(animWidth, {
@@ -39,13 +42,29 @@ function DownloadProgress({ progress, paused }: { progress: number; paused: bool
       duration: 1000,
       useNativeDriver: false,
     }).start();
-    // Throttle text updates to once per second
+
     const now = Date.now();
     if (now - lastUpdate.current > 1000 || progress >= 100 || progress === 0) {
       setDisplayPct(Math.round(progress));
       lastUpdate.current = now;
     }
+
+    // Detect stall: if progress hasn't changed for 5 seconds, show paused
+    if (progress !== lastProgress.current) {
+      lastProgress.current = progress;
+      setStalled(false);
+      if (stallTimer.current) clearTimeout(stallTimer.current);
+      stallTimer.current = setTimeout(() => setStalled(true), 5000);
+    }
+
+    return () => { if (stallTimer.current) clearTimeout(stallTimer.current); };
   }, [progress]);
+
+  const isPaused = paused || stalled;
+  const barColor = isPaused ? '#F59E0B' : COLORS.teal500;
+  const label = isPaused
+    ? `Paused — ${displayPct}% complete. Will resume when connected.`
+    : `Downloading — ${displayPct}% complete`;
 
   const widthInterp = animWidth.interpolate({
     inputRange: [0, 100],
@@ -55,10 +74,10 @@ function DownloadProgress({ progress, paused }: { progress: number; paused: bool
   return (
     <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
       <View style={{ height: 6, backgroundColor: COLORS.gray200, borderRadius: 3, overflow: 'hidden' }}>
-        <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: paused ? COLORS.amber300 : COLORS.teal500, width: widthInterp }} />
+        <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: barColor, width: widthInterp }} />
       </View>
-      <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
-        {paused ? `Paused — ${displayPct}% complete` : `Downloading — ${displayPct}% complete`}
+      <Text style={{ fontSize: 12, color: isPaused ? '#F59E0B' : COLORS.gray500, marginTop: 6 }}>
+        {label}
       </Text>
     </View>
   );
