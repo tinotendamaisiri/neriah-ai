@@ -1,0 +1,13 @@
+*.task
+app/
+backend/
+functions/
+shared/
+tests/
+scripts/
+docs/
+infra/
+*.py
+__pycache__/
+.venv/
+*.pyc

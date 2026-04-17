@@ -16,3 +16,8 @@ credentials.json
 # React Native / Expo
 node_modules/
 .expo/
+.vercel
+
+# AI model files (downloaded at runtime, not bundled)
+*.task
+app/mobile/assets/models/
