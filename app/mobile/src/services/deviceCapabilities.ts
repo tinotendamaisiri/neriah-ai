@@ -41,24 +41,18 @@ function isValidCapability(value: string | null): value is DeviceCapability {
 }
 
 /**
- * Run on first launch only. Reads device RAM via expo-device and free storage
- * via expo-file-system, classifies the device, and persists the result to
- * SecureStore under "device_capability".
- *
- * If a stored result already exists it is returned immediately without
- * re-checking hardware — subsequent launches skip the check entirely.
+ * Detect device capability at runtime. Always re-checks hardware —
+ * never returns stale cached values.
+ */
+export async function detectCapability(): Promise<DeviceCapability> {
+  return detectAndStoreCapability();
+}
+
+/**
+ * Reads device RAM and free storage, classifies the device, and persists.
+ * Always re-detects — never skips based on cached values.
  */
 export async function detectAndStoreCapability(): Promise<DeviceCapability> {
-  // ── Already stored — skip hardware check ─────────────────────────────────
-  try {
-    const stored = await SecureStore.getItemAsync(CAPABILITY_STORE_KEY);
-    if (isValidCapability(stored)) {
-      console.log('[deviceCapabilities] cached result:', stored);
-      return stored;
-    }
-  } catch {
-    // SecureStore unavailable (e.g. test environment) — fall through to detect
-  }
 
   // ── Web platform — always cloud-only ──────────────────────────────────────
   if (Platform.OS === 'web') {

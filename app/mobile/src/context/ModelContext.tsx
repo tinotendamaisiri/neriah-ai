@@ -32,7 +32,6 @@ import * as SecureStore from 'expo-secure-store';
 
 import {
   detectCapability,
-  getStoredCapability,
   type DeviceCapability,
 } from '../services/deviceCapabilities';
 
@@ -230,7 +229,7 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
   const initPrompt = useCallback(async () => {
     if (Platform.OS === 'web') return;
 
-    const cap = await getStoredCapability();
+    const cap = await detectCapability();
     if (!cap) return;
 
     setCapability(cap);
@@ -371,7 +370,7 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     if (nudgeSuppressedRef.current) return;
 
     // Device must be on-device-capable
-    const cap = await getStoredCapability();
+    const cap = await detectCapability();
     if (!cap || cap === 'cloud-only') return;
 
     // Model must not already be on disk
