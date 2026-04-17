@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
+  Animated, View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
   Modal, TextInput, ActivityIndicator, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
@@ -36,6 +36,24 @@ const LANGUAGES: Array<{ code: LangCode; label: string }> = [
 ];
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
+
+function SmoothProgress({ progress, paused }: { progress: number; paused: boolean }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, { toValue: progress, duration: 800, useNativeDriver: false }).start();
+  }, [progress]);
+  const w = anim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' });
+  return (
+    <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+      <View style={{ height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' }}>
+        <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: paused ? COLORS.amber300 : COLORS.teal500, width: w }} />
+      </View>
+      <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
+        {paused ? `Paused — ${progress}% complete` : `Downloading — ${progress}% complete`}
+      </Text>
+    </View>
+  );
+}
 
 export default function StudentSettingsScreen() {
   const navigation = useNavigation<Nav>();
@@ -365,12 +383,7 @@ export default function StudentSettingsScreen() {
             />
           </View>
           {(modelStatus === 'downloading' || modelStatus === 'paused') && (
-            <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-              <View style={s.progressTrack}><View style={[s.progressFill, { width: `${modelProgress}%` as any }]} /></View>
-              <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
-                {modelStatus === 'paused' ? `Paused — ${modelProgress}% complete` : `Downloading — ${modelProgress}% complete`}
-              </Text>
-            </View>
+            <SmoothProgress progress={modelProgress} paused={modelStatus === 'paused'} />
           )}
           {modelStatus === 'done' && (
             <View style={{ paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>

@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
+  Animated, View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Linking,
   Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
@@ -27,6 +27,32 @@ const LANGUAGES: Array<{ code: LangCode; label: string }> = [
 ];
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+function DownloadProgress({ progress, paused }: { progress: number; paused: boolean }) {
+  const animWidth = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(animWidth, {
+      toValue: progress,
+      duration: 800,
+      useNativeDriver: false,
+    }).start();
+  }, [progress]);
+  const widthInterp = animWidth.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+  return (
+    <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+      <View style={{ height: 6, backgroundColor: COLORS.gray200, borderRadius: 3, overflow: 'hidden' }}>
+        <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: paused ? COLORS.amber300 : COLORS.teal500, width: widthInterp }} />
+      </View>
+      <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
+        {paused ? `Paused — ${progress}% complete` : `Downloading — ${progress}% complete`}
+      </Text>
+    </View>
+  );
+}
 
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
@@ -313,16 +339,7 @@ export default function SettingsScreen() {
 
           {/* Progress — visible during download */}
           {(modelStatus === 'downloading' || modelStatus === 'paused') && (
-            <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${modelProgress}%` as any }]} />
-              </View>
-              <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 6 }}>
-                {modelStatus === 'paused'
-                  ? `Paused — ${modelProgress}% complete`
-                  : `Downloading — ${modelProgress}% complete`}
-              </Text>
-            </View>
+            <DownloadProgress progress={modelProgress} paused={modelStatus === 'paused'} />
           )}
 
           {/* Ready state */}
