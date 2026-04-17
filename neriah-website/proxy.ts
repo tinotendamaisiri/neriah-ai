@@ -54,3 +54,4 @@ export async function proxy(req: NextRequest) {
 export const config = {
   matcher: ['/studio/:path*', '/demo', '/demo/:path*'],
 }
+export default proxy
