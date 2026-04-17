@@ -160,6 +160,23 @@ def approve_submission(sub_id: str):
     # Update student weakness/strength profile (fire and forget — never blocks)
     update_student_weaknesses(sub.get("student_id", ""), approved_sub)
 
+    # Notify student that their grade is ready
+    student_id = sub.get("student_id", "")
+    if student_id:
+        try:
+            from functions.push import send_student_notification
+            hw_title = hw.get("title") or hw.get("subject") or "Homework"
+            score = sub.get("score", 0)
+            max_score = sub.get("max_score", 0)
+            send_student_notification(
+                student_id,
+                "Grade Ready",
+                f"Your {hw_title} has been graded: {score}/{max_score}",
+                {"screen": "StudentResults", "mark_id": mark_id},
+            )
+        except Exception:
+            logger.warning("Student grade notification failed (non-fatal)")
+
     return jsonify({"message": "approved", "submission_id": sub_id}), 200
 
 

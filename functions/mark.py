@@ -219,7 +219,22 @@ def mark():
         tokens_used=len(verdicts_dicts) * 10, latency_ms=_latency_ms, blocked=False,
     )
 
-    # ── 7. Return result ──────────────────────────────────────────────────────
+    # ── 7. Notify student ──────────────────────────────────────────────────────
+    try:
+        from functions.push import send_student_notification
+        student_doc = get_doc("students", student_id)
+        student_name = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "Student"
+        hw_title = answer_key.get("title") or answer_key.get("subject") or "Assignment"
+        send_student_notification(
+            student_id,
+            "Your work has been marked",
+            f"{hw_title}: {score}/{max_score} ({percentage}%)",
+            {"screen": "StudentResults", "mark_id": mark_doc.id},
+        )
+    except Exception:
+        pass  # non-fatal
+
+    # ── 8. Return result ──────────────────────────────────────────────────────
     return jsonify({
         "mark_id": mark_doc.id,
         "score": score,

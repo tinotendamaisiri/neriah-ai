@@ -34,28 +34,20 @@ def register_push_token():
     return jsonify({"message": "registered"}), 200
 
 
-def send_teacher_notification(
-    teacher_id: str,
-    title: str,
-    body: str,
-    data: dict | None = None,
-) -> bool:
+def _send_to_user(user_id: str, title: str, body: str, data: dict | None = None) -> bool:
     """
-    Send an Expo push notification to a teacher by their Firestore user ID.
+    Send an Expo push notification to any user (teacher or student) by Firestore ID.
     Looks up the token in the 'push_tokens' collection.
-    Returns True if the notification was dispatched, False otherwise.
-
-    ``data`` is an optional dict included in the notification payload so the
-    app can deep-link directly to the relevant screen on tap.
+    Returns True if dispatched, False otherwise. Never raises.
     """
-    token_doc = get_doc("push_tokens", teacher_id)
+    token_doc = get_doc("push_tokens", user_id)
     if not token_doc:
-        logger.info("No push token registered for teacher %s — skipping notification", teacher_id)
+        logger.info("No push token for user %s — skipping notification", user_id)
         return False
 
     token = token_doc.get("token", "")
     if not token.startswith("ExponentPushToken"):
-        logger.warning("Unrecognised push token format for teacher %s: %r", teacher_id, token[:30])
+        logger.warning("Bad push token for user %s: %r", user_id, token[:30])
         return False
 
     payload: dict = {"to": token, "title": title, "body": body, "sound": "default"}
@@ -65,8 +57,33 @@ def send_teacher_notification(
     try:
         resp = http.post(_EXPO_PUSH_URL, json=payload, timeout=10)
         resp.raise_for_status()
-        logger.info("Push notification sent to teacher %s", teacher_id)
+        logger.info("Push sent to %s: %s", user_id, title)
         return True
     except Exception:
-        logger.exception("Failed to send push notification to teacher %s", teacher_id)
+        logger.exception("Push failed for %s", user_id)
         return False
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+def send_teacher_notification(teacher_id: str, title: str, body: str, data: dict | None = None) -> bool:
+    """Send push notification to a teacher."""
+    return _send_to_user(teacher_id, title, body, data)
+
+
+def send_student_notification(student_id: str, title: str, body: str, data: dict | None = None) -> bool:
+    """Send push notification to a student."""
+    return _send_to_user(student_id, title, body, data)
+
+
+def notify_class_students(class_id: str, title: str, body: str, data: dict | None = None) -> int:
+    """Send push notification to ALL students in a class. Returns count sent."""
+    from shared.firestore_client import query
+    students = query("students", [("class_id", "==", class_id)])
+    sent = 0
+    for s in students:
+        sid = s.get("id", "")
+        if sid and _send_to_user(sid, title, body, data):
+            sent += 1
+    logger.info("Notified %d/%d students in class %s: %s", sent, len(students), class_id, title)
+    return sent

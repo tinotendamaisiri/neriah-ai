@@ -1044,6 +1044,22 @@ def auth_student_join_class():
     # Atomic increment — avoids read-then-write race condition
     increment_field("classes", cls["id"], "student_count", 1)
 
+    # Notify the teacher that a new student joined
+    teacher_id_cls = cls.get("teacher_id", "")
+    if teacher_id_cls:
+        try:
+            from functions.push import send_teacher_notification
+            student_doc = get_doc("students", student_id)
+            sname = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "A student"
+            send_teacher_notification(
+                teacher_id_cls,
+                "New Student",
+                f"{sname} joined {cls.get('name', 'your class')}",
+                {"screen": "ClassDetail", "class_id": cls["id"]},
+            )
+        except Exception:
+            pass  # non-fatal
+
     logger.info("[auth] student/%s joined class %s (%s)", student_id, cls["id"], cls.get("name"))
     return jsonify({
         "success": True,

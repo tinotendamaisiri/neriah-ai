@@ -483,6 +483,20 @@ def create_answer_key():
     if qp_image_url:
         doc["qp_image_url"] = qp_image_url
     upsert("answer_keys", key.id, doc)
+
+    # Notify students if homework is open for submission
+    if open_for_submission and class_id:
+        try:
+            from functions.push import notify_class_students
+            notify_class_students(
+                class_id,
+                "New Homework",
+                f"{title or subject or 'New assignment'} is ready — submit your work now.",
+                {"screen": "StudentHome", "homework_id": key.id},
+            )
+        except Exception:
+            logger.warning("Student notification failed (non-fatal)")
+
     return jsonify(doc), 201
 
 
@@ -605,6 +619,25 @@ def update_answer_key(key_id: str):
         _fill_empty_question_texts(updates["questions"], qp)
 
     upsert("answer_keys", key_id, updates)
+
+    # Notify students if homework was just opened for submission
+    was_open = key.get("open_for_submission", False)
+    now_open = updates.get("open_for_submission", was_open)
+    if now_open and not was_open:
+        cid = key.get("class_id", "")
+        if cid:
+            try:
+                from functions.push import notify_class_students
+                hw_title = updates.get("title") or key.get("title") or key.get("subject") or "Homework"
+                notify_class_students(
+                    cid,
+                    "New Homework",
+                    f"{hw_title} is now open — submit your work.",
+                    {"screen": "StudentHome", "homework_id": key_id},
+                )
+            except Exception:
+                logger.warning("Student notification on open failed (non-fatal)")
+
     return jsonify({**key, **updates}), 200
 
 
