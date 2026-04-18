@@ -1,0 +1,26 @@
+name: Keep Services Alive
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
+    - cron: '0 9 * * 4'  # Every Thursday at 9am UTC
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping neriah.ai
+        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai
+
+      - name: Ping neriah.ai/blog
+        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/blog
+
+      - name: Ping neriah.ai/pricing
+        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/pricing
+
+      - name: Ping Supabase health
+        run: curl -s -o /dev/null -w "%{http_code}" https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/
+
+      - name: Done
+        run: echo "Keep-alive pings sent successfully"
