@@ -213,7 +213,7 @@ function SkeletonRow({ width = '100%', height = 56 }: { width?: string | number;
 }
 
 // ── Demo API ──────────────────────────────────────────────────────────────────
-export const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
+const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
 
 async function demoFetch(path: string, opts: RequestInit = {}, token?: string | null) {
   try {
