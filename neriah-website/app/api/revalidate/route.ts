@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     if (_type === 'foundationUpdate') {
       revalidatePath('/foundation')
       revalidatePath('/')
-      revalidateTag('foundation', {})
+      revalidateTag('foundation')
     }
 
     return NextResponse.json({ revalidated: true, timestamp: Date.now() })
