@@ -1,5 +1,5 @@
 import { sanityPublicClient } from './client'
-import type { Post } from '@/types/sanity'
+import type { Post, FoundationUpdate } from '@/types/sanity'
 
 // ── Blog Posts ────────────────────────────────────────────
 
