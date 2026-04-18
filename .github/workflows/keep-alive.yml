@@ -11,16 +11,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping neriah.ai
-        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai
+        id: ping_home
+        continue-on-error: true
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://neriah.ai)
+          echo "https://neriah.ai -> $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
       - name: Ping neriah.ai/blog
-        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/blog
+        id: ping_blog
+        continue-on-error: true
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/blog)
+          echo "https://neriah.ai/blog -> $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
       - name: Ping neriah.ai/pricing
-        run: curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/pricing
+        id: ping_pricing
+        continue-on-error: true
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/pricing)
+          echo "https://neriah.ai/pricing -> $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
-      - name: Ping Supabase health
-        run: curl -s -o /dev/null -w "%{http_code}" https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/
+      - name: Ping neriah.ai/demo
+        id: ping_demo
+        continue-on-error: true
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://neriah.ai/demo)
+          echo "https://neriah.ai/demo -> $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
-      - name: Done
-        run: echo "Keep-alive pings sent successfully"
+      - name: Ping Supabase REST
+        id: ping_supabase
+        continue-on-error: true
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/)
+          echo "https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/ -> $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "=== Keep-alive ping summary ==="
+          echo "https://neriah.ai                                  -> ${{ steps.ping_home.outputs.status }}"
+          echo "https://neriah.ai/blog                             -> ${{ steps.ping_blog.outputs.status }}"
+          echo "https://neriah.ai/pricing                          -> ${{ steps.ping_pricing.outputs.status }}"
+          echo "https://neriah.ai/demo                             -> ${{ steps.ping_demo.outputs.status }}"
+          echo "https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/  -> ${{ steps.ping_supabase.outputs.status }}"
+          {
+            echo "## Keep-alive ping summary"
+            echo ""
+            echo "| URL | Status |"
+            echo "| --- | --- |"
+            echo "| https://neriah.ai | ${{ steps.ping_home.outputs.status }} |"
+            echo "| https://neriah.ai/blog | ${{ steps.ping_blog.outputs.status }} |"
+            echo "| https://neriah.ai/pricing | ${{ steps.ping_pricing.outputs.status }} |"
+            echo "| https://neriah.ai/demo | ${{ steps.ping_demo.outputs.status }} |"
+            echo "| https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/ | ${{ steps.ping_supabase.outputs.status }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
