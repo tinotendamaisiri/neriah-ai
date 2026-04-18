@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     if (_type === 'post') {
       revalidatePath('/blog')
-      revalidateTag('posts', {})
+      revalidateTag('posts')
       if (slug?.current) {
         revalidatePath(`/blog/${slug.current}`)
         await pingIndexNow(slug.current)
