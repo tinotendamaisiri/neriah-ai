@@ -215,7 +215,7 @@ function SkeletonRow({ width = '100%', height = 56 }: { width?: string | number;
 // ── Demo API ──────────────────────────────────────────────────────────────────
 export const DEMO_API = 'https://us-central1-neriah-ai-492302.cloudfunctions.net/neriah-demo/api';
 
-export async function demoFetch(path: string, opts: RequestInit = {}, token?: string | null) {
+async function demoFetch(path: string, opts: RequestInit = {}, token?: string | null) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
