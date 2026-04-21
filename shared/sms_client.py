@@ -2,15 +2,28 @@
 # Multi-channel OTP delivery with structured error reporting.
 #
 # Channel priority:
-#   0. Dev bypass — when ALLOW_BYPASS=true AND (phone's country prefix is in
-#      DEV_BYPASS_COUNTRY OR phone is in DEV_BYPASS_PHONES), skip delivery
-#      entirely. Verify endpoint accepts "000000". Country matches take
-#      priority over exact-number matches in the log output.
+#   0. Dev bypass — two independent rules, checked in order:
+#        (a) Phone whitelist: if phone is in DEV_BYPASS_PHONES, always bypass
+#            (works even when ALLOW_BYPASS is false — used for emergency
+#            access in production, e.g. the founder's number).
+#        (b) Global demo mode: if ALLOW_BYPASS is truthy, bypass EVERY number.
+#            Used during pre-launch demo so no Twilio SMS fee per tester.
+#      When either rule matches, Twilio/WhatsApp are skipped entirely and
+#      the verify endpoint accepts exactly "000000". OTP expiry + rate
+#      limits still apply, so an accidental ALLOW_BYPASS=true in prod is
+#      not an open-code-accepted-forever hole.
 #   1. WhatsApp Cloud API — pre-approved auth template ("neriah_otp").
 #      Skipped gracefully when WHATSAPP_ACCESS_TOKEN is not configured.
 #   2. Twilio SMS:
 #      - US numbers (+1)   → Twilio Verify API (A2P 10DLC compliant)
 #      - Non-US numbers    → Twilio Programmable SMS, sender "Neriah"
+#
+# NOTE: DEV_BYPASS_COUNTRY env var is NO LONGER READ by this module — the
+# old combined gate (ALLOW_BYPASS=true AND country match) has been replaced
+# by the simpler "ALLOW_BYPASS=true bypasses every number" rule. The env var
+# may still be set on the Cloud Function; it is ignored here. Clean it up
+# via `gcloud functions deploy ... --remove-env-vars=DEV_BYPASS_COUNTRY`
+# when convenient.
 #
 # Dev fallback:
 #   Nothing configured → OTP logged at WARNING. Channel returned is "log".
@@ -53,42 +66,32 @@ class _ChannelNotConfiguredError(Exception):
 # ── Dev bypass ────────────────────────────────────────────────────────────────
 
 def _bypass_enabled() -> bool:
+    """Global demo-mode flag — when true, every phone bypasses OTP."""
     return os.environ.get("ALLOW_BYPASS", "false").strip().lower() in ("true", "1", "yes")
 
 
 def _bypass_phones() -> set[str]:
+    """Always-bypass list — runs even when ALLOW_BYPASS is false. For
+    production emergency access to specific numbers (e.g. the founder)."""
     raw = os.environ.get("DEV_BYPASS_PHONES", "")
     return {p.strip() for p in raw.split(",") if p.strip()}
-
-
-def _bypass_countries() -> list[str]:
-    """Normalised country-code prefixes (always start with '+')."""
-    raw = os.environ.get("DEV_BYPASS_COUNTRY", "")
-    prefixes: list[str] = []
-    for item in raw.split(","):
-        p = item.strip()
-        if not p:
-            continue
-        if not p.startswith("+"):
-            p = "+" + p
-        prefixes.append(p)
-    return prefixes
 
 
 def _bypass_match(phone: str) -> str | None:
     """Return a human-readable reason when `phone` should bypass OTP, else None.
 
-    Country-prefix matches take priority over exact-number matches, so when
-    both rules apply the logged reason names the country. Bypass only runs
-    when ALLOW_BYPASS is truthy — the env var is the kill-switch.
+    Priority:
+      1. Phone is in DEV_BYPASS_PHONES — always bypass, even if ALLOW_BYPASS
+         is false. This is the fine-grained allow-list for emergency access.
+      2. ALLOW_BYPASS is truthy — bypass every number. This is the global
+         demo-mode switch used during pre-launch testing.
+    Each match is logged once per call by `send_otp()` so demo traffic can
+    be audited via Cloud Logging.
     """
-    if not _bypass_enabled():
-        return None
-    for prefix in _bypass_countries():
-        if phone.startswith(prefix):
-            return f"country prefix {prefix}"
     if phone in _bypass_phones():
-        return "whitelisted phone"
+        return "whitelisted phone (DEV_BYPASS_PHONES)"
+    if _bypass_enabled():
+        return "demo mode (ALLOW_BYPASS=true)"
     return None
 
 
