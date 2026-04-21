@@ -22,15 +22,16 @@ import {
 } from 'react-native';
 import { MarkResult, Student, GradingVerdict, GradingVerdictEnum } from '../types';
 import { COLORS } from '../constants/colors';
-import { updateMark } from '../services/api';
+import { updateMark, deleteMark } from '../services/api';
 import EditVerdictModal from './EditVerdictModal';
 
 interface MarkResultProps {
   result: MarkResult;
   student: Student;
-  /** Called after Approve succeeds OR after Skip is tapped. Parent uses it
-   *  to advance the queue + update session counters. */
-  onDone: (info: { approved: boolean }) => void;
+  /** Called after Approve succeeds, Skip is tapped, or the submission is
+   *  deleted. Parent uses it to advance the queue + update session counters.
+   *  `deleted` is treated the same as skip (no approve-counter increment). */
+  onDone: (info: { approved: boolean; deleted?: boolean }) => void;
 }
 
 const VERDICT_COLOUR: Record<GradingVerdictEnum, string> = {
@@ -136,6 +137,38 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
   const handleSkip = () => {
     // No API call — mark stays approved=false on the backend.
     onDone({ approved: false });
+  };
+
+  const handleDelete = () => {
+    if (!result.mark_id) {
+      Alert.alert('Cannot delete', 'This mark has no server ID.');
+      return;
+    }
+    const hwLabel = 'this homework';
+    Alert.alert(
+      'Delete submission?',
+      `This will permanently delete ${displayName}'s submission for ${hwLabel}. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setApproving(true);
+            try {
+              await deleteMark(result.mark_id);
+              // Deleted — advance like skip, but flag so parent doesn't
+              // bump the approved counter.
+              onDone({ approved: false, deleted: true });
+            } catch (err: any) {
+              Alert.alert('Could not delete', err.message ?? 'Please try again.');
+            } finally {
+              setApproving(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -263,6 +296,14 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
         >
           <Text style={styles.skipBtnText}>Skip (don't approve)</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.deleteLink, approving && styles.btnDisabled]}
+          onPress={handleDelete}
+          disabled={approving}
+          accessibilityLabel="Delete this submission"
+        >
+          <Text style={styles.deleteLinkText}>Delete this submission</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <EditVerdictModal
@@ -346,6 +387,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center', marginTop: 10,
   },
   skipBtnText: { color: COLORS.text, fontWeight: '600', fontSize: 15 },
+
+  deleteLink: {
+    alignSelf: 'center', paddingVertical: 12, marginTop: 8,
+  },
+  deleteLinkText: { color: COLORS.error, fontSize: 12, fontWeight: '600' },
 
   btnDisabled: { opacity: 0.5 },
 });

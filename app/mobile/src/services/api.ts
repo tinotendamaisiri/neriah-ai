@@ -745,6 +745,28 @@ export const approveSubmission = async (submission_id: string): Promise<void> =>
   await client.post(`/submissions/${submission_id}/approve`);
 };
 
+/**
+ * Cascade-delete a submission. Also removes the linked mark + annotated
+ * image blob in GCS. Weakness profile is not rolled back (out of scope).
+ */
+export const deleteSubmission = async (
+  submission_id: string,
+): Promise<{ deleted: boolean; cascades?: { mark: boolean; image_blob: boolean; training_sample: boolean } }> => {
+  const res = await client.delete(`/submissions/${submission_id}`);
+  return res.data;
+};
+
+/**
+ * Same cascade, keyed by mark_id. Used by post-scan views (MarkResult)
+ * that have the mark but not the linked submission id.
+ */
+export const deleteMark = async (
+  mark_id: string,
+): Promise<{ deleted: boolean; submission_id?: string | null; cascades?: { mark: boolean; image_blob: boolean; training_sample: boolean } }> => {
+  const res = await client.delete(`/marks/${mark_id}`);
+  return res.data;
+};
+
 /** Record terms acceptance on the server (fire-and-forget; no OTP required). */
 export const acceptTermsOnServer = async (): Promise<void> => {
   await client.post('/auth/terms-accept', { terms_version: '1.0' });

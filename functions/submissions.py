@@ -1,21 +1,28 @@
 """
 Student submission management — teacher-side endpoints.
 
-GET   /api/submissions                        — list submissions by homework_id or class_id
-POST  /api/submissions/<sub_id>/approve       — approve a graded submission (visible to student)
-POST  /api/submissions/approve-bulk           — approve many graded submissions in one call
-PATCH /api/submissions/<sub_id>/override      — override score and/or feedback
+GET    /api/submissions                        — list submissions by homework_id, class_id, or teacher_id
+POST   /api/submissions/<sub_id>/approve       — approve a graded submission (visible to student)
+POST   /api/submissions/approve-bulk           — approve many graded submissions in one call
+PATCH  /api/submissions/<sub_id>/override      — override score and/or feedback
+DELETE /api/submissions/<sub_id>               — cascade-delete a submission (+ mark + GCS blob)
+DELETE /api/marks/<mark_id>                    — same cascade, keyed by mark_id (for callers
+                                                  that only know the mark, e.g. MarkResult).
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
 
 from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
-from shared.firestore_client import get_doc, query, upsert
+from shared.config import settings
+from shared.firestore_client import delete_doc, get_doc, query, upsert
+from shared.gcs_client import delete_blob
 from shared.training_data import collect_training_sample
 from shared.weakness_tracker import update_student_weaknesses
 
@@ -25,6 +32,131 @@ submissions_bp = Blueprint("submissions", __name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── GCS URL parsing for cascade delete ────────────────────────────────────────
+
+def _parse_gcs_url(url: str) -> tuple[str | None, str | None]:
+    """Extract (bucket, blob_name) from a stored image URL. Handles:
+      https://storage.googleapis.com/{bucket}/{object}?...
+      https://{bucket}.storage.googleapis.com/{object}?...
+      gs://{bucket}/{object}
+    Returns (None, None) when the URL isn't recognisable as GCS.
+    """
+    if not url:
+        return None, None
+    if url.startswith("gs://"):
+        rest = url[len("gs://"):]
+        if "/" not in rest:
+            return None, None
+        bucket, blob = rest.split("/", 1)
+        return bucket, unquote(blob.split("?", 1)[0])
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None, None
+    host = parsed.netloc
+    path = parsed.path.lstrip("/")
+    if not path:
+        return None, None
+    # storage.googleapis.com/{bucket}/{object}
+    if host == "storage.googleapis.com":
+        if "/" not in path:
+            return None, None
+        bucket, blob = path.split("/", 1)
+        return bucket, unquote(blob)
+    # {bucket}.storage.googleapis.com/{object}
+    m = re.match(r"^(?P<bucket>[^.]+)\.storage\.googleapis\.com$", host)
+    if m:
+        return m.group("bucket"), unquote(path)
+    return None, None
+
+
+# ── Shared cascade-delete helper ──────────────────────────────────────────────
+
+def _cascade_delete_submission(
+    sub: dict,
+    teacher_id: str,
+) -> dict:
+    """Delete a submission + its linked mark + the annotated GCS blob.
+
+    Weakness-profile rollback is intentionally not performed (out of scope —
+    the profile represents the full history of approved grades and would
+    need a full recompute from remaining approved submissions, which is
+    expensive and not required for the current teacher workflow).
+
+    Training-sample removal from the vector store is a TODO — `shared.
+    training_data` exposes only `collect_training_sample` (write); no delete
+    helper exists yet.
+
+    Returns a dict describing what was deleted, for the response body +
+    audit log.
+    """
+    submission_id = sub.get("id") or sub.get("submission_id") or ""
+    mark_id = sub.get("mark_id") or ""
+    student_id = sub.get("student_id") or ""
+    cascades: dict[str, bool] = {
+        "mark": False,
+        "image_blob": False,
+        "training_sample": False,
+    }
+
+    # 1. Delete the linked mark document (and pull its marked_image_url for
+    #    the GCS blob step below).
+    marked_image_url: str | None = None
+    if mark_id:
+        mark_doc = get_doc("marks", mark_id)
+        if mark_doc:
+            marked_image_url = mark_doc.get("marked_image_url")
+            try:
+                delete_doc("marks", mark_id)
+                cascades["mark"] = True
+            except Exception:
+                logger.exception("cascade: failed to delete mark %s", mark_id)
+
+    # 2. Delete the student_submissions row itself.
+    if submission_id:
+        try:
+            delete_doc("student_submissions", submission_id)
+        except Exception:
+            logger.exception("cascade: failed to delete submission %s", submission_id)
+
+    # 3. Delete the annotated image blob from GCS. The stored URL is a signed
+    #    URL pointing at GCS_BUCKET_MARKED — parse it back to bucket + blob.
+    #    Also try image_urls[] if present (multi-page submissions).
+    image_candidates: list[str] = []
+    if marked_image_url:
+        image_candidates.append(marked_image_url)
+    for u in sub.get("image_urls") or []:
+        if isinstance(u, str):
+            image_candidates.append(u)
+
+    for img_url in image_candidates:
+        bucket, blob_name = _parse_gcs_url(img_url)
+        if not bucket or not blob_name:
+            continue
+        # Only delete blobs we recognise as ours. Guards against an attacker-
+        # crafted mark doc pointing at some other bucket.
+        if bucket not in (settings.GCS_BUCKET_MARKED, settings.GCS_BUCKET_SUBMISSIONS):
+            continue
+        try:
+            delete_blob(bucket, blob_name)
+            cascades["image_blob"] = True
+        except Exception:
+            logger.warning(
+                "cascade: failed to delete blob %s/%s (may already be gone)",
+                bucket, blob_name,
+            )
+
+    # 4. TODO: training sample cleanup deferred until vector-store API
+    #    exposes a delete helper. `shared.training_data` only writes today.
+    #    When added, flip `cascades["training_sample"]` on success.
+
+    logger.info(
+        "[cascade-delete] teacher=%s sub=%s mark=%s student=%s cascades=%s",
+        teacher_id, submission_id, mark_id, student_id, cascades,
+    )
+    return cascades
 
 
 # ── GET /api/submissions ───────────────────────────────────────────────────────
@@ -51,12 +183,14 @@ def list_submissions():
         or ""
     ).strip()
     class_id = (request.args.get("class_id") or "").strip()
+    teacher_id_filter = (request.args.get("teacher_id") or "").strip()
     status_filter = (request.args.get("status") or "").strip() or None
 
-    if not homework_id and not class_id:
-        return jsonify({"error": "homework_id or class_id is required"}), 400
+    if not homework_id and not class_id and not teacher_id_filter:
+        return jsonify({"error": "homework_id, class_id, or teacher_id is required"}), 400
 
-    # Authorisation: teacher must own the homework or class
+    # Authorisation: teacher must own the homework/class, or the teacher_id
+    # filter must match the caller's own id (no cross-teacher reads).
     if homework_id:
         hw = get_doc("answer_keys", homework_id)
         if not hw:
@@ -64,13 +198,19 @@ def list_submissions():
         if hw.get("teacher_id") != teacher_id:
             return jsonify({"error": "forbidden"}), 403
         filters = [("answer_key_id", "==", homework_id)]
-    else:
+    elif class_id:
         cls = get_doc("classes", class_id)
         if not cls:
             return jsonify({"error": "Class not found"}), 404
         if cls.get("teacher_id") != teacher_id:
             return jsonify({"error": "forbidden"}), 403
         filters = [("class_id", "==", class_id)]
+    else:
+        # teacher_id-only path — used by HomeScreen to count all submissions
+        # for the calling teacher across every class.
+        if teacher_id_filter != teacher_id:
+            return jsonify({"error": "forbidden"}), 403
+        filters = [("teacher_id", "==", teacher_id)]
 
     if status_filter:
         filters.append(("status", "==", status_filter))
@@ -408,6 +548,82 @@ def override_submission(sub_id: str):
         "submission_id": sub_id,
         "score": new_score,
         "percentage": percentage,
+    }), 200
+
+
+# ── DELETE /api/submissions/<sub_id> ──────────────────────────────────────────
+
+@submissions_bp.delete("/submissions/<sub_id>")
+def delete_submission(sub_id: str):
+    """Cascade-delete: mark doc + student_submissions row + annotated GCS blob.
+    Weakness profile is intentionally NOT rolled back — out of scope."""
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    sub = get_doc("student_submissions", sub_id)
+    if not sub:
+        return jsonify({"error": "Submission not found"}), 404
+
+    # Ownership: the row's teacher_id is the authoritative check. Fall back
+    # to homework.teacher_id when the sub predates the teacher_id column.
+    if sub.get("teacher_id") and sub["teacher_id"] != teacher_id:
+        return jsonify({"error": "forbidden"}), 403
+    if not sub.get("teacher_id"):
+        hw = get_doc("answer_keys", sub.get("answer_key_id", ""))
+        if not hw or hw.get("teacher_id") != teacher_id:
+            return jsonify({"error": "forbidden"}), 403
+
+    # Ensure sub carries its id for the helper.
+    sub = {**sub, "id": sub.get("id") or sub_id}
+    cascades = _cascade_delete_submission(sub, teacher_id)
+    return jsonify({
+        "deleted": True,
+        "submission_id": sub_id,
+        "cascades": cascades,
+    }), 200
+
+
+# ── DELETE /api/marks/<mark_id> ───────────────────────────────────────────────
+
+@submissions_bp.delete("/marks/<mark_id>")
+def delete_mark_cascade(mark_id: str):
+    """Same cascade as DELETE /submissions/<id>, keyed by mark_id. Used by
+    mobile callers that have the MarkResult payload but not the linked
+    student_submissions id (e.g. MarkResult.tsx post-scan view)."""
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    mark = get_doc("marks", mark_id)
+    if not mark:
+        return jsonify({"error": "Mark not found"}), 404
+    if mark.get("teacher_id") and mark["teacher_id"] != teacher_id:
+        return jsonify({"error": "forbidden"}), 403
+
+    # Find the linked student_submissions row (if any).
+    linked = query(
+        "student_submissions",
+        [("mark_id", "==", mark_id)],
+    )
+    if linked:
+        sub = {**linked[0], "id": linked[0].get("id")}
+    else:
+        # Orphan mark — build a synthetic sub so the cascade helper still
+        # deletes the mark doc + blob.
+        sub = {
+            "id": None,
+            "mark_id": mark_id,
+            "student_id": mark.get("student_id", ""),
+            "answer_key_id": mark.get("answer_key_id", ""),
+        }
+
+    cascades = _cascade_delete_submission(sub, teacher_id)
+    return jsonify({
+        "deleted": True,
+        "mark_id": mark_id,
+        "submission_id": sub.get("id"),
+        "cascades": cascades,
     }), 200
 
 

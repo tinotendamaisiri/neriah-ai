@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { getTeacherSubmissions, approveAllMarks } from '../services/api';
+import { getTeacherSubmissions, approveAllMarks, deleteSubmission } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { RootStackParamList, TeacherSubmission } from '../types';
@@ -160,6 +160,36 @@ export default function GradingResultsScreen() {
 
   const visibleList = tab === 'pending' ? pending : graded;
 
+  const confirmDelete = (s: TeacherSubmission) => {
+    if (!s.id) {
+      Alert.alert('Cannot delete', 'This submission has no server ID yet.');
+      return;
+    }
+    const studentLabel = s.student_name ?? 'this student';
+    const hwLabel = s.answer_key_title ?? answer_key_title ?? 'this homework';
+    Alert.alert(
+      'Delete submission?',
+      `This will permanently delete ${studentLabel}'s submission for ${hwLabel}. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSubmission(s.id as string);
+              // Remove the row locally; analytics will refetch on next focus.
+              setSubmissions((prev) => prev.filter((x) => x.id !== s.id));
+              Alert.alert('Deleted', 'Submission deleted.');
+            } catch (err: any) {
+              Alert.alert('Could not delete', err.message ?? 'Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const renderPendingRow = ({ item: s }: { item: TeacherSubmission }) => (
     <View style={styles.row}>
       <View style={styles.rowLeft}>
@@ -186,6 +216,14 @@ export default function GradingResultsScreen() {
           activeOpacity={0.8}
         >
           <Text style={styles.gradeBtnText}>Grade</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={() => confirmDelete(s)}
+          accessibilityLabel="Delete submission"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="trash-outline" size={18} color={COLORS.error} />
         </TouchableOpacity>
       </View>
     </View>
@@ -221,6 +259,14 @@ export default function GradingResultsScreen() {
         <View style={styles.gradedBadge}>
           <Text style={styles.gradedBadgeText}>Graded</Text>
         </View>
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={(e) => { e.stopPropagation(); confirmDelete(s); }}
+          accessibilityLabel="Delete submission"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="trash-outline" size={18} color={COLORS.error} />
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
@@ -435,6 +481,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
   },
   gradedBadgeText: { fontSize: 11, color: COLORS.teal500, fontWeight: '600' },
+
+  deleteBtn: {
+    padding: 4,
+    marginLeft: 4,
+  },
 
   gradeBtn: {
     backgroundColor: COLORS.teal500, borderRadius: 8,
