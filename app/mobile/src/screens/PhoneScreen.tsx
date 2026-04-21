@@ -61,14 +61,14 @@ export default function PhoneScreen() {
     } catch (err: any) {
       const status = err.status ?? err.response?.status ?? err._raw?.response?.status;
       if (status === 403) {
-        // Cross-role login attempt — show the backend's specific message
-        const msg = err.message ?? err.response?.data?.error ?? 'Wrong account type for this login.';
-        Alert.alert('Wrong account type', msg);
+        // Cross-role login attempt — show the backend's specific message verbatim
+        Alert.alert('Wrong account type', err.message ?? t('wrong_account_type'));
         setPhone('');
       } else if (status === 404) {
+        // Backend message is the user message — do not wrap.
         Alert.alert(
           t('no_account_found'),
-          t('no_account_msg'),
+          err.message ?? t('no_account_msg'),
           [
             { text: t('cancel'), style: 'cancel' },
             { text: t('register'), onPress: () => navigation.navigate('RoleSelect') },

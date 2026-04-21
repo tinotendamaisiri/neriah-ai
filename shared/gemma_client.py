@@ -22,6 +22,7 @@ import google.auth.transport.requests
 import requests
 
 from shared.config import settings
+from shared.errors import classify_vertex_exception, GradingEmptyError, GradingParseError
 
 logger = logging.getLogger(__name__)
 
@@ -956,3 +957,116 @@ def student_tutor(
     except Exception:
         logger.exception("student_tutor failed")
         return "I'm having a little trouble right now. Please try again in a moment!"
+
+
+# ─── Raising variants for grading-critical paths ─────────────────────────────
+
+def grade_submission_strict(
+    image_bytes: bytes,
+    answer_key: dict,
+    education_level: str,
+    user_context: dict | None = None,
+) -> list[dict]:
+    """
+    Like grade_submission, but RAISES typed NeriahError on failure so the
+    HTTP handler can return informative messages to the mobile app.
+
+    Raises:
+      VertexAITimeoutError / VertexAIQuotaError / VertexAIAuthError
+      VertexAIUnavailableError — Vertex API call failed
+      GradingParseError  — Gemma returned unparseable JSON
+      GradingEmptyError  — Gemma returned empty verdicts
+    """
+    ctx = user_context or {}
+    questions_json = json.dumps(answer_key.get("questions", []), indent=2)
+
+    subject    = ctx.get("subject") or answer_key.get("subject") or ""
+    curriculum = ctx.get("curriculum") or ""
+
+    logger.info(
+        "[gemma-strict] grade_submission level=%s curriculum=%s subject=%s",
+        education_level, curriculum or "-", subject or "-",
+    )
+
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject} {education_level} {questions_json[:400]}",
+        user_context=ctx,
+    )
+
+    prompt = f"""{_NERIAH_IDENTITY}
+You are an expert teacher marking a student's handwritten work at {education_level} level.
+Grading intensity: {_intensity(education_level)}.
+{f"Subject: {subject}" if subject else ""}
+{f"Curriculum: {curriculum}" if curriculum else ""}
+{rag_section}
+You are shown a photo of the student's exercise book. Read each handwritten answer directly from the image.
+
+Answer key:
+{questions_json}
+
+For each question in the answer key, locate the student's handwritten answer in the image and assess it.
+
+Return ONLY a valid JSON array — one object per question:
+[
+  {{
+    "question_number": 1,
+    "student_answer": "<verbatim text you read from the image>",
+    "expected_answer": "<from answer key>",
+    "verdict": "correct" | "incorrect" | "partial",
+    "awarded_marks": <number>,
+    "max_marks": <number from answer key>,
+    "feedback": "<one constructive sentence, or null>"
+  }}
+]
+
+Rules:
+- If a question is unanswered, verdict is "incorrect" and awarded_marks is 0.
+- Partial credit only where the answer key marks allow fractional marks.
+- Never award more than max_marks for any question.
+- Return raw JSON array only — no markdown fences, no commentary."""
+
+    try:
+        raw = _generate(prompt, image_bytes=image_bytes)
+    except Exception as exc:
+        logger.exception("[gemma-strict] Vertex call failed")
+        raise classify_vertex_exception(exc) from exc
+
+    if not raw or not raw.strip():
+        logger.error("[gemma-strict] Vertex returned empty content")
+        raise GradingEmptyError("Vertex returned empty string")
+
+    parsed = _parse_json(raw, None)
+    if parsed is None:
+        logger.error("[gemma-strict] JSON parse failed. Raw (first 500): %.500s", raw)
+        raise GradingParseError(f"JSON parse failed: {raw[:200]}")
+
+    if not isinstance(parsed, list):
+        logger.error("[gemma-strict] JSON parsed but was not a list: %s", type(parsed).__name__)
+        raise GradingParseError(f"Expected JSON array, got {type(parsed).__name__}")
+
+    if len(parsed) == 0:
+        logger.error("[gemma-strict] Gemma returned empty verdicts array")
+        raise GradingEmptyError("Empty verdicts array from Gemma")
+
+    return parsed
+
+
+def check_image_quality_strict(image_bytes: bytes) -> dict:
+    """Like check_image_quality but raises typed NeriahError on Vertex failure."""
+    prompt = (
+        "You are a document quality checker. Inspect the image and return ONLY valid JSON:\n"
+        '{"pass": bool, "reason": string, "suggestion": string}\n'
+        "pass is true only if the image shows a clearly readable, well-lit, "
+        "in-frame document page. Return raw JSON only — no markdown fences."
+    )
+    try:
+        raw = _generate(prompt, image_bytes=image_bytes)
+    except Exception as exc:
+        logger.exception("[gemma-strict] quality check Vertex call failed")
+        raise classify_vertex_exception(exc) from exc
+
+    parsed = _parse_json(raw, None)
+    if parsed is None or not isinstance(parsed, dict):
+        logger.warning("[gemma-strict] quality check parse failed — permitting image")
+        return {"pass": True, "reason": "quality check unavailable", "suggestion": ""}
+    return parsed

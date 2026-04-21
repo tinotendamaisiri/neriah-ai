@@ -258,9 +258,11 @@ export default function StudentRegisterScreen() {
     } catch (err: any) {
       const msg: string = err.message ?? err.response?.data?.error ?? '';
       if (err.status === 409 || err.response?.status === 409) {
+        // Backend already explains what's wrong ("already registered as a teacher",
+        // "already registered as a student", etc.) — show it verbatim.
         Alert.alert(
           'Already registered',
-          'This phone number already has an account.',
+          msg || 'This phone number already has an account.',
           [
             { text: 'OK', style: 'cancel' },
             { text: 'Sign in instead', onPress: () => navigation.navigate('Phone', { role: 'student' }) },

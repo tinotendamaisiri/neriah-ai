@@ -66,46 +66,61 @@ client.interceptors.response.use(
       return Promise.reject({
         title: 'No connection',
         message: 'Check your internet and try again.',
+        error_code: 'NO_CONNECTION',
         isOffline: true,
         _raw: error,
       });
     }
 
-    const { status, data } = error.response as { status: number; data?: { error?: string } };
+    const { status, data } = error.response as {
+      status: number;
+      data?: { error?: string; error_code?: string; retry_after?: number; attempts_remaining?: number };
+    };
+    // Backend contract: `data.error` is the user-facing string. Display it directly.
+    // Only fall back to a generic string when the server gave us nothing.
     const serverMsg: string | undefined = data?.error;
+    const errorCode: string | undefined = data?.error_code;
+    const retryAfter: number | undefined = data?.retry_after;
+    const attemptsRemaining: number | undefined = data?.attempts_remaining;
 
     if (status === 401) {
       if (_onUnauthorized) _onUnauthorized();
-      return Promise.reject({ title: 'Session expired', message: 'Please sign in again.', status, _raw: error });
-    }
-
-    if (status === 429) {
-      const retryAfter: number | undefined = (data as any)?.retry_after;
       return Promise.reject({
-        title: 'Too many requests',
-        message: serverMsg || 'Please wait a moment and try again.',
-        retry_after: retryAfter,
+        title: 'Session expired',
+        message: serverMsg || 'Please sign in again.',
+        error_code: errorCode || 'UNAUTHORIZED',
         status,
         _raw: error,
       });
     }
 
-    const mapped: Record<number, { title: string; message: string }> = {
-      403: { title: 'Not allowed', message: serverMsg || "You don't have permission to do this." },
-      404: { title: 'Not found', message: serverMsg || 'This item may have been removed.' },
-      409: { title: 'Already exists', message: serverMsg || 'This action was already completed.' },
-      410: { title: 'Expired', message: serverMsg || 'This code has expired. Request a new one.' },
-      422: { title: 'Invalid data', message: serverMsg || 'Please check your input and try again.' },
+    // Titles are fallbacks — the real user-facing text is `message`, which
+    // is the backend's `error` field verbatim. Screens display `err.message`.
+    const titleByStatus: Record<number, string> = {
+      403: 'Not allowed',
+      404: 'Not found',
+      409: 'Already exists',
+      410: 'Expired',
+      422: 'Invalid data',
+      429: 'Slow down',
+      503: 'Service unavailable',
     };
 
-    if (mapped[status]) {
-      return Promise.reject({ ...mapped[status], status, _raw: error });
-    }
+    const fallbackByStatus: Record<number, string> = {
+      403: "You don't have permission to do this.",
+      404: 'This item may have been removed.',
+      409: 'This action was already completed.',
+      410: 'This code has expired. Please request a new one.',
+      422: 'Please check your input and try again.',
+      429: 'Please wait a moment before trying again.',
+    };
 
-    // 5xx and everything else
     return Promise.reject({
-      title: 'Something went wrong',
-      message: serverMsg || 'Please try again. Your data is safe.',
+      title: titleByStatus[status] || (status >= 500 ? 'Service error' : 'Request failed'),
+      message: serverMsg || fallbackByStatus[status] || 'Please try again. Your data is safe.',
+      error_code: errorCode,
+      retry_after: retryAfter,
+      attempts_remaining: attemptsRemaining,
       status,
       _raw: error,
     });

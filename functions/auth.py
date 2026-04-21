@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, make_response, request
@@ -20,10 +21,73 @@ from shared.auth import (
 from shared.config import is_demo
 from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Student, Teacher
-from shared.sms_client import send_otp as _dispatch_otp
+from shared.sms_client import (
+    BYPASS_OTP_CODE,
+    OTPDeliveryError,
+    is_bypassed,
+    send_otp as _dispatch_otp,
+)
 
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint("auth", __name__)
+
+
+# ─── Structured error helpers ────────────────────────────────────────────────
+#
+# Every error response carries both a human-readable `error` and a
+# machine-readable `error_code`. Mobile clients display `error` verbatim
+# and may branch on `error_code` for special handling.
+
+def _err(message: str, error_code: str, status: int, *, headers: dict | None = None, **extra):
+    """Build a structured error response.
+
+    Args:
+        message:    User-facing text — shown directly in the mobile app.
+        error_code: Machine-readable code (SCREAMING_SNAKE_CASE).
+        status:     HTTP status code.
+        headers:    Optional response headers (e.g. rate-limit).
+        **extra:    Additional fields merged into the JSON body (e.g. retry_after, attempts).
+    """
+    body: dict = {"error": message, "error_code": error_code}
+    body.update(extra)
+    resp = make_response(jsonify(body), status)
+    if headers:
+        for k, v in headers.items():
+            resp.headers[k] = v
+    return resp
+
+
+@auth_bp.errorhandler(OTPDeliveryError)
+def _handle_otp_delivery_error(exc: OTPDeliveryError):
+    """OTP delivery failures always surface the real reason (country block,
+    invalid number, auth failure, Twilio message, etc.). Never hidden behind
+    'Failed to send verification code'."""
+    logger.error(
+        "OTP delivery failed — code=%s msg=%s detail=%s",
+        exc.error_code, exc.message, exc.technical_detail,
+    )
+    return _err(exc.message, exc.error_code, 503)
+
+
+@auth_bp.errorhandler(Exception)
+def _handle_unexpected(exc: Exception):
+    """Last-resort handler. Log full traceback to Cloud Logging, expose the
+    exception type to the caller — never swallow it behind a generic 500."""
+    # Flask already maps HTTPExceptions (abort(...)) — let those through.
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        return exc  # type: ignore[return-value]
+
+    first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    logger.error(
+        "Unhandled exception in auth blueprint: %s: %s\n%s",
+        type(exc).__name__, exc, traceback.format_exc(),
+    )
+    return _err(
+        f"An unexpected error occurred: {type(exc).__name__}: {first_line}",
+        "UNEXPECTED",
+        500,
+    )
 
 # ─── Phone validation ────────────────────────────────────────────────────────
 
@@ -35,28 +99,36 @@ _PHONE_RULES: dict[str, tuple[int, int]] = {
 }
 
 
-def _validate_phone(phone: str) -> tuple[bool, str]:
-    """Validate E.164 phone number. Returns (ok, error_message)."""
+def _validate_phone(phone: str) -> tuple[bool, str, str]:
+    """Validate E.164 phone number. Returns (ok, error_message, error_code)."""
     if not phone:
-        return False, "Phone number is required"
+        return False, "Phone number is required.", "PHONE_REQUIRED"
     if not phone.startswith("+"):
-        return False, "Phone must start with + country code"
+        return False, "Phone number must start with a + and country code (e.g. +263 for Zimbabwe).", "PHONE_MISSING_COUNTRY_CODE"
     digits = re.sub(r"\D", "", phone)
     if len(digits) < 7:
-        return False, "Phone number too short"
+        return False, "That phone number is too short. Please check and try again.", "PHONE_TOO_SHORT"
     if len(digits) > 15:
-        return False, "Phone number too long (max 15 digits)"
+        return False, "That phone number is too long. Phone numbers have at most 15 digits.", "PHONE_TOO_LONG"
     # Check country-specific rules
     for code, (mn, mx) in _PHONE_RULES.items():
         prefix = code[1:]
         if digits.startswith(prefix):
             subscriber = digits[len(prefix):]
             if len(subscriber) < mn:
-                return False, f"Phone too short for {code} — need {mn} digits after code"
+                return (
+                    False,
+                    f"This number looks too short for {code}. We expect {mn} digits after the country code.",
+                    "PHONE_TOO_SHORT_FOR_COUNTRY",
+                )
             if len(subscriber) > mx:
-                return False, f"Phone too long for {code} — max {mx} digits after code"
-            return True, ""
-    return True, ""
+                return (
+                    False,
+                    f"This number looks too long for {code}. We expect at most {mx} digits after the country code.",
+                    "PHONE_TOO_LONG_FOR_COUNTRY",
+                )
+            return True, "", ""
+    return True, "", ""
 
 _OTP_SEND_LIMIT = 3
 _OTP_VERIFY_LIMIT = 3
@@ -175,24 +247,37 @@ def auth_register():
         school_name = match["name"] if match else school_id
     title = (body.get("title") or "").strip() or None
 
-    if not phone or not name:
-        return jsonify({"error": "phone and name are required"}), 400
-    phone_valid, phone_err = _validate_phone(phone)
+    if not phone:
+        return _err("Please enter your phone number.", "PHONE_REQUIRED", 400)
+    if not name:
+        return _err("Please enter your name.", "NAME_REQUIRED", 400)
+    phone_valid, phone_err, phone_code = _validate_phone(phone)
     if not phone_valid:
-        return jsonify({"error": phone_err}), 400
+        return _err(phone_err, phone_code, 400)
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "You've made too many attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
+            429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
+        )
 
     if query_single("teachers", [("phone", "==", phone)]):
-        return jsonify({"error": "Phone already registered as a teacher. Please sign in."}), 409
+        return _err(
+            "This phone number is already registered. Please sign in instead.",
+            "PHONE_ALREADY_REGISTERED_TEACHER",
+            409,
+        )
     if query_single("students", [("phone", "==", phone)]):
-        return jsonify({"error": "This number is already registered as a student account."}), 409
+        return _err(
+            "This number is already registered as a student account. Please sign in as a student.",
+            "PHONE_ALREADY_REGISTERED_STUDENT",
+            409,
+        )
 
     # Don't create the teacher doc yet — store registration data in the OTP doc.
     # Teacher is only created in Firestore after OTP is successfully verified.
@@ -204,10 +289,15 @@ def auth_register():
         "phone": phone,
     })
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
+            429,
+            headers=rl_headers,
+            retry_after=wait,
+        )
 
     channel = _send_otp(phone, otp)
     resp = make_response(jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}), 201)
@@ -225,45 +315,60 @@ def auth_login():
     intended_role = (body.get("role") or "").strip().lower()  # "teacher" or "student"
 
     if not phone:
-        return jsonify({"error": "phone is required"}), 400
-    phone_valid, phone_err = _validate_phone(phone)
+        return _err("Please enter your phone number.", "PHONE_REQUIRED", 400)
+    phone_valid, phone_err, phone_code = _validate_phone(phone)
     if not phone_valid:
-        return jsonify({"error": phone_err}), 400
+        return _err(phone_err, phone_code, 400)
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "You've made too many sign-in attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
+            429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
+        )
 
     teacher = query_single("teachers", [("phone", "==", phone)])
     student = None if teacher else query_single("students", [("phone", "==", phone)])
     if not teacher and not student:
-        return jsonify({"error": "Phone not registered"}), 404
+        return _err(
+            "No account found with this phone number. Tap 'Create account' to register.",
+            "PHONE_NOT_FOUND",
+            404,
+        )
 
     # ── Role gate: reject cross-role login ────────────────────────────────────
     if intended_role == "student" and teacher and not student:
-        return jsonify({"error": "This number is registered as a teacher account. Please use the teacher login."}), 403
+        return _err(
+            "This number is registered as a teacher account. Please sign in on the teacher screen.",
+            "ROLE_MISMATCH_IS_TEACHER",
+            403,
+        )
     if intended_role == "teacher" and student and not teacher:
-        return jsonify({"error": "This number is registered as a student account. Please use the student login."}), 403
+        return _err(
+            "This number is registered as a student account. Please sign in on the student screen.",
+            "ROLE_MISMATCH_IS_STUDENT",
+            403,
+        )
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
+            429,
+            headers=rl_headers,
+            retry_after=wait,
+        )
 
-    try:
-        channel = _send_otp(phone, otp)
-    except Exception as exc:
-        logger.error("OTP delivery failed for ...%s: %s", phone[-4:], exc)
-        resp = make_response(jsonify({"error": "Failed to send verification code. Please try again."}), 503)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+    # OTPDeliveryError is handled by the blueprint-level errorhandler, which
+    # returns the real Twilio/WhatsApp reason instead of a generic message.
+    channel = _send_otp(phone, otp)
 
     resp = make_response(jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}), 200)
     for k, v in rl_headers.items():
@@ -280,8 +385,10 @@ def auth_verify():
     phone = (body.get("verification_id") or body.get("phone") or "").strip()
     otp = (body.get("otp_code") or body.get("otp") or "").strip()
 
-    if not phone or not otp:
-        return jsonify({"error": "verification_id and otp_code are required"}), 400
+    if not phone:
+        return _err("Missing phone number. Please request a new code and try again.", "VERIFICATION_ID_REQUIRED", 400)
+    if not otp:
+        return _err("Please enter the 6-digit code we sent to your phone.", "OTP_REQUIRED", 400)
 
     # ── Demo bypass ───────────────────────────────────────────────────────────
     if is_demo() and otp == "1234":
@@ -332,13 +439,21 @@ def auth_verify():
                 logger.info("[demo] Auto-verified OTP (student login) for %s", phone)
                 return jsonify({"token": token, "user": _safe(student_doc)}), 200
 
-            return jsonify({"error": "Account not found"}), 404
+            return _err(
+                "No account found with this phone number. Tap 'Create account' to register.",
+                "PHONE_NOT_FOUND",
+                404,
+            )
 
     # ── End demo bypass ───────────────────────────────────────────────────────
 
     otp_doc = get_doc("otp_verifications", phone)
     if not otp_doc:
-        return jsonify({"error": "OTP not found or expired"}), 410
+        return _err(
+            "This code has expired. Please request a new one.",
+            "OTP_EXPIRED",
+            410,
+        )
 
     attempts = otp_doc.get("attempts", 0)
     reset_ts = datetime.now(timezone.utc).timestamp() + _WINDOW
@@ -346,18 +461,43 @@ def auth_verify():
 
     if attempts >= _OTP_VERIFY_LIMIT:
         delete_doc("otp_verifications", phone)
-        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP.", "retry_after": 0}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "Too many incorrect attempts. Please request a new code.",
+            "OTP_TOO_MANY_ATTEMPTS",
+            429,
+            headers=rl_headers,
+            retry_after=0,
+        )
 
     method = otp_doc.get("method", "self")
 
-    if method == "verify":
+    def _reject_bad_otp(code_msg: str, code_key: str):
+        new_attempts = attempts + 1
+        if new_attempts >= _OTP_VERIFY_LIMIT:
+            delete_doc("otp_verifications", phone)
+        else:
+            upsert("otp_verifications", phone, {"attempts": new_attempts})
+        bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
+        remaining = max(0, _OTP_VERIFY_LIMIT - new_attempts)
+        return _err(code_msg, code_key, 400, headers=bad_headers, attempts_remaining=remaining)
+
+    if method == "bypass" or is_bypassed(phone):
+        if otp != BYPASS_OTP_CODE:
+            return _reject_bad_otp(
+                "The code you entered is incorrect. Please try again.",
+                "OTP_INVALID",
+            )
+        logger.warning("[BYPASS] OTP verify accepted for whitelisted number ...%s", phone[-4:])
+    elif method == "verify":
         # US numbers: Twilio Verify generated and sent its own code — check via their API
         verify_sid = otp_doc.get("verify_sid")
         if not verify_sid:
-            return jsonify({"error": "Verification configuration error"}), 500
+            logger.error("Twilio Verify check requested but no verify_sid stored for ...%s", phone[-4:])
+            return _err(
+                "We couldn't verify this code — our SMS provider lost track of your session. Please request a new code.",
+                "VERIFY_CONFIG_MISSING",
+                500,
+            )
         import os
         from twilio.rest import Client
         from twilio.base.exceptions import TwilioRestException
@@ -367,33 +507,30 @@ def auth_verify():
                 to=phone, code=otp
             )
             if check.status != "approved":
-                new_attempts = attempts + 1
-                if new_attempts >= _OTP_VERIFY_LIMIT:
-                    delete_doc("otp_verifications", phone)
-                else:
-                    upsert("otp_verifications", phone, {"attempts": new_attempts})
-                bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
-                resp = make_response(jsonify({"error": "Invalid OTP"}), 400)
-                for k, v in bad_headers.items():
-                    resp.headers[k] = v
-                return resp
+                return _reject_bad_otp(
+                    "The code you entered is incorrect. Please try again.",
+                    "OTP_INVALID",
+                )
         except TwilioRestException as e:
             if e.code == 20404:
-                return jsonify({"error": "OTP not found or expired"}), 400
-            return jsonify({"error": "Verification service error"}), 500
+                return _err(
+                    "This code has expired. Please request a new one.",
+                    "OTP_EXPIRED",
+                    400,
+                )
+            logger.error("Twilio Verify check failed for ...%s — code=%s msg=%s", phone[-4:], e.code, e.msg)
+            return _err(
+                f"Could not verify your code: {e.msg or 'verification service error'}. Please try again.",
+                f"TWILIO_{e.code}" if e.code else "TWILIO_UNKNOWN",
+                500,
+            )
     else:
         # Non-US / self-managed: check hash stored in Firestore
         if not verify_otp_hash(otp, otp_doc["otp_hash"]):
-            new_attempts = attempts + 1
-            if new_attempts >= _OTP_VERIFY_LIMIT:
-                delete_doc("otp_verifications", phone)
-            else:
-                upsert("otp_verifications", phone, {"attempts": new_attempts})
-            bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
-            resp = make_response(jsonify({"error": "Invalid OTP"}), 400)
-            for k, v in bad_headers.items():
-                resp.headers[k] = v
-            return resp
+            return _reject_bad_otp(
+                "The code you entered is incorrect. Please try again.",
+                "OTP_INVALID",
+            )
 
     # Capture pending_data before deleting the OTP doc
     pending_data = otp_doc.get("pending_data")
@@ -448,7 +585,11 @@ def auth_verify():
                 resp.headers[k] = v
             return resp
 
-        return jsonify({"error": "Account not found"}), 404
+        return _err(
+            "No account found with this phone number. Tap 'Create account' to register.",
+            "PHONE_NOT_FOUND",
+            404,
+        )
 
     token = create_jwt(teacher_doc["id"], "teacher", teacher_doc.get("token_version", 0))
     resp = make_response(jsonify({"token": token, "user": _safe(teacher_doc)}), 200)
@@ -466,24 +607,36 @@ def auth_resend_otp():
     channel_preference = body.get("channel_preference")
 
     if not phone:
-        return jsonify({"error": "verification_id is required"}), 400
+        return _err(
+            "Missing phone number. Please go back and start again.",
+            "VERIFICATION_ID_REQUIRED",
+            400,
+        )
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "You've made too many attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
+            429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
+        )
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
+            429,
+            headers=rl_headers,
+            retry_after=wait,
+        )
 
-    channel = _send_otp(phone, otp)
+    channel = _send_otp(phone, otp)  # OTPDeliveryError → blueprint errorhandler
     resp = make_response(jsonify({"message": "OTP resent", "channel": channel, "verification_id": phone}), 200)
     for k, v in rl_headers.items():
         resp.headers[k] = v
@@ -497,7 +650,11 @@ def auth_me():
     # Try teacher first, then student — require_role validates token_version.
     user_id, err = require_role(request, "teacher", "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     # Check teachers first, then students
     doc = get_doc("teachers", user_id)
@@ -508,7 +665,11 @@ def auth_me():
     if doc:
         return jsonify(_safe_student(doc)), 200
 
-    return jsonify({"error": "Not found"}), 404
+    return _err(
+        "We couldn't find your account. Please sign in again.",
+        "ACCOUNT_NOT_FOUND",
+        404,
+    )
 
 
 # ─── Profile update ───────────────────────────────────────────────────────────
@@ -527,13 +688,21 @@ def auth_update_profile():
     """
     teacher_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     updates = {k: v for k, v in body.items() if k in _PROFILE_UPDATABLE}
 
     if not updates:
-        return jsonify({"error": "No updatable fields provided"}), 400
+        return _err(
+            "Nothing to update. Please change a field before saving.",
+            "NO_FIELDS_PROVIDED",
+            400,
+        )
 
     upsert("teachers", teacher_id, updates)
     return jsonify({"message": "profile updated", **updates}), 200
@@ -547,28 +716,40 @@ def auth_recover():
     phone = (body.get("phone") or "").strip()
 
     if not phone:
-        return jsonify({"error": "phone is required"}), 400
+        return _err("Please enter your phone number.", "PHONE_REQUIRED", 400)
 
     teacher = query_single("teachers", [("phone", "==", phone)])
     if not teacher:
-        return jsonify({"error": "Phone not registered"}), 404
+        return _err(
+            "No account found with this phone number. Double-check the number and try again.",
+            "PHONE_NOT_FOUND",
+            404,
+        )
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "You've made too many recovery attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
+            429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
+        )
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many recovery codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
+            429,
+            headers=rl_headers,
+            retry_after=wait,
+        )
 
-    _send_otp(phone, otp)
+    _send_otp(phone, otp)  # OTPDeliveryError → blueprint errorhandler
     resp = make_response(jsonify({"message": "Recovery OTP sent"}), 200)
     for k, v in rl_headers.items():
         resp.headers[k] = v
@@ -581,12 +762,20 @@ def auth_recover():
 def auth_pin_set():
     user_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     pin = (body.get("pin") or "").strip()
     if len(pin) != 4 or not pin.isdigit():
-        return jsonify({"error": "PIN must be exactly 4 digits"}), 400
+        return _err(
+            "Your PIN must be exactly 4 digits (numbers only).",
+            "PIN_FORMAT_INVALID",
+            400,
+        )
 
     upsert("teachers", user_id, {"pin_hash": hash_pin(pin), "pin_attempts": 0, "pin_locked": False})
     return jsonify({"message": "PIN set"}), 200
@@ -596,23 +785,42 @@ def auth_pin_set():
 def auth_pin_verify():
     user_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     pin = (body.get("pin") or "").strip()
 
     teacher = get_doc("teachers", user_id)
     if not teacher or not teacher.get("pin_hash"):
-        return jsonify({"error": "No PIN set"}), 400
+        return _err(
+            "You haven't set a PIN yet. Set one in Settings first.",
+            "PIN_NOT_SET",
+            400,
+        )
 
     if teacher.get("pin_locked"):
-        return jsonify({"error": "PIN locked after too many attempts"}), 403
+        return _err(
+            "Your PIN is locked after 5 wrong attempts. Please reset it using OTP recovery.",
+            "PIN_LOCKED",
+            403,
+        )
 
     if not verify_pin(pin, teacher["pin_hash"]):
         attempts = teacher.get("pin_attempts", 0) + 1
         locked = attempts >= 5
         upsert("teachers", user_id, {"pin_attempts": attempts, "pin_locked": locked})
-        return jsonify({"error": "Wrong PIN", "attempts": attempts}), 400
+        remaining = max(0, 5 - attempts)
+        if locked:
+            msg = "That PIN is wrong. You've been locked out — reset your PIN using OTP recovery."
+            code = "PIN_LOCKED"
+        else:
+            msg = f"That PIN is wrong. You have {remaining} attempt{'s' if remaining != 1 else ''} left."
+            code = "PIN_WRONG"
+        return _err(msg, code, 400, attempts=attempts)
 
     upsert("teachers", user_id, {"pin_attempts": 0})
     return jsonify({"message": "PIN verified"}), 200
@@ -622,7 +830,11 @@ def auth_pin_verify():
 def auth_pin_delete():
     user_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     upsert("teachers", user_id, {"pin_hash": None, "pin_attempts": 0, "pin_locked": False})
     return jsonify({"message": "PIN removed"}), 200
@@ -635,29 +847,41 @@ def auth_profile_request_otp():
     """Send OTP to a phone number for profile update verification. Requires valid JWT (teacher or student)."""
     user_id, err = require_role(request, "teacher", "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
     if not phone:
-        return jsonify({"error": "phone is required"}), 400
+        return _err("Please enter the phone number to verify.", "PHONE_REQUIRED", 400)
 
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}), 429)
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "You've made too many attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
+            429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
+        )
 
     otp, rl_headers = _store_otp(phone)
     if otp is None:
-        resp = make_response(jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
+            429,
+            headers=rl_headers,
+            retry_after=wait,
+        )
 
-    channel = _send_otp(phone, otp)
+    channel = _send_otp(phone, otp)  # OTPDeliveryError → blueprint errorhandler
     resp = make_response(jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}), 200)
     for k, v in rl_headers.items():
         resp.headers[k] = v
@@ -669,7 +893,11 @@ def auth_terms_accept():
     """Record that the teacher has accepted the current terms version. JWT required, no OTP."""
     user_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     terms_version = (body.get("terms_version") or "").strip() or "1.0"
@@ -688,19 +916,31 @@ def auth_update_me():
     """Update teacher profile. Requires valid JWT + OTP verification."""
     user_id, err = require_role(request, "teacher")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     verification_id = (body.get("verification_id") or "").strip()
     otp_code = (body.get("otp_code") or "").strip()
 
     if not verification_id or not otp_code:
-        return jsonify({"error": "verification_id and otp_code are required"}), 400
+        return _err(
+            "Please enter the code we sent to your phone to save your changes.",
+            "OTP_REQUIRED",
+            400,
+        )
 
     # Verify OTP
     otp_doc = get_doc("otp_verifications", verification_id)
     if not otp_doc:
-        return jsonify({"error": "OTP not found or expired"}), 400
+        return _err(
+            "This code has expired. Please request a new one.",
+            "OTP_EXPIRED",
+            400,
+        )
 
     attempts = otp_doc.get("attempts", 0)
     reset_ts = datetime.now(timezone.utc).timestamp() + _WINDOW
@@ -708,17 +948,35 @@ def auth_update_me():
 
     if attempts >= _OTP_VERIFY_LIMIT:
         delete_doc("otp_verifications", verification_id)
-        resp = make_response(jsonify({"error": "Too many attempts. Request a new OTP.", "retry_after": 0}), 429)
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
+        return _err(
+            "Too many incorrect attempts. Please request a new code.",
+            "OTP_TOO_MANY_ATTEMPTS",
+            429,
+            headers=rl_headers,
+            retry_after=0,
+        )
 
     method = otp_doc.get("method", "self")
+
+    def _reject_bad_otp_pm(code_msg: str, code_key: str):
+        new_attempts = attempts + 1
+        if new_attempts >= _OTP_VERIFY_LIMIT:
+            delete_doc("otp_verifications", verification_id)
+        else:
+            upsert("otp_verifications", verification_id, {"attempts": new_attempts})
+        bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
+        remaining = max(0, _OTP_VERIFY_LIMIT - new_attempts)
+        return _err(code_msg, code_key, 400, headers=bad_headers, attempts_remaining=remaining)
 
     if method == "verify":
         verify_sid = otp_doc.get("verify_sid")
         if not verify_sid:
-            return jsonify({"error": "Verification configuration error"}), 500
+            logger.error("Twilio Verify check requested but no verify_sid stored for ...%s", verification_id[-4:])
+            return _err(
+                "We couldn't verify this code — our SMS provider lost track of your session. Please request a new code.",
+                "VERIFY_CONFIG_MISSING",
+                500,
+            )
         import os
         from twilio.rest import Client
         from twilio.base.exceptions import TwilioRestException
@@ -728,38 +986,39 @@ def auth_update_me():
                 to=verification_id, code=otp_code
             )
             if check.status != "approved":
-                new_attempts = attempts + 1
-                if new_attempts >= _OTP_VERIFY_LIMIT:
-                    delete_doc("otp_verifications", verification_id)
-                else:
-                    upsert("otp_verifications", verification_id, {"attempts": new_attempts})
-                bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
-                resp = make_response(jsonify({"error": "Invalid OTP"}), 400)
-                for k, v in bad_headers.items():
-                    resp.headers[k] = v
-                return resp
+                return _reject_bad_otp_pm(
+                    "The code you entered is incorrect. Please try again.",
+                    "OTP_INVALID",
+                )
         except TwilioRestException as e:
             if e.code == 20404:
-                return jsonify({"error": "OTP not found or expired"}), 400
-            return jsonify({"error": "Verification service error"}), 500
+                return _err(
+                    "This code has expired. Please request a new one.",
+                    "OTP_EXPIRED",
+                    400,
+                )
+            logger.error("Twilio Verify check failed for ...%s — code=%s msg=%s", verification_id[-4:], e.code, e.msg)
+            return _err(
+                f"Could not verify your code: {e.msg or 'verification service error'}. Please try again.",
+                f"TWILIO_{e.code}" if e.code else "TWILIO_UNKNOWN",
+                500,
+            )
     else:
         if not verify_otp_hash(otp_code, otp_doc["otp_hash"]):
-            new_attempts = attempts + 1
-            if new_attempts >= _OTP_VERIFY_LIMIT:
-                delete_doc("otp_verifications", verification_id)
-            else:
-                upsert("otp_verifications", verification_id, {"attempts": new_attempts})
-            bad_headers = _rl_headers(_OTP_VERIFY_LIMIT, _OTP_VERIFY_LIMIT - new_attempts, reset_ts)
-            resp = make_response(jsonify({"error": "Invalid OTP"}), 400)
-            for k, v in bad_headers.items():
-                resp.headers[k] = v
-            return resp
+            return _reject_bad_otp_pm(
+                "The code you entered is incorrect. Please try again.",
+                "OTP_INVALID",
+            )
 
     delete_doc("otp_verifications", verification_id)
 
     teacher = get_doc("teachers", user_id)
     if not teacher:
-        return jsonify({"error": "Teacher not found"}), 404
+        return _err(
+            "We couldn't find your teacher profile. Please sign in again.",
+            "TEACHER_NOT_FOUND",
+            404,
+        )
 
     updates: dict = {}
     title = (body.get("title") or "").strip() or None
@@ -788,7 +1047,11 @@ def auth_update_me():
     if new_phone and new_phone != teacher.get("phone"):
         existing = query_single("teachers", [("phone", "==", new_phone)])
         if existing and existing["id"] != user_id:
-            return jsonify({"error": "Phone number already registered to another account"}), 409
+            return _err(
+                "That phone number is already registered to another account.",
+                "PHONE_TAKEN_BY_OTHER",
+                409,
+            )
         updates["phone"] = new_phone
         updates["token_version"] = (teacher.get("token_version") or 0) + 1
 
@@ -820,7 +1083,11 @@ def auth_student_lookup():
     logger.debug("[auth] student/lookup join_code=%r (raw)", raw_code)
 
     if not raw_code:
-        return jsonify({"error": "join_code is required"}), 400
+        return _err(
+            "Please enter the join code from your teacher.",
+            "JOIN_CODE_REQUIRED",
+            400,
+        )
 
     # Normalize: uppercase, strip whitespace — join codes are always stored uppercase
     code = raw_code.upper()
@@ -829,7 +1096,11 @@ def auth_student_lookup():
     cls = query_single("classes", [("join_code", "==", code)])
     if not cls:
         logger.info("[auth] student/lookup no class found for join_code=%s", code)
-        return jsonify({"error": "No class found. Check the code and try again."}), 404
+        return _err(
+            f"No class found for code '{code}'. Double-check the code with your teacher.",
+            "CLASS_NOT_FOUND",
+            404,
+        )
 
     teacher_id = cls.get("teacher_id", "")
     teacher = get_doc("teachers", teacher_id) if teacher_id else None
@@ -884,13 +1155,28 @@ def auth_student_register():
         first_name, surname, phone, class_id, class_join_code,
     )
 
-    if not first_name or not surname or not phone:
-        return jsonify({"error": "first_name, surname, and phone are required"}), 400
-    phone_valid, phone_err = _validate_phone(phone)
+    missing = []
+    if not first_name:
+        missing.append("first name")
+    if not surname:
+        missing.append("surname")
+    if not phone:
+        missing.append("phone number")
+    if missing:
+        return _err(
+            f"Please enter your {', '.join(missing)} to continue.",
+            "STUDENT_REGISTER_FIELDS_MISSING",
+            400,
+        )
+    phone_valid, phone_err, phone_code = _validate_phone(phone)
     if not phone_valid:
-        return jsonify({"error": phone_err}), 400
+        return _err(phone_err, phone_code, 400)
     if not class_id and not class_join_code and not manual_class_name:
-        return jsonify({"error": "class_id, class_join_code, or manual_class_name is required"}), 400
+        return _err(
+            "Please pick a class or enter your class join code before continuing.",
+            "CLASS_REFERENCE_REQUIRED",
+            400,
+        )
 
     # Resolve join code → class_id if not already provided
     if class_join_code and not class_id:
@@ -901,21 +1187,29 @@ def auth_student_register():
 
     # Reject duplicate phone
     if query_single("students", [("phone", "==", phone)]):
-        return jsonify({"error": "You already have a student account. Please sign in."}), 409
+        return _err(
+            "You already have a student account with this phone number. Please sign in instead.",
+            "PHONE_ALREADY_REGISTERED_STUDENT",
+            409,
+        )
     if query_single("teachers", [("phone", "==", phone)]):
-        return jsonify({"error": "This number is already registered as a teacher account."}), 409
+        return _err(
+            "This number is already registered as a teacher account. Please use the teacher sign-in.",
+            "PHONE_ALREADY_REGISTERED_TEACHER",
+            409,
+        )
 
     # IP rate limit
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
-        resp = make_response(
-            jsonify({"error": "Too many requests. Try again later.", "retry_after": _retry_after(ip_headers)}),
+        return _err(
+            "You've made too many attempts from this device. Please wait a few minutes and try again.",
+            "RATE_LIMIT_IP",
             429,
+            headers=ip_headers,
+            retry_after=_retry_after(ip_headers),
         )
-        for k, v in ip_headers.items():
-            resp.headers[k] = v
-        return resp
 
     otp, rl_headers = _store_otp(phone, pending_data={
         "role": "student",
@@ -926,15 +1220,17 @@ def auth_student_register():
         "manual_class_name": manual_class_name,
     })
     if otp is None:
-        resp = make_response(
-            jsonify({"error": "Too many OTP requests.", "retry_after": _retry_after(rl_headers)}),
+        wait = _retry_after(rl_headers)
+        mins = max(1, (wait + 59) // 60)
+        return _err(
+            f"You've requested too many codes. Please wait {mins} minute{'s' if mins != 1 else ''} before trying again.",
+            "RATE_LIMIT_OTP_SEND",
             429,
+            headers=rl_headers,
+            retry_after=wait,
         )
-        for k, v in rl_headers.items():
-            resp.headers[k] = v
-        return resp
 
-    channel = _send_otp(phone, otp)
+    channel = _send_otp(phone, otp)  # OTPDeliveryError → blueprint errorhandler
     logger.info("[auth] student/register OTP sent via %s for phone=%s", channel, phone)
     resp = make_response(
         jsonify({"message": "OTP sent", "channel": channel, "verification_id": phone}),
@@ -957,7 +1253,11 @@ def auth_student_update():
     """
     student_id, err = require_role(request, "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     updates: dict = {}
@@ -970,7 +1270,11 @@ def auth_student_update():
         updates["surname"] = surname
 
     if not updates:
-        return jsonify({"error": "No valid fields to update"}), 400
+        return _err(
+            "Nothing to update. Please change your first name or surname before saving.",
+            "NO_FIELDS_PROVIDED",
+            400,
+        )
 
     upsert("students", student_id, updates)
     updated = get_doc("students", student_id)
@@ -986,13 +1290,25 @@ def auth_student_delete(student_id: str):
     """
     caller_id, err = require_role(request, "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
     if caller_id != student_id:
-        return jsonify({"error": "Forbidden"}), 403
+        return _err(
+            "You can only delete your own account.",
+            "FORBIDDEN_NOT_OWNER",
+            403,
+        )
 
     student = get_doc("students", student_id)
     if not student:
-        return jsonify({"error": "Student not found"}), 404
+        return _err(
+            "We couldn't find your account. It may have already been deleted.",
+            "STUDENT_NOT_FOUND",
+            404,
+        )
 
     delete_doc("students", student_id)
     logger.info("[auth] student/%s deleted own account", student_id)
@@ -1009,14 +1325,22 @@ def auth_student_join_class():
     """
     student_id, err = require_role(request, "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     join_code = (body.get("join_code") or "").strip().upper()
     class_id = (body.get("class_id") or "").strip()
 
     if not join_code and not class_id:
-        return jsonify({"error": "join_code or class_id is required"}), 400
+        return _err(
+            "Please enter the join code from your teacher.",
+            "JOIN_CODE_REQUIRED",
+            400,
+        )
 
     cls = None
     if class_id:
@@ -1024,11 +1348,19 @@ def auth_student_join_class():
     if not cls and join_code:
         cls = query_single("classes", [("join_code", "==", join_code)])
     if not cls:
-        return jsonify({"error": "Class not found. Check with your teacher."}), 404
+        return _err(
+            "We couldn't find that class. Double-check the code with your teacher.",
+            "CLASS_NOT_FOUND",
+            404,
+        )
 
     student = get_doc("students", student_id)
     if not student:
-        return jsonify({"error": "Student not found"}), 404
+        return _err(
+            "We couldn't find your student account. Please sign in again.",
+            "STUDENT_NOT_FOUND",
+            404,
+        )
 
     existing_ids: list[str] = student.get("class_ids", [])
     # Backfill: if student has a single class_id but no class_ids list yet
@@ -1036,7 +1368,11 @@ def auth_student_join_class():
         existing_ids = [student["class_id"]]
 
     if cls["id"] in existing_ids:
-        return jsonify({"error": f"You are already enrolled in {cls.get('name', 'this class')}."}), 409
+        return _err(
+            f"You're already enrolled in {cls.get('name', 'this class')}.",
+            "ALREADY_ENROLLED",
+            409,
+        )
 
     new_ids = list(set(existing_ids + [cls["id"]]))
     upsert("students", student_id, {"class_ids": new_ids, "class_id": cls["id"]})
@@ -1077,11 +1413,19 @@ def auth_student_classes():
     """Return all classes the student is enrolled in, enriched with teacher/school."""
     student_id, err = require_role(request, "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     student = get_doc("students", student_id)
     if not student:
-        return jsonify({"error": "Student not found"}), 404
+        return _err(
+            "We couldn't find your student account. Please sign in again.",
+            "STUDENT_NOT_FOUND",
+            404,
+        )
 
     class_ids: list[str] = student.get("class_ids", [])
     if not class_ids and student.get("class_id"):
@@ -1114,23 +1458,39 @@ def auth_student_leave_class():
     """Remove a class from the student's enrollment."""
     student_id, err = require_role(request, "student")
     if err:
-        return jsonify({"error": err}), 401
+        return _err(
+            err or "Your session has expired. Please sign in again.",
+            "UNAUTHORIZED",
+            401,
+        )
 
     body = request.get_json(silent=True) or {}
     class_id = (body.get("class_id") or "").strip()
     if not class_id:
-        return jsonify({"error": "class_id is required"}), 400
+        return _err(
+            "Please pick the class you want to leave.",
+            "CLASS_ID_REQUIRED",
+            400,
+        )
 
     student = get_doc("students", student_id)
     if not student:
-        return jsonify({"error": "Student not found"}), 404
+        return _err(
+            "We couldn't find your student account. Please sign in again.",
+            "STUDENT_NOT_FOUND",
+            404,
+        )
 
     class_ids: list[str] = student.get("class_ids", [])
     if not class_ids and student.get("class_id"):
         class_ids = [student["class_id"]]
 
     if class_id not in class_ids:
-        return jsonify({"error": "You are not enrolled in this class"}), 404
+        return _err(
+            "You're not enrolled in that class.",
+            "NOT_ENROLLED",
+            404,
+        )
 
     new_ids = [c for c in class_ids if c != class_id]
     new_active = new_ids[0] if new_ids else None

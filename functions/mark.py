@@ -18,15 +18,33 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from functools import wraps
 
 from flask import Blueprint, jsonify, request
+from google.api_core import exceptions as gcp_exc
 
 from shared.annotator import annotate_image
 from shared.auth import require_role
 from shared.config import settings
-from shared.firestore_client import get_doc, increment_field, query, upsert
+from shared.errors import (
+    DuplicateSubmissionError,
+    ImageQualityRejectedError,
+    ImageTooLargeError,
+    MarkingSchemeError,
+    NeriahError,
+    RateLimitError,
+    StorageBucketMissingError,
+    StorageUploadError,
+    classify_vertex_exception,
+)
+from shared.firestore_client import delete_doc, get_doc, increment_field, query, upsert
 from shared.gcs_client import generate_signed_url, upload_bytes
-from shared.gemma_client import check_image_quality, grade_submission
+from shared.gemma_client import (
+    check_image_quality,
+    check_image_quality_strict,
+    grade_submission,
+    grade_submission_strict,
+)
 from shared.guardrails import log_ai_interaction, validate_output
 from shared.models import GradingVerdict, Mark
 from shared.router import AIRequestType, route_ai_request
@@ -68,6 +86,40 @@ def _increment_mark_usage(teacher_id: str) -> None:
         })
 
 
+def handle_neriah_errors(fn):
+    """Catch NeriahError and return its typed JSON response. Convert known
+    GCP exceptions to NeriahError too. Let anything else 500 with a generic
+    message so we don't leak internals."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except NeriahError as err:
+            logger.warning(
+                "NeriahError in %s: code=%s technical=%s",
+                fn.__name__, err.error_code, err.technical_detail,
+            )
+            return jsonify(err.to_response()), err.http_status
+        except gcp_exc.NotFound as exc:
+            err = StorageBucketMissingError(str(exc)) if "bucket" in str(exc).lower() \
+                  else classify_vertex_exception(exc)
+            logger.exception("GCP NotFound in %s", fn.__name__)
+            return jsonify(err.to_response()), err.http_status
+        except (gcp_exc.GoogleAPIError, gcp_exc.RetryError) as exc:
+            err = classify_vertex_exception(exc)
+            logger.exception("GCP API error in %s", fn.__name__)
+            return jsonify(err.to_response()), err.http_status
+        except Exception as exc:
+            logger.exception("Unhandled error in %s", fn.__name__)
+            return jsonify({
+                "error": "An unexpected error occurred. Our team has been notified.",
+                "error_code": "UNEXPECTED_ERROR",
+                "retryable": True,
+                "technical": f"{type(exc).__name__}: {str(exc)[:200]}",
+            }), 500
+    return wrapper
+
+
 _QUALITY_REJECTION: dict[str, str] = {
     "low light":     "The photo is too dark. Move to better lighting and try again.",
     "underexposed":  "The photo is too dark. Move to better lighting and try again.",
@@ -91,6 +143,7 @@ def _quality_message(reason: str) -> str:
 
 
 @mark_bp.post("/mark")
+@handle_neriah_errors
 def mark():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -98,9 +151,7 @@ def mark():
 
     # ── Rate limit ────────────────────────────────────────────────────────────
     if not _check_mark_rate_limit(teacher_id):
-        return jsonify({
-            "error": f"Daily marking limit of {_MARK_DAILY_LIMIT} reached. Resets at midnight UTC."
-        }), 429
+        raise RateLimitError(f"Teacher {teacher_id} hit daily limit of {_MARK_DAILY_LIMIT}")
 
     # Expect multipart/form-data: image file + JSON fields
     image_file = request.files.get("image")
@@ -114,21 +165,82 @@ def mark():
         return jsonify({"error": "student_id and answer_key_id are required"}), 400
 
     # ── Image size guard ──────────────────────────────────────────────────────
-    image_file.seek(0, 2)
-    if image_file.tell() > _MAX_IMAGE_BYTES:
-        return jsonify({"error": "Image too large (max 20 MB)"}), 413
-    image_file.seek(0)
-
     image_bytes = image_file.read()
+
+    # ── Duplicate-submission guard ────────────────────────────────────────────
+    # One graded submission per (student_id, answer_key_id). If one exists,
+    # the client must opt into overwrite via replace=true. Keeps analytics
+    # counts honest when a retry happens after a transient grading failure.
+    replace_existing = (request.form.get("replace") or "").lower() in ("true", "1", "yes")
+
+    existing_marks = query(
+        "marks",
+        [
+            ("student_id", "==", student_id),
+            ("answer_key_id", "==", answer_key_id),
+        ],
+    )
+
+    if existing_marks and not replace_existing:
+        existing = existing_marks[0]
+        err = DuplicateSubmissionError(
+            f"Existing mark {existing.get('id') or existing.get('mark_id')} for "
+            f"student={student_id} answer_key={answer_key_id}"
+        )
+        err.extra = {
+            "existing_mark_id": existing.get("id") or existing.get("mark_id"),
+            "existing_status": existing.get("status") or (
+                "approved" if existing.get("approved") else "graded"
+            ),
+            "existing_approved": bool(existing.get("approved")),
+            "existing_timestamp": existing.get("timestamp"),
+        }
+        raise err
+
+    if replace_existing and existing_marks:
+        for old in existing_marks:
+            old_id = old.get("id") or old.get("mark_id")
+            if old_id:
+                try:
+                    delete_doc("marks", old_id)
+                    logger.info("[mark] Replaced: deleted old mark %s", old_id)
+                except Exception:
+                    logger.exception("[mark] Failed to delete old mark %s", old_id)
+
+        old_subs = query(
+            "student_submissions",
+            [
+                ("student_id", "==", student_id),
+                ("answer_key_id", "==", answer_key_id),
+            ],
+        )
+        for old_sub in old_subs:
+            sub_id = old_sub.get("id") or old_sub.get("submission_id")
+            if sub_id:
+                try:
+                    delete_doc("student_submissions", sub_id)
+                    logger.info("[mark] Replaced: deleted old submission %s", sub_id)
+                except Exception:
+                    logger.exception("[mark] Failed to delete old submission %s", sub_id)
+
+    if len(image_bytes) > _MAX_IMAGE_BYTES:
+        raise ImageTooLargeError(f"Received {len(image_bytes)} bytes, max {_MAX_IMAGE_BYTES}")
 
     # ── Route: all AI calls in this endpoint go to cloud ─────────────────────
     route_ai_request(AIRequestType.GRADING)  # always AIRoute.CLOUD on the backend
 
     # ── 1. Image quality gate ─────────────────────────────────────────────────
-    quality = check_image_quality(image_bytes)
+    quality = check_image_quality_strict(image_bytes)
     if not quality.get("pass", True):
-        msg = _quality_message(quality.get("reason", ""))
-        return jsonify({"error": "image_quality_rejected", "message": msg}), 422
+        reason = (quality.get("reason") or "").lower()
+        suggestion = quality.get("suggestion") or "Retake the photo in better lighting."
+        user_msg = next(
+            (msg for key, msg in _QUALITY_REJECTION.items() if key in reason),
+            suggestion,
+        )
+        err = ImageQualityRejectedError(f"quality={reason}")
+        err.user_message = user_msg
+        raise err
 
     # ── Fetch answer key and class info ───────────────────────────────────────
     answer_key = get_doc("answer_keys", answer_key_id)
@@ -136,6 +248,9 @@ def mark():
         return jsonify({"error": "Answer key not found"}), 404
     if answer_key["teacher_id"] != teacher_id:
         return jsonify({"error": "forbidden"}), 403
+
+    if not answer_key.get("questions"):
+        raise MarkingSchemeError("Answer key missing or has no questions")
 
     student = get_doc("students", student_id)
     if not student:
@@ -150,8 +265,8 @@ def mark():
     class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
     user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
     _t0 = time.time()
-    raw_verdicts = grade_submission(image_bytes, answer_key, education_level,
-                                    user_context=user_ctx)
+    raw_verdicts = grade_submission_strict(image_bytes, answer_key, education_level,
+                                           user_context=user_ctx)
     _latency_ms = int((time.time() - _t0) * 1000)
 
     # ── Output guardrails: validate grading JSON ──────────────────────────────
@@ -192,7 +307,16 @@ def mark():
 
     # ── 5. Upload to Cloud Storage (private) ─────────────────────────────────
     blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
-    upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+    try:
+        upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+    except gcp_exc.NotFound as exc:
+        raise StorageBucketMissingError(
+            f"Bucket {settings.GCS_BUCKET_MARKED} does not exist"
+        ) from exc
+    except Exception as exc:
+        raise StorageUploadError(
+            f"Upload to {settings.GCS_BUCKET_MARKED} failed: {exc}"
+        ) from exc
     # Generate a 7-day signed URL for the response and persistent storage.
     marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 

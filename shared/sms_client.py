@@ -1,7 +1,11 @@
 # shared/sms_client.py
-# Multi-channel OTP delivery.
+# Multi-channel OTP delivery with structured error reporting.
 #
 # Channel priority:
+#   0. Dev bypass — when ALLOW_BYPASS=true AND (phone's country prefix is in
+#      DEV_BYPASS_COUNTRY OR phone is in DEV_BYPASS_PHONES), skip delivery
+#      entirely. Verify endpoint accepts "000000". Country matches take
+#      priority over exact-number matches in the log output.
 #   1. WhatsApp Cloud API — pre-approved auth template ("neriah_otp").
 #      Skipped gracefully when WHATSAPP_ACCESS_TOKEN is not configured.
 #   2. Twilio SMS:
@@ -10,19 +14,87 @@
 #
 # Dev fallback:
 #   Nothing configured → OTP logged at WARNING. Channel returned is "log".
+#
+# Error contract:
+#   send_otp() raises OTPDeliveryError carrying both a human-readable
+#   `message` and a machine-readable `error_code`. Callers forward both
+#   into the API response body.
 
 from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 _SELF_METHOD: dict = {"method": "self", "verify_sid": None}
+_BYPASS_METHOD: dict = {"method": "bypass", "verify_sid": None}
+BYPASS_OTP_CODE = "000000"
+
+
+# ── Structured error ──────────────────────────────────────────────────────────
+
+@dataclass
+class OTPDeliveryError(Exception):
+    """Raised when all OTP channels fail. Carries user-facing + machine codes."""
+    message: str
+    error_code: str
+    technical_detail: str = ""
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"[{self.error_code}] {self.message} ({self.technical_detail})"
 
 
 class _ChannelNotConfiguredError(Exception):
-    pass
+    """Internal — channel has no credentials, try the next one."""
+
+
+# ── Dev bypass ────────────────────────────────────────────────────────────────
+
+def _bypass_enabled() -> bool:
+    return os.environ.get("ALLOW_BYPASS", "false").strip().lower() in ("true", "1", "yes")
+
+
+def _bypass_phones() -> set[str]:
+    raw = os.environ.get("DEV_BYPASS_PHONES", "")
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _bypass_countries() -> list[str]:
+    """Normalised country-code prefixes (always start with '+')."""
+    raw = os.environ.get("DEV_BYPASS_COUNTRY", "")
+    prefixes: list[str] = []
+    for item in raw.split(","):
+        p = item.strip()
+        if not p:
+            continue
+        if not p.startswith("+"):
+            p = "+" + p
+        prefixes.append(p)
+    return prefixes
+
+
+def _bypass_match(phone: str) -> str | None:
+    """Return a human-readable reason when `phone` should bypass OTP, else None.
+
+    Country-prefix matches take priority over exact-number matches, so when
+    both rules apply the logged reason names the country. Bypass only runs
+    when ALLOW_BYPASS is truthy — the env var is the kill-switch.
+    """
+    if not _bypass_enabled():
+        return None
+    for prefix in _bypass_countries():
+        if phone.startswith(prefix):
+            return f"country prefix {prefix}"
+    if phone in _bypass_phones():
+        return "whitelisted phone"
+    return None
+
+
+def is_bypassed(phone: str) -> bool:
+    """Return True when OTP delivery + verification should be skipped for this number."""
+    return _bypass_match(phone) is not None
 
 
 # ── WhatsApp ──────────────────────────────────────────────────────────────────
@@ -36,30 +108,62 @@ def _send_otp_whatsapp(phone: str, otp_code: str) -> None:
     import requests
 
     wa_number = phone.lstrip("+")
-    resp = requests.post(
-        f"https://graph.facebook.com/v19.0/{wa_phone_id}/messages",
-        headers={"Authorization": f"Bearer {wa_token}", "Content-Type": "application/json"},
-        json={
-            "messaging_product": "whatsapp",
-            "to": wa_number,
-            "type": "template",
-            "template": {
-                "name": "neriah_otp",
-                "language": {"code": "en"},
-                "components": [
-                    {"type": "body", "parameters": [{"type": "text", "text": otp_code}]},
-                    {"type": "button", "sub_type": "url", "index": "0",
-                     "parameters": [{"type": "text", "text": otp_code}]},
-                ],
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v19.0/{wa_phone_id}/messages",
+            headers={"Authorization": f"Bearer {wa_token}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": wa_number,
+                "type": "template",
+                "template": {
+                    "name": "neriah_otp",
+                    "language": {"code": "en"},
+                    "components": [
+                        {"type": "body", "parameters": [{"type": "text", "text": otp_code}]},
+                        {"type": "button", "sub_type": "url", "index": "0",
+                         "parameters": [{"type": "text", "text": otp_code}]},
+                    ],
+                },
             },
-        },
-        timeout=10,
-    )
+            timeout=10,
+        )
+    except requests.Timeout as exc:
+        logger.error("WhatsApp send timed out for ...%s: %s", phone[-4:], exc)
+        raise OTPDeliveryError(
+            message="WhatsApp took too long to respond. Please try SMS instead.",
+            error_code="WHATSAPP_TIMEOUT",
+            technical_detail=str(exc),
+        ) from exc
+    except requests.ConnectionError as exc:
+        logger.error("WhatsApp connection error for ...%s: %s", phone[-4:], exc)
+        raise OTPDeliveryError(
+            message="Could not reach WhatsApp. Please check your connection and try again.",
+            error_code="WHATSAPP_UNREACHABLE",
+            technical_detail=str(exc),
+        ) from exc
+
     if resp.status_code != 200:
-        raise Exception(f"WhatsApp API error {resp.status_code}: {resp.text}")
+        logger.error("WhatsApp API %s for ...%s: %s", resp.status_code, phone[-4:], resp.text)
+        raise OTPDeliveryError(
+            message=f"WhatsApp rejected the request (HTTP {resp.status_code}). Please try SMS.",
+            error_code="WHATSAPP_REJECTED",
+            technical_detail=f"HTTP {resp.status_code}: {resp.text[:300]}",
+        )
 
 
 # ── Twilio SMS ────────────────────────────────────────────────────────────────
+
+# Twilio error code → (user message, machine code).
+_TWILIO_ERROR_MAP: dict[int, tuple[str, str]] = {
+    21408: ("SMS is not supported in your country. Please contact support.", "TWILIO_COUNTRY_BLOCKED"),
+    21211: ("The phone number you entered is invalid. Please check and try again.", "TWILIO_INVALID_NUMBER"),
+    20003: ("SMS service authentication failed. Please contact support.",           "TWILIO_AUTH_FAILED"),
+    21614: ("This number cannot receive SMS. Please use a mobile number.",          "TWILIO_NOT_MOBILE"),
+    21610: ("This number has opted out of SMS. Please reply START to +15186083556 or use WhatsApp.", "TWILIO_OPTED_OUT"),
+    21612: ("SMS cannot be delivered to this number. Please try WhatsApp instead.", "TWILIO_UNDELIVERABLE"),
+}
+
 
 def _send_otp_sms(phone: str, otp_code: str) -> dict:
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -95,9 +199,39 @@ def _send_otp_sms(phone: str, otp_code: str) -> dict:
             return {"method": "messages", "verify_sid": None}
 
     except TwilioRestException as exc:
-        logger.error("Twilio error for ...%s — code: %s  status: %s  message: %s",
-                     phone[-4:], exc.code, exc.status, exc.msg)
-        raise
+        logger.error(
+            "Twilio error for ...%s — code: %s  http_status: %s  msg: %s",
+            phone[-4:], exc.code, exc.status, exc.msg,
+        )
+        mapped = _TWILIO_ERROR_MAP.get(exc.code or 0)
+        if mapped:
+            user_msg, err_code = mapped
+        else:
+            user_msg = f"SMS failed: {exc.msg}" if exc.msg else "SMS failed. Please try WhatsApp or try again later."
+            err_code = f"TWILIO_{exc.code}" if exc.code else "TWILIO_UNKNOWN"
+        raise OTPDeliveryError(
+            message=user_msg,
+            error_code=err_code,
+            technical_detail=f"Twilio code={exc.code} http={exc.status} msg={exc.msg}",
+        ) from exc
+
+    except (ConnectionError, TimeoutError) as exc:
+        logger.error("Twilio connection error for ...%s: %s", phone[-4:], exc)
+        raise OTPDeliveryError(
+            message="Could not reach SMS service. Please check your connection and try again.",
+            error_code="SMS_UNREACHABLE",
+            technical_detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        # Catch-all: twilio SDK raising something outside the above types,
+        # or a socket-level error during the HTTP call. Surface the type.
+        logger.exception("Unexpected Twilio failure for ...%s", phone[-4:])
+        raise OTPDeliveryError(
+            message=f"SMS service error: {type(exc).__name__}. Please try again in a moment.",
+            error_code="SMS_UNKNOWN",
+            technical_detail=f"{type(exc).__name__}: {exc}",
+        ) from exc
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -106,11 +240,23 @@ def send_otp(phone: str, otp_code: str, preferred_channel: str = "sms") -> tuple
     """Send OTP via WhatsApp (if configured) then SMS fallback.
 
     Returns (channel_used, method_info).
-    channel_used: "whatsapp" | "sms" | "log"
-    method_info:  {"method": "self"|"verify", "verify_sid": str|None}
+    channel_used: "whatsapp" | "sms" | "log" | "bypass"
+    method_info:  {"method": "self"|"verify"|"bypass", "verify_sid": str|None}
+
+    Raises:
+        OTPDeliveryError — when every configured channel failed. The exception
+        carries a user-facing `message` and a machine-readable `error_code`.
     """
+    bypass_reason = _bypass_match(phone)
+    if bypass_reason is not None:
+        logger.warning(
+            "[BYPASS] OTP bypassed for %s — number ...%s",
+            bypass_reason, phone[-4:],
+        )
+        return "bypass", _BYPASS_METHOD
+
     channels = ["whatsapp", "sms"] if preferred_channel == "whatsapp" else ["sms", "whatsapp"]
-    any_configured = False
+    last_error: OTPDeliveryError | None = None
 
     for channel in channels:
         try:
@@ -125,16 +271,18 @@ def send_otp(phone: str, otp_code: str, preferred_channel: str = "sms") -> tuple
                 return "sms", {"method": method, "verify_sid": sms_info.get("verify_sid")}
         except _ChannelNotConfiguredError:
             continue
-        except Exception as exc:
-            any_configured = True
-            logger.warning("OTP via %s failed for ...%s: %s", channel, phone[-4:], exc)
+        except OTPDeliveryError as exc:
+            last_error = exc
+            logger.warning(
+                "OTP via %s failed for ...%s — code=%s msg=%s",
+                channel, phone[-4:], exc.error_code, exc.message,
+            )
             continue
 
-    if any_configured:
-        logger.error("All configured OTP channels failed for ...%s", phone[-4:])
-        raise Exception("Failed to send verification code. Please try again.")
+    if last_error is not None:
+        raise last_error
 
-    # Dev fallback
+    # No channel was configured at all — dev fallback.
     logger.warning(
         "[DEV] No OTP channels configured. OTP for ...%s: %s",
         phone[-4:], otp_code,
