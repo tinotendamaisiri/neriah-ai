@@ -487,8 +487,9 @@ function AppShell() {
           {content}
         </ErrorBoundary>
       </View>
-      {/* One-time model download prompt — shown after login only if device is capable */}
-      {user && <DownloadPromptModal />}
+      {/* Startup "Download AI model" modal removed — users download from
+          Settings or via the in-session Wi-Fi nudge. DownloadPromptModal is
+          kept below as dead code for now in case we reintroduce it later. */}
     </NavigationContainer>
   );
 }

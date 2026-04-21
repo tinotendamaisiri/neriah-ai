@@ -252,8 +252,10 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     const prompted = await SecureStore.getItemAsync(DOWNLOAD_PROMPTED_KEY).catch(() => null);
     if (prompted === 'true') return;
 
-    // Show the one-time prompt
-    setShowPrompt(true);
+    // Startup modal is disabled — users opt in via Settings or the Wi-Fi nudge.
+    // Mark as prompted so the nudge gate (requires DOWNLOAD_PROMPTED_KEY='true'
+    // at line ~384) opens on the next Wi-Fi connection.
+    await SecureStore.setItemAsync(DOWNLOAD_PROMPTED_KEY, 'true').catch(() => {});
   }, []);
 
   // ── acceptDownload ─────────────────────────────────────────────────────────
