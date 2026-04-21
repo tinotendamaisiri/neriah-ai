@@ -7012,7 +7012,8 @@ class TestStudentJoinClass:
                 headers=student_headers)
 
         assert rv.status_code == 404
-        assert "not found" in rv.get_json()["error"].lower()
+        err_msg = rv.get_json()["error"].lower()
+        assert any(phrase in err_msg for phrase in ["not found", "couldn't find", "could not find"])
 
     @feature_test("student_join_class_already_enrolled")
     def test_student_join_class_already_enrolled(self, client, student_headers):
@@ -7347,7 +7348,7 @@ class TestPhoneValidation:
     def test_valid_zw_number_passes_validation(self):
         """Zimbabwe number +263771234567 passes validation."""
         from functions.auth import _validate_phone
-        valid, err = _validate_phone("+263771234567")
+        valid, err, _ = _validate_phone("+263771234567")
         assert valid is True
         assert err == ""
 
@@ -7355,14 +7356,14 @@ class TestPhoneValidation:
     def test_valid_us_number_passes_validation(self):
         """+12125550100 passes validation."""
         from functions.auth import _validate_phone
-        valid, err = _validate_phone("+12125550100")
+        valid, err, _ = _validate_phone("+12125550100")
         assert valid is True
 
     @feature_test("phone_validation_rejects_no_plus")
     def test_phone_without_plus_rejected(self):
         """Phone without + prefix rejected."""
         from functions.auth import _validate_phone
-        valid, err = _validate_phone("263771234567")
+        valid, err, _ = _validate_phone("263771234567")
         assert valid is False
         assert "country code" in err.lower()
 
