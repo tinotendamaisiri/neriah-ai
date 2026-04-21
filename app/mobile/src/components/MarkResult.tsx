@@ -1,14 +1,36 @@
 // src/components/MarkResult.tsx
-// Displays the annotated image + per-question score breakdown after marking.
+// Post-scan result view: zoomable annotated image, editable verdict rows,
+// overall feedback, and Approve/Skip buttons.
+//
+// Edits are batched in local state — no API call per edit. On "Approve &
+// Next Student", updateMark fires with the full edited verdict list; on
+// "Skip", nothing is persisted and the caller is just told to advance.
 
-import React from 'react';
-import { View, Text, Image, ScrollView, StyleSheet } from 'react-native';
-import { MarkResult, Student, GradingVerdictEnum } from '../types';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  Image,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Dimensions,
+} from 'react-native';
+import { MarkResult, Student, GradingVerdict, GradingVerdictEnum } from '../types';
 import { COLORS } from '../constants/colors';
+import { updateMark } from '../services/api';
+import EditVerdictModal from './EditVerdictModal';
 
 interface MarkResultProps {
   result: MarkResult;
   student: Student;
+  /** Called after Approve succeeds OR after Skip is tapped. Parent uses it
+   *  to advance the queue + update session counters. */
+  onDone: (info: { approved: boolean }) => void;
 }
 
 const VERDICT_COLOUR: Record<GradingVerdictEnum, string> = {
@@ -23,79 +45,307 @@ const VERDICT_LABEL: Record<GradingVerdictEnum, string> = {
   partial: '~',
 };
 
-export default function MarkResultComponent({ result, student }: MarkResultProps) {
+const { width: SW } = Dimensions.get('window');
+const IMAGE_H = 420;
+
+export default function MarkResultComponent({ result, student, onDone }: MarkResultProps) {
   const displayName = `${student.first_name} ${student.surname}`;
 
+  // ── Editable state (batched; saved on Approve) ──────────────────────────────
+  const initialVerdicts = useMemo<GradingVerdict[]>(() => result.verdicts ?? [], [result]);
+  const [verdicts, setVerdicts] = useState<GradingVerdict[]>(initialVerdicts);
+  const [editedQuestions, setEditedQuestions] = useState<Set<number>>(new Set());
+  const [overallFeedback, setOverallFeedback] = useState('');
+  const [editingVerdict, setEditingVerdict] = useState<GradingVerdict | null>(null);
+  const [approving, setApproving] = useState(false);
+
+  // ── Live totals (recompute from local state each render) ────────────────────
+  const totalAwarded = verdicts.reduce((s, v) => s + (v.awarded_marks ?? 0), 0);
+  const totalMax = verdicts.reduce((s, v) => s + (v.max_marks ?? 0), 0) || result.max_score || 1;
+  const percentage = totalMax > 0 ? Math.round((totalAwarded / totalMax) * 100) : 0;
   const pctColour =
-    result.percentage >= 75
-      ? COLORS.success
-      : result.percentage >= 50
-      ? COLORS.warning
-      : COLORS.error;
+    percentage >= 75 ? COLORS.success : percentage >= 50 ? COLORS.warning : COLORS.error;
+
+  // ── Zoom (iOS: real pinch + pan via ScrollView. Android: buttons only.) ─────
+  const imageScrollRef = useRef<ScrollView>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  const setZoom = (next: number) => {
+    const clamped = Math.max(1, Math.min(5, next));
+    setZoomLevel(clamped);
+    // iOS supports programmatic zoom via scrollResponderZoomTo. Android's
+    // RN <ScrollView> ignores `maximumZoomScale`, so the buttons simply
+    // scale the inner Image view on Android via transform (fallback).
+    const node: any = imageScrollRef.current;
+    if (Platform.OS === 'ios' && node?.scrollResponderZoomTo) {
+      const visibleW = SW - 32;
+      const w = visibleW / clamped;
+      const h = IMAGE_H / clamped;
+      node.scrollResponderZoomTo({
+        x: (visibleW - w) / 2,
+        y: (IMAGE_H - h) / 2,
+        width: w,
+        height: h,
+        animated: true,
+      });
+    }
+  };
+
+  // ── Verdict row tap → open modal ────────────────────────────────────────────
+  const openEdit = (v: GradingVerdict) => setEditingVerdict(v);
+  const closeEdit = () => setEditingVerdict(null);
+
+  const saveEdit = (next: GradingVerdict) => {
+    setVerdicts((prev) =>
+      prev.map((v) => (v.question_number === next.question_number ? next : v)),
+    );
+    setEditedQuestions((prev) => new Set(prev).add(next.question_number));
+    setEditingVerdict(null);
+  };
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+  const wasEdited = editedQuestions.size > 0 || overallFeedback.trim().length > 0;
+
+  const handleApprove = async () => {
+    if (!result.mark_id) {
+      Alert.alert('Cannot approve', 'This mark has no server ID. Try submitting again.');
+      return;
+    }
+    setApproving(true);
+    try {
+      await updateMark(result.mark_id, {
+        verdicts: verdicts.map((v) => ({
+          question_number: v.question_number,
+          verdict: v.verdict,
+          awarded_marks: v.awarded_marks,
+          max_marks: v.max_marks,
+          feedback: v.feedback,
+        })),
+        overall_feedback: overallFeedback.trim() || undefined,
+        manually_edited: wasEdited,
+        approved: true,
+      });
+      onDone({ approved: true });
+    } catch (err: any) {
+      Alert.alert('Could not approve', err.message ?? 'Please try again.');
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleSkip = () => {
+    // No API call — mark stays approved=false on the backend.
+    onDone({ approved: false });
+  };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.studentName}>{displayName}</Text>
+    <View style={styles.flex}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.studentName}>{displayName}</Text>
 
-      {/* Score badge */}
-      <View style={styles.scoreBadge}>
-        <Text style={styles.scoreNumber}>
-          {result.score}/{result.max_score}
-        </Text>
-        <Text style={[styles.scorePercent, { color: pctColour }]}>
-          {result.percentage}%
-        </Text>
-      </View>
+        {/* Live score (reflects local edits) */}
+        <View style={styles.scoreBadge}>
+          <Text style={styles.scoreNumber}>
+            {totalAwarded}/{totalMax}
+          </Text>
+          <Text style={[styles.scorePercent, { color: pctColour }]}>{percentage}%</Text>
+          {wasEdited && <Text style={styles.editedFlag}>· edited</Text>}
+        </View>
 
-      {/* Annotated image */}
-      <Image
-        source={{ uri: result.marked_image_url }}
-        style={styles.annotatedImage}
-        resizeMode="contain"
+        {/* Zoomable annotated image */}
+        <View style={styles.imageCard}>
+          <ScrollView
+            ref={imageScrollRef}
+            style={styles.imageScroll}
+            contentContainerStyle={styles.imageScrollContent}
+            maximumZoomScale={5}
+            minimumZoomScale={1}
+            bouncesZoom
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+            centerContent
+            pinchGestureEnabled
+          >
+            <Image
+              source={{ uri: result.marked_image_url }}
+              style={[
+                styles.annotatedImage,
+                Platform.OS === 'android' && { transform: [{ scale: zoomLevel }] },
+              ]}
+              resizeMode="contain"
+            />
+          </ScrollView>
+
+          {/* Zoom controls, top-right over the image */}
+          <View style={styles.zoomControls}>
+            <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(zoomLevel + 0.5)}>
+              <Text style={styles.zoomBtnText}>＋</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(zoomLevel - 0.5)}>
+              <Text style={styles.zoomBtnText}>－</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(1)}>
+              <Text style={styles.zoomBtnText}>⊡</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Per-question verdict rows (tap to edit) */}
+        {verdicts.length > 0 && (
+          <>
+            <Text style={styles.breakdownHeading}>Question Breakdown</Text>
+            <Text style={styles.breakdownHint}>Tap a row to edit the verdict.</Text>
+            {verdicts.map((verdict) => {
+              const edited = editedQuestions.has(verdict.question_number);
+              return (
+                <TouchableOpacity
+                  key={verdict.question_number}
+                  style={styles.verdictRow}
+                  onPress={() => openEdit(verdict)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.questionNum}>Q{verdict.question_number}</Text>
+                  <Text
+                    style={[styles.verdictIcon, { color: VERDICT_COLOUR[verdict.verdict] }]}
+                  >
+                    {VERDICT_LABEL[verdict.verdict]}
+                  </Text>
+                  <Text style={styles.marks}>
+                    {verdict.awarded_marks}/{verdict.max_marks}
+                  </Text>
+                  <View style={styles.rowTail}>
+                    {verdict.feedback ? (
+                      <Text numberOfLines={2} style={styles.feedback}>
+                        {verdict.feedback}
+                      </Text>
+                    ) : null}
+                    {edited && <Text style={styles.editedBadge}>Edited</Text>}
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </>
+        )}
+
+        {/* Overall feedback */}
+        <Text style={styles.breakdownHeading}>Overall Feedback</Text>
+        <TextInput
+          style={styles.overallInput}
+          value={overallFeedback}
+          onChangeText={setOverallFeedback}
+          placeholder="Add overall feedback for this student..."
+          placeholderTextColor={COLORS.gray500}
+          multiline
+          textAlignVertical="top"
+        />
+
+        {/* Actions */}
+        <TouchableOpacity
+          style={[styles.approveBtn, approving && styles.btnDisabled]}
+          onPress={handleApprove}
+          disabled={approving}
+        >
+          {approving ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <Text style={styles.approveBtnText}>Approve & Next Student</Text>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.skipBtn, approving && styles.btnDisabled]}
+          onPress={handleSkip}
+          disabled={approving}
+        >
+          <Text style={styles.skipBtnText}>Skip (don't approve)</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      <EditVerdictModal
+        visible={editingVerdict !== null}
+        verdict={editingVerdict}
+        onCancel={closeEdit}
+        onSave={saveEdit}
       />
-
-      {/* Per-question breakdown */}
-      {result.verdicts.length > 0 && (
-        <>
-          <Text style={styles.breakdownHeading}>Question Breakdown</Text>
-          {result.verdicts.map((verdict) => (
-            <View key={verdict.question_number} style={styles.verdictRow}>
-              <Text style={styles.questionNum}>Q{verdict.question_number}</Text>
-              <Text style={[styles.verdictIcon, { color: VERDICT_COLOUR[verdict.verdict] }]}>
-                {VERDICT_LABEL[verdict.verdict]}
-              </Text>
-              <Text style={styles.marks}>
-                {verdict.awarded_marks}/{verdict.max_marks}
-              </Text>
-              {verdict.feedback && (
-                <Text style={styles.feedback}>{verdict.feedback}</Text>
-              )}
-            </View>
-          ))}
-        </>
-      )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1, backgroundColor: COLORS.white },
   container: { flex: 1, backgroundColor: COLORS.white },
-  content: { padding: 16, paddingBottom: 32 },
+  content: { padding: 16, paddingBottom: 40 },
   studentName: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
-  scoreBadge: { flexDirection: 'row', alignItems: 'baseline', gap: 10, marginBottom: 16 },
+
+  scoreBadge: {
+    flexDirection: 'row', alignItems: 'baseline', gap: 10, marginBottom: 16,
+  },
   scoreNumber: { fontSize: 36, fontWeight: 'bold', color: COLORS.text },
   scorePercent: { fontSize: 20, fontWeight: '600' },
-  annotatedImage: {
-    width: '100%', height: 420, borderRadius: 8,
-    backgroundColor: COLORS.background, marginBottom: 24,
+  editedFlag: { fontSize: 13, color: COLORS.amber500, fontWeight: '600', marginLeft: 4 },
+
+  imageCard: {
+    width: '100%', height: IMAGE_H, borderRadius: 8,
+    backgroundColor: COLORS.background, marginBottom: 24, overflow: 'hidden',
   },
-  breakdownHeading: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 8 },
+  imageScroll: { flex: 1 },
+  imageScrollContent: { flexGrow: 1, justifyContent: 'center' },
+  annotatedImage: { width: '100%', height: IMAGE_H },
+  zoomControls: {
+    position: 'absolute', top: 8, right: 8, flexDirection: 'column', gap: 6,
+  },
+  zoomBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  zoomBtnText: { color: COLORS.white, fontSize: 20, fontWeight: '700' },
+
+  breakdownHeading: {
+    fontSize: 16, fontWeight: '600', color: COLORS.text,
+    marginTop: 12, marginBottom: 4,
+  },
+  breakdownHint: { fontSize: 12, color: COLORS.gray500, marginBottom: 8 },
+
   verdictRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    paddingVertical: 10, paddingHorizontal: 10,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    borderRadius: 6,
   },
   questionNum: { width: 32, fontSize: 14, color: COLORS.gray500 },
   verdictIcon: { width: 20, fontSize: 18, fontWeight: 'bold' },
   marks: { fontSize: 13, color: COLORS.text, minWidth: 44 },
-  feedback: { fontSize: 12, color: COLORS.textLight, marginLeft: 4, flex: 1 },
+  rowTail: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  feedback: { fontSize: 12, color: COLORS.textLight, flexShrink: 1 },
+  editedBadge: {
+    fontSize: 10, fontWeight: '700', color: COLORS.amber500,
+    backgroundColor: COLORS.amber50, paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 4, overflow: 'hidden',
+  },
+  chevron: { fontSize: 20, color: COLORS.gray200, marginLeft: 2 },
+
+  overallInput: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 14, color: COLORS.text, minHeight: 80, marginBottom: 20,
+  },
+
+  approveBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12,
+    paddingVertical: 15, alignItems: 'center', marginTop: 8,
+  },
+  approveBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 16 },
+
+  skipBtn: {
+    borderWidth: 1.5, borderColor: COLORS.gray200, borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center', marginTop: 10,
+  },
+  skipBtnText: { color: COLORS.text, fontWeight: '600', fontSize: 15 },
+
+  btnDisabled: { opacity: 0.5 },
 });

@@ -106,6 +106,11 @@ export interface GradingVerdict {
   awarded_marks: number;
   max_marks: number;
   feedback?: string;
+  /** Backend grading pipeline may populate these; UI shows them in the
+   *  edit modal when present and falls back to "—" otherwise. */
+  question_text?: string;
+  student_answer?: string;
+  expected_answer?: string;
 }
 
 export interface Mark {

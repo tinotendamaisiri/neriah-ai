@@ -32,12 +32,24 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 import { enhanceImage } from '../services/imageEnhance';
 import { checkImageQuality } from '../services/imageQuality';
 import { COLORS } from '../constants/colors';
 
 const { width: SW, height: SH } = Dimensions.get('window');
+
+// ── Frame geometry ────────────────────────────────────────────────────────────
+// The visible overlay frame is 95% of the screen width (up from 84%). We keep
+// the A4-ish 1.35 portrait ratio because that's what an exercise-book page
+// looks like. The height is capped to 90% of screen height so the top/bottom
+// masks (and the shutter control row) still have room.
+const FRAME_W = SW * 0.95;
+const FRAME_H = Math.min(FRAME_W * 1.35, SH * 0.78);
+// Computed once so the renderer, the mask, and the crop step all use the same
+// numbers.
+const FRAME_TOP_MARGIN = SH * 0.06;
 
 export interface InAppCameraProps {
   visible: boolean;
@@ -91,8 +103,51 @@ export default function InAppCamera({
       });
       if (!photo?.uri) return;
 
+      // 1b. Crop to the on-screen overlay frame. The sensor image is much
+      //     larger than the preview (typically 3024×4032 vs ~400×850 points),
+      //     so we scale the overlay rect by capturedWidth / previewWidth and
+      //     apply the same factor in y. Falls back to the uncropped URI if
+      //     manipulateAsync throws or if the image dimensions look wrong.
+      let workingUri = photo.uri;
+      try {
+        const capturedW = photo.width;
+        const capturedH = photo.height;
+        if (capturedW && capturedH && capturedW > 0 && capturedH > 0) {
+          // The preview dimensions equal the screen width/height in points.
+          // The sensor is captured in landscape-native orientation even when
+          // the phone is held portrait — expo-camera rotates the bytes for us
+          // so `photo.width` is the final portrait width.
+          const scaleX = capturedW / SW;
+          const scaleY = capturedH / SH;
+          const frameLeftPreview = (SW - FRAME_W) / 2;
+          const frameTopPreview = FRAME_TOP_MARGIN;
+
+          const cropX = Math.max(0, Math.round(frameLeftPreview * scaleX));
+          const cropY = Math.max(0, Math.round(frameTopPreview  * scaleY));
+          const cropW = Math.min(
+            capturedW - cropX,
+            Math.round(FRAME_W * scaleX),
+          );
+          const cropH = Math.min(
+            capturedH - cropY,
+            Math.round(FRAME_H * scaleY),
+          );
+
+          if (cropW > 0 && cropH > 0) {
+            const cropped = await ImageManipulator.manipulateAsync(
+              photo.uri,
+              [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }],
+              { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG },
+            );
+            workingUri = cropped.uri;
+          }
+        }
+      } catch (cropErr) {
+        console.warn('[InAppCamera] crop failed — using uncropped image:', cropErr);
+      }
+
       // 2. Enhance: resize to ≤2048px + EXIF normalise
-      const enhancedUri = await enhanceImage(photo.uri);
+      const enhancedUri = await enhanceImage(workingUri);
 
       // 3. Quality heuristics on the enhanced URI
       const qualityResult = await checkImageQuality(enhancedUri);
@@ -237,7 +292,7 @@ export default function InAppCamera({
       {/* Dim mask + teal corner brackets guide the teacher to align the page  */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         {/* Top mask */}
-        <View style={[styles.mask, { height: SH * 0.12 }]} />
+        <View style={[styles.mask, { height: FRAME_TOP_MARGIN }]} />
         {/* Middle row */}
         <View style={styles.middleRow}>
           <View style={[styles.mask, { flex: 1 }]} />
@@ -258,26 +313,14 @@ export default function InAppCamera({
       </View>
 
       {/* ── Top controls ──────────────────────────────────────────────────── */}
+      {/* Only a close button — teachers don't need flash/flip toggles on an
+          A4 exercise book; removing them simplifies the shooting UI. */}
       <View style={styles.topControls}>
-        {/* Close */}
         <TouchableOpacity style={styles.iconBtn} onPress={handleClose}>
           <Ionicons name="close" size={20} color={COLORS.white} />
         </TouchableOpacity>
-
-        {/* Flash label */}
-        <View style={styles.flashLabel}>
-          <Text style={styles.flashLabelText}>{flashLabel}</Text>
-        </View>
-
-        {/* Flip + Flash row */}
-        <View style={styles.topRight}>
-          <TouchableOpacity style={styles.iconBtn} onPress={toggleFacing}>
-            <Ionicons name="camera-reverse-outline" size={20} color={COLORS.white} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={toggleFlash}>
-            <Ionicons name="flash-outline" size={20} color={COLORS.white} />
-          </TouchableOpacity>
-        </View>
+        <View />
+        <View />
       </View>
 
       {/* ── Capture button ─────────────────────────────────────────────────── */}
@@ -317,11 +360,6 @@ export default function InAppCamera({
     </Modal>
   );
 }
-
-// ── Geometry ──────────────────────────────────────────────────────────────────
-
-const FRAME_W = SW * 0.84;
-const FRAME_H = FRAME_W * 1.35; // A4-ish portrait ratio
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 

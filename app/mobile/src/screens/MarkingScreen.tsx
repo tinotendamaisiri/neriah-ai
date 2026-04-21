@@ -16,8 +16,9 @@ import {
   FlatList,
   Modal,
   ScrollView,
+  Platform,
 } from 'react-native';
-import { useRoute, useFocusEffect } from '@react-navigation/native';
+import { useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { listStudents, listAnswerKeys, submitMark } from '../services/api';
@@ -41,6 +42,7 @@ type RouteParams = RootStackParamList['Mark'];
 
 export default function MarkingScreen() {
   const route = useRoute<any>();
+  const navigation = useNavigation<any>();
   const { user } = useAuth();
   const { suppressNudge } = useModel();
 
@@ -63,6 +65,12 @@ export default function MarkingScreen() {
   const [marking, setMarking] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
 
+  // Session counters — reset when the class changes. Used by the completion
+  // overlay after the teacher rolls off the end of the class list.
+  const [approvedCount, setApprovedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
+  const [sessionDone, setSessionDone] = useState(false);
+
   // Modal state for pickers
   const [studentPickerVisible, setStudentPickerVisible] = useState(false);
   const [answerKeyPickerVisible, setAnswerKeyPickerVisible] = useState(false);
@@ -80,6 +88,9 @@ export default function MarkingScreen() {
       setSelectedStudent(null);
       setSelectedAnswerKey(null);
       setResult(null);
+      setApprovedCount(0);
+      setSkippedCount(0);
+      setSessionDone(false);
       loadClassData(classId);
     }, [classId]),
   );
@@ -176,30 +187,134 @@ export default function MarkingScreen() {
     }
   };
 
-  const handleNextStudent = () => {
-    // Advance to next student in the sorted list
-    if (selectedStudent && students.length > 0) {
-      const idx = students.findIndex((s) => s.id === selectedStudent.id);
-      const next = students[idx + 1] ?? null;
-      setSelectedStudent(next);
+  // Advance to the next student in the class list. When we run off the end,
+  // show the "all students graded" completion overlay instead of silently
+  // leaving the teacher on an empty capture screen.
+  const advanceStudent = () => {
+    if (!selectedStudent || students.length === 0) {
+      setResult(null);
+      return;
     }
-    setResult(null);
+    const idx = students.findIndex((s) => s.id === selectedStudent.id);
+    const next = students[idx + 1] ?? null;
+    if (next) {
+      setSelectedStudent(next);
+      setResult(null);
+    } else {
+      // Past the end — kick into the done state.
+      setSelectedStudent(null);
+      setResult(null);
+      setSessionDone(true);
+    }
   };
 
-  if (result && selectedStudent) {
+  const handleResultDone = ({ approved }: { approved: boolean }) => {
+    if (approved) setApprovedCount((n) => n + 1);
+    else setSkippedCount((n) => n + 1);
+    advanceStudent();
+  };
+
+  const handleBackToHome = () => {
+    setSessionDone(false);
+    navigation.navigate('Home');
+  };
+
+  const handleMarkAnotherClass = () => {
+    setSessionDone(false);
+    setApprovedCount(0);
+    setSkippedCount(0);
+    setSelectedStudent(null);
+    setSelectedAnswerKey(null);
+    setResult(null);
+    navigation.navigate('Home');
+  };
+
+  // "Done" in the header — only once the teacher has actually done work this
+  // session. Avoids showing the confirm dialog on a fresh-load back-tap.
+  const handleExitSession = () => {
+    const a = approvedCount;
+    const k = skippedCount;
+    Alert.alert(
+      'Done marking?',
+      `You have approved ${a} student${a === 1 ? '' : 's'} and skipped ${k}. Exit the mark flow?`,
+      [
+        { text: 'Keep Going', style: 'cancel' },
+        { text: 'Done', style: 'default', onPress: () => navigation.goBack() },
+      ],
+    );
+  };
+
+  const sessionHasProgress = approvedCount + skippedCount > 0;
+
+  // Completion overlay — shown after the teacher rolls off the last student.
+  if (sessionDone) {
     return (
-      <View style={styles.container}>
-        <MarkResultComponent result={result} student={selectedStudent} />
-        <TouchableOpacity style={styles.nextButton} onPress={handleNextStudent}>
-          <Text style={styles.nextButtonText}>Next Student</Text>
+      <View style={styles.doneContainer}>
+        <View style={styles.doneCheckCircle}>
+          <Ionicons name="checkmark" size={56} color={COLORS.white} />
+        </View>
+        <Text style={styles.doneTitle}>All students graded</Text>
+        {className ? <Text style={styles.doneClass}>in {className}</Text> : null}
+        <Text style={styles.doneSubtitle}>
+          {approvedCount} of {students.length} approved
+          {skippedCount > 0 ? `, ${skippedCount} skipped` : ''}
+        </Text>
+
+        <TouchableOpacity style={styles.donePrimaryBtn} onPress={handleBackToHome}>
+          <Text style={styles.donePrimaryBtnText}>Back to Home</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.doneSecondaryBtn} onPress={handleMarkAnotherClass}>
+          <Text style={styles.doneSecondaryBtnText}>Mark another class</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  const showResult = result && selectedStudent;
+
+  // Header: shared between the capture view and the result view. Done button
+  // is gated on `sessionHasProgress` so it doesn't appear on a cold load.
+  // "Switch student" is offered while a result is on-screen so the teacher
+  // can jump to any student in the class, not just the queue-next one.
+  const renderHeader = () => (
+    <View style={styles.markHeader}>
+      {showResult ? (
+        <TouchableOpacity
+          style={styles.headerLinkBtn}
+          onPress={() => { setValidationError(''); setStudentPickerVisible(true); }}
+          accessibilityLabel="Switch student"
+        >
+          <Ionicons name="swap-horizontal" size={16} color={COLORS.teal500} />
+          <Text style={styles.headerLinkText}>Switch student</Text>
+        </TouchableOpacity>
+      ) : (
+        <View />
+      )}
+      {sessionHasProgress ? (
+        <TouchableOpacity
+          style={styles.headerDoneBtn}
+          onPress={handleExitSession}
+          accessibilityLabel="Done marking"
+        >
+          <Text style={styles.headerDoneText}>Done</Text>
+        </TouchableOpacity>
+      ) : (
+        <View />
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      {!classId ? (
+      {renderHeader()}
+
+      {showResult ? (
+        <MarkResultComponent
+          result={result!}
+          student={selectedStudent!}
+          onDone={handleResultDone}
+        />
+      ) : !classId ? (
         <View style={styles.noClass}>
           <Text style={styles.noClassText}>
             Go to the Home tab and tap a class to start marking.
@@ -279,7 +394,11 @@ export default function MarkingScreen() {
         </ScrollView>
       )}
 
-      {/* Student picker modal */}
+      {/* Student picker modal — teachers can manually jump to any student at
+          any time; the queue advance ("Approve & Next Student") is a
+          convenience, not a forced sequence. Picking here also drops any
+          on-screen result so the teacher returns to the capture view for the
+          newly-chosen student. */}
       <PickerModal
         visible={studentPickerVisible}
         title="Select Student"
@@ -291,6 +410,7 @@ export default function MarkingScreen() {
         }))}
         onSelect={(id) => {
           setSelectedStudent(students.find((s) => s.id === id) ?? null);
+          setResult(null);
           setStudentPickerVisible(false);
         }}
       />
@@ -426,6 +546,64 @@ const styles = StyleSheet.create({
     padding: 16, alignItems: 'center',
   },
   nextButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
+
+  // ── Marking-flow header (Switch student / Done) ──────────────────────────
+  markHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 54 : 20,
+    paddingBottom: 8,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    minHeight: 48,
+  },
+  headerLinkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: 6, paddingHorizontal: 8,
+  },
+  headerLinkText: { fontSize: 14, fontWeight: '600', color: COLORS.teal500 },
+  headerDoneBtn: {
+    paddingVertical: 6, paddingHorizontal: 12,
+    borderRadius: 8, backgroundColor: COLORS.teal50,
+  },
+  headerDoneText: { fontSize: 14, fontWeight: '700', color: COLORS.teal500 },
+
+  // ── Completion overlay ────────────────────────────────────────────────────
+  doneContainer: {
+    flex: 1, backgroundColor: COLORS.white,
+    justifyContent: 'center', alignItems: 'center', padding: 32,
+  },
+  doneCheckCircle: {
+    width: 96, height: 96, borderRadius: 48,
+    backgroundColor: COLORS.teal500,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 24,
+  },
+  doneTitle: {
+    fontSize: 24, fontWeight: 'bold', color: COLORS.text,
+    textAlign: 'center',
+  },
+  doneClass: {
+    fontSize: 16, color: COLORS.textLight, marginTop: 4, textAlign: 'center',
+  },
+  doneSubtitle: {
+    fontSize: 14, color: COLORS.gray500, marginTop: 16, marginBottom: 32,
+    textAlign: 'center',
+  },
+  donePrimaryBtn: {
+    backgroundColor: COLORS.teal500, borderRadius: 12,
+    paddingVertical: 15, paddingHorizontal: 32,
+    alignSelf: 'stretch', alignItems: 'center',
+  },
+  donePrimaryBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 16 },
+  doneSecondaryBtn: {
+    borderWidth: 1.5, borderColor: COLORS.gray200, borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 32,
+    alignSelf: 'stretch', alignItems: 'center',
+    marginTop: 10,
+  },
+  doneSecondaryBtnText: { color: COLORS.text, fontWeight: '600', fontSize: 15 },
 });
 
 const modal = StyleSheet.create({
