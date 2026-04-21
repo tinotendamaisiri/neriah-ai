@@ -475,11 +475,20 @@ export const updateMark = async (
   return res.data;
 };
 
-/** Bulk-approve multiple marks in a single call. */
+/**
+ * Bulk-approve graded student submissions. Takes submission IDs (not mark IDs) —
+ * approval flips status=graded → status=approved on student_submissions and
+ * mirrors approved=true onto the linked marks. Submissions not in "graded"
+ * state, or not owned by the caller, are skipped (reported per id).
+ */
 export const approveAllMarks = async (
-  mark_ids: string[],
-): Promise<{ approved_count: number; skipped_count: number }> => {
-  const res = await client.post('/marks/approve-bulk', { mark_ids });
+  submission_ids: string[],
+): Promise<{
+  approved: number;
+  skipped: Array<{ sub_id: string; reason: string }>;
+  errors: Array<{ sub_id: string; error: string }>;
+}> => {
+  const res = await client.post('/submissions/approve-bulk', { submission_ids });
   return res.data;
 };
 

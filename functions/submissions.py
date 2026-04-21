@@ -3,6 +3,7 @@ Student submission management — teacher-side endpoints.
 
 GET   /api/submissions                        — list submissions by homework_id or class_id
 POST  /api/submissions/<sub_id>/approve       — approve a graded submission (visible to student)
+POST  /api/submissions/approve-bulk           — approve many graded submissions in one call
 PATCH /api/submissions/<sub_id>/override      — override score and/or feedback
 """
 
@@ -178,6 +179,152 @@ def approve_submission(sub_id: str):
             logger.warning("Student grade notification failed (non-fatal)")
 
     return jsonify({"message": "approved", "submission_id": sub_id}), 200
+
+
+# ── POST /api/submissions/approve-bulk ───────────────────────────────────────
+
+@submissions_bp.post("/submissions/approve-bulk")
+def approve_bulk_submissions():
+    """
+    Bulk-approve a list of graded submissions in a single call.
+
+    Semantics per submission id:
+      - Must exist, be owned by the calling teacher, and have status="graded".
+      - On success: sets status=approved on student_submissions and
+        approved=True on the linked marks document.
+      - Any submission failing a precondition is SKIPPED with a reason, not
+        errored — callers get partial success.
+
+    Batching:
+      - Grouped by student_id; one summary push per student
+        ("N grades available") instead of N pushes.
+      - Weakness-profile recalculation runs once per unique student using
+        a representative approved submission (reduces Firestore read load).
+      - Training samples are still collected per-submission — the collection
+        itself is cheap and per-submission granularity is needed for ML.
+
+    Body:     {"submission_ids": ["sub_abc", ...]}
+    200 OK:   {"approved": N, "skipped": [{"sub_id": "...", "reason": "..."}], "errors": []}
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    body = request.get_json(silent=True) or {}
+    submission_ids = body.get("submission_ids")
+
+    if not isinstance(submission_ids, list) or not submission_ids:
+        return jsonify({"error": "submission_ids must be a non-empty list"}), 400
+
+    now = _now_iso()
+    approved_by_student: dict[str, list[dict]] = {}
+    skipped: list[dict] = []
+    errors: list[dict] = []
+
+    # Cache answer_key docs so we don't reload the same homework N times.
+    hw_cache: dict[str, dict | None] = {}
+
+    for sub_id in submission_ids:
+        if not isinstance(sub_id, str) or not sub_id:
+            skipped.append({"sub_id": str(sub_id), "reason": "invalid id"})
+            continue
+        try:
+            sub = get_doc("student_submissions", sub_id)
+            if not sub:
+                skipped.append({"sub_id": sub_id, "reason": "not found"})
+                continue
+
+            ak_id = sub.get("answer_key_id", "")
+            if ak_id not in hw_cache:
+                hw_cache[ak_id] = get_doc("answer_keys", ak_id) if ak_id else None
+            hw = hw_cache[ak_id]
+            if not hw or hw.get("teacher_id") != teacher_id:
+                skipped.append({"sub_id": sub_id, "reason": "forbidden"})
+                continue
+
+            if sub.get("status") != "graded":
+                skipped.append({
+                    "sub_id": sub_id,
+                    "reason": f"status is {sub.get('status')}, expected graded",
+                })
+                continue
+
+            upsert("student_submissions", sub_id, {
+                "status": "approved",
+                "approved_at": now,
+                "approved_by": teacher_id,
+            })
+
+            mark_id = sub.get("mark_id")
+            if mark_id:
+                upsert("marks", mark_id, {"approved": True, "approved_at": now})
+
+            approved_sub = {**sub, "status": "approved", "approved_at": now, "_hw": hw}
+
+            # Per-submission training sample (cheap, granular).
+            try:
+                collect_training_sample(approved_sub, teacher_id)
+            except Exception:
+                logger.exception("Training sample collection failed for sub %s", sub_id)
+
+            student_id = sub.get("student_id", "")
+            if student_id:
+                approved_by_student.setdefault(student_id, []).append(approved_sub)
+
+        except Exception as exc:
+            logger.exception("Bulk approve failed for sub %s", sub_id)
+            errors.append({"sub_id": sub_id, "error": f"{type(exc).__name__}: {exc}"})
+
+    # ── Per-student post-processing: weakness updates + one summary push ─────
+    for student_id, subs in approved_by_student.items():
+        count = len(subs)
+        # update_student_weaknesses processes exactly one submission per call —
+        # it merges that sub's verdicts into the student's weakness/strength
+        # history with a read-modify-write on the student doc (no batch/list
+        # signature). So we loop per submission; passing a single
+        # "representative" sub would silently drop verdict data from the other
+        # N-1 submissions in the batch.
+        #
+        # Ordering matters: the function prepends new weaknesses on each call,
+        # so the LAST call's verdicts end up at the front of the student's
+        # weaknesses list. We sort by graded_at ascending so the most recently
+        # graded submission is iterated last and lands at the front — matching
+        # the "newest first" convention elsewhere in the app.
+        sorted_subs = sorted(subs, key=lambda s: s.get("graded_at") or "")
+        for sub in sorted_subs:
+            try:
+                update_student_weaknesses(student_id, sub)
+            except Exception:
+                logger.exception(
+                    "Weakness update failed for student %s sub %s",
+                    student_id, sub.get("id"),
+                )
+
+        # One summary push per student.
+        try:
+            from functions.push import send_student_notification
+            if count == 1:
+                hw = subs[0].get("_hw") or {}
+                hw_title = hw.get("title") or hw.get("subject") or "Homework"
+                score = subs[0].get("score", 0)
+                max_score = subs[0].get("max_score", 0)
+                title = "Grade Ready"
+                message = f"Your {hw_title} has been graded: {score}/{max_score}"
+                data = {"screen": "StudentResults", "mark_id": subs[0].get("mark_id")}
+            else:
+                title = "Grades Ready"
+                message = f"{count} homework grades are available."
+                data = {"screen": "StudentResults"}
+            send_student_notification(student_id, title, message, data)
+        except Exception:
+            logger.warning("Bulk-approve push failed for student %s (non-fatal)", student_id)
+
+    approved_count = sum(len(v) for v in approved_by_student.values())
+    return jsonify({
+        "approved": approved_count,
+        "skipped": skipped,
+        "errors": errors,
+    }), 200
 
 
 # ── PATCH /api/submissions/<sub_id>/override ──────────────────────────────────

@@ -321,6 +321,11 @@ def mark():
     marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
     # ── 6. Write Mark to Firestore ────────────────────────────────────────────
+    # approved=False: the teacher sees the result immediately on the device,
+    # but the mark is not yet visible to the student. Teacher must Approve
+    # (via /marks/<id> PUT with approved=True, or the bulk endpoint) after
+    # reviewing. Matches the AI-batch flow: graded → approved is a teacher
+    # action, not an automatic step.
     mark_doc = Mark(
         student_id=student_id,
         class_id=answer_key["class_id"],
@@ -332,9 +337,29 @@ def mark():
         verdicts=verdicts,
         marked_image_url=marked_url,
         source="teacher_scan",
-        approved=True,
+        approved=False,
     )
     upsert("marks", mark_doc.id, mark_doc.model_dump())
+
+    # ── Create companion student_submissions row ──────────────────────────────
+    # Parity with AI-batch flow: every graded artifact has a submission row so
+    # downstream readers (homework detail, analytics, teacher inbox) see it.
+    submission_id = f"sub_{uuid.uuid4().hex[:12]}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    upsert("student_submissions", submission_id, {
+        "id": submission_id,
+        "student_id": student_id,
+        "class_id": answer_key["class_id"],
+        "answer_key_id": answer_key_id,
+        "teacher_id": teacher_id,
+        "mark_id": mark_doc.id,
+        "source": "teacher_scan",
+        "status": "graded",
+        "image_urls": [marked_url] if marked_url else [],
+        "submitted_at": now_iso,
+        "graded_at": now_iso,
+    })
+
     _increment_mark_usage(teacher_id)
 
     # ── Audit log ─────────────────────────────────────────────────────────────
@@ -344,19 +369,24 @@ def mark():
     )
 
     # ── 7. Notify student ──────────────────────────────────────────────────────
-    try:
-        from functions.push import send_student_notification
-        student_doc = get_doc("students", student_id)
-        student_name = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "Student"
-        hw_title = answer_key.get("title") or answer_key.get("subject") or "Assignment"
-        send_student_notification(
-            student_id,
-            "Your work has been marked",
-            f"{hw_title}: {score}/{max_score} ({percentage}%)",
-            {"screen": "StudentResults", "mark_id": mark_doc.id},
-        )
-    except Exception:
-        pass  # non-fatal
+    # Only push when this mark is being published immediately (approved=True).
+    # Manual teacher scans now start as approved=False — the teacher must review
+    # and approve before the student is alerted. The push fires from the approve
+    # pipeline (approve_submission / approve-bulk) instead.
+    if mark_doc.approved:
+        try:
+            from functions.push import send_student_notification
+            student_doc = get_doc("students", student_id)
+            student_name = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "Student"
+            hw_title = answer_key.get("title") or answer_key.get("subject") or "Assignment"
+            send_student_notification(
+                student_id,
+                "Your work has been marked",
+                f"{hw_title}: {score}/{max_score} ({percentage}%)",
+                {"screen": "StudentResults", "mark_id": mark_doc.id},
+            )
+        except Exception:
+            pass  # non-fatal
 
     # ── 8. Return result ──────────────────────────────────────────────────────
     return jsonify({
@@ -386,7 +416,17 @@ def update_mark(mark_id: str):
     allowed = {"score", "approved", "verdicts", "overall_feedback", "manually_edited", "feedback"}
     updates = {k: v for k, v in body.items() if k in allowed}
 
-    if "score" in updates and "max_score" in mark_doc:
+    # When the client sends edited verdicts, derive the aggregate score from
+    # them. This keeps score and per-question awarded_marks in lockstep — the
+    # mobile client no longer has to compute totals, it just sends the rows.
+    if "verdicts" in updates and isinstance(updates["verdicts"], list):
+        total_awarded = sum(float(v.get("awarded_marks", 0)) for v in updates["verdicts"] if isinstance(v, dict))
+        total_max = sum(float(v.get("max_marks", 0)) for v in updates["verdicts"] if isinstance(v, dict))
+        updates["score"] = total_awarded
+        updates["max_score"] = total_max
+        updates["percentage"] = round((total_awarded / total_max) * 100, 1) if total_max > 0 else 0.0
+        updates["manually_edited"] = True
+    elif "score" in updates and "max_score" in mark_doc:
         updates["percentage"] = round(
             float(updates["score"]) / float(mark_doc["max_score"]) * 100, 1
         )

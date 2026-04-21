@@ -114,13 +114,16 @@ export default function GradingResultsScreen() {
   }, [loadData]);
 
   const handleApproveAll = useCallback(() => {
-    const pendingIds = submissions
-      .filter(s => isPending(s) && s.mark_id)
-      .map(s => s.mark_id ?? '');
-    if (pendingIds.length === 0) return;
+    // Approve All flips already-graded (status==='graded') submissions to
+    // approved in bulk. It does NOT trigger grading — that's /grade-all.
+    // Skip anything missing a submission id or already approved.
+    const toApprove = submissions
+      .filter(s => s.status === 'graded' && !s.approved && s.id)
+      .map(s => s.id as string);
+    if (toApprove.length === 0) return;
     Alert.alert(
       'Approve All',
-      `Release grades to all ${pendingIds.length} student${pendingIds.length === 1 ? '' : 's'}?`,
+      `Release grades to all ${toApprove.length} student${toApprove.length === 1 ? '' : 's'}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -128,10 +131,10 @@ export default function GradingResultsScreen() {
           onPress: async () => {
             setApproving(true);
             try {
-              const result = await approveAllMarks(pendingIds);
+              const result = await approveAllMarks(toApprove);
               Alert.alert(
                 'Done',
-                `${result.approved_count} grade${result.approved_count === 1 ? '' : 's'} released to students.`,
+                `${result.approved} homework${result.approved === 1 ? '' : 's'} approved.`,
               );
               loadData();
             } catch (err: any) {
