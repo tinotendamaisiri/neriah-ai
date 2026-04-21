@@ -222,9 +222,11 @@ def list_submissions():
         direction="ASCENDING",
     )
 
-    # Enrich with student names and answer key titles (with simple caches)
+    # Enrich with student names, answer key titles, and score data from the
+    # linked mark document. All three caches dedupe repeated lookups.
     student_cache: dict[str, dict | None] = {}
     ak_cache: dict[str, dict | None] = {}
+    mark_cache: dict[str, dict | None] = {}
 
     for sub in subs:
         # Student name
@@ -247,6 +249,19 @@ def list_submissions():
             ak = ak_cache.get(ak_id)
             if ak:
                 sub["answer_key_title"] = ak.get("title") or ak.get("subject") or ""
+
+        # Score data from the linked mark — only for graded/approved rows.
+        # Without this, the mobile homework-detail list shows "0/?" for any
+        # submission whose score lives on the mark doc rather than the sub.
+        mark_id = sub.get("mark_id", "")
+        if mark_id and sub.get("status") in ("graded", "approved"):
+            if mark_id not in mark_cache:
+                mark_cache[mark_id] = get_doc("marks", mark_id)
+            mark = mark_cache.get(mark_id)
+            if mark:
+                sub["score"] = mark.get("score", 0)
+                sub["max_score"] = mark.get("max_score", 0)
+                sub["percentage"] = mark.get("percentage", 0)
 
         # Ensure source field is present
         sub.setdefault("source", "student_submission")

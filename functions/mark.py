@@ -435,6 +435,46 @@ def update_mark(mark_id: str):
     return jsonify({**mark_doc, **updates}), 200
 
 
+@mark_bp.get("/marks/<mark_id>")
+@handle_neriah_errors
+def get_mark(mark_id: str):
+    """
+    Retrieve a single mark by id, enriched with student_name, answer_key_title,
+    and class_name for display. Teacher must own the mark.
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    mark = get_doc("marks", mark_id)
+    if not mark:
+        return jsonify({"error": "Mark not found"}), 404
+
+    if mark.get("teacher_id") != teacher_id:
+        return jsonify({"error": "forbidden"}), 403
+
+    # Enrichment — student name, answer key title, class name.
+    student_id = mark.get("student_id", "")
+    student = get_doc("students", student_id) if student_id else None
+    if student:
+        mark["student_name"] = (
+            f"{student.get('first_name', '')} {student.get('surname', '')}".strip()
+        )
+    else:
+        mark["student_name"] = "Unknown"
+
+    ak_id = mark.get("answer_key_id", "")
+    ak = get_doc("answer_keys", ak_id) if ak_id else None
+    if ak:
+        mark["answer_key_title"] = ak.get("title") or ak.get("subject") or ""
+        class_id = ak.get("class_id", "")
+        cls = get_doc("classes", class_id) if class_id else None
+        if cls:
+            mark["class_name"] = cls.get("name", "")
+
+    return jsonify(mark), 200
+
+
 @mark_bp.get("/marks/student/<student_id>")
 def student_marks(student_id: str):
     """Student fetches their own marks."""

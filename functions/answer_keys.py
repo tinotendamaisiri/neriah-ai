@@ -466,6 +466,15 @@ def create_answer_key():
     _fill_empty_question_texts(questions_raw, stored_qp_text)
 
     total_marks = sum(q.get("marks", 0) for q in questions_raw)
+    # Reject grading-impossible homeworks. Sum-of-marks must be > 0 or the
+    # AI grading pipeline has nothing to score against and the result is a
+    # useless empty shell.
+    if total_marks <= 0:
+        return jsonify({
+            "error": "Homework must have at least one question with marks greater than zero. "
+                     "Add questions with their marks before saving.",
+            "error_code": "INVALID_HOMEWORK_NO_MARKS",
+        }), 400
     key = AnswerKey(
         class_id=class_id,
         teacher_id=teacher_id,
@@ -617,6 +626,21 @@ def update_answer_key(key_id: str):
     if "questions" in updates:
         qp = question_paper_text or key.get("question_paper_text") or ""
         _fill_empty_question_texts(updates["questions"], qp)
+
+    # Block updates that would drive total_marks to zero. We only check when
+    # total_marks is actually in this update (questions were touched) so
+    # status/due-date-only updates on legacy zero-mark keys still go through.
+    if "total_marks" in updates:
+        try:
+            new_total = float(updates["total_marks"])
+        except (TypeError, ValueError):
+            new_total = 0.0
+        if new_total <= 0:
+            return jsonify({
+                "error": "Homework must have at least one question with marks greater than zero. "
+                         "Add questions with their marks before saving.",
+                "error_code": "INVALID_HOMEWORK_NO_MARKS",
+            }), 400
 
     upsert("answer_keys", key_id, updates)
 
@@ -1048,6 +1072,14 @@ def create_homework_with_scheme():
         due_date = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
 
     total_marks = max_total_marks or sum(q.get("marks", 0) for q in questions_raw)
+    # Reject AI-generated shells with zero marks — Gemma can occasionally
+    # return an empty/ malformed scheme, and we don't want to persist it.
+    if total_marks <= 0:
+        return jsonify({
+            "error": "The generated scheme has no marks. Try uploading a clearer question paper, "
+                     "or add questions and marks manually before saving.",
+            "error_code": "INVALID_HOMEWORK_NO_MARKS",
+        }), 400
     key = AnswerKey(
         class_id=class_id,
         teacher_id=teacher_id,
@@ -1235,6 +1267,14 @@ def regenerate_answer_key_scheme(key_id: str):
         return jsonify({"error": "No question paper provided for regeneration and none stored on this answer key."}), 400
 
     total_marks = sum(q.get("marks", 0) for q in questions_raw)
+    # Reject AI re-generation that comes back with zero marks — don't clobber
+    # a working scheme with an empty one just because the LLM failed.
+    if total_marks <= 0:
+        return jsonify({
+            "error": "Regeneration produced no marks. The existing scheme is unchanged. "
+                     "Try a different question paper or edit the questions manually.",
+            "error_code": "INVALID_HOMEWORK_NO_MARKS",
+        }), 400
     upsert("answer_keys", key_id, {
         "questions": questions_raw,
         "total_marks": total_marks,

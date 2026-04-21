@@ -620,7 +620,9 @@ export default function HomeworkDetailScreen() {
                   style={styles.submissionRow}
                   activeOpacity={0.75}
                   onPress={() => {
-                    if (s.status === 'graded' && s.mark_id) {
+                    // Both `graded` (AI-marked, teacher hasn't approved) and
+                    // `approved` (final) are reviewable — open GradingDetail.
+                    if ((s.status === 'graded' || s.status === 'approved') && s.mark_id) {
                       navigation.navigate('GradingDetail', {
                         mark_id: s.mark_id,
                         student_name: s.student_name ?? 'Student',
@@ -641,16 +643,23 @@ export default function HomeworkDetailScreen() {
                   </View>
                   <View style={[
                     styles.submissionBadge,
-                    s.status === 'graded' ? styles.badgeGraded : styles.badgePending,
+                    // Green (teal) only when the teacher has approved. `graded`
+                    // gets amber so students/teachers don't see a premature
+                    // "final" colour for AI-only results.
+                    s.status === 'approved' ? styles.badgeGraded : styles.badgePending,
                   ]}>
                     <Text style={[
                       styles.submissionBadgeText,
-                      s.status === 'graded' ? styles.badgeGradedText : styles.badgePendingText,
+                      s.status === 'approved' ? styles.badgeGradedText : styles.badgePendingText,
                     ]}>
-                      {s.status === 'graded' ? `${s.score ?? 0}/${s.max_score ?? '?'}` : t('pending')}
+                      {s.status === 'approved'
+                        ? `${s.score ?? 0}/${s.max_score ?? '?'}`
+                        : s.status === 'graded'
+                        ? t('awaiting_approval')
+                        : t('pending')}
                     </Text>
                   </View>
-                  {s.status === 'graded' && (
+                  {(s.status === 'graded' || s.status === 'approved') && (
                     <Text style={styles.submissionChevron}>›</Text>
                   )}
                 </TouchableOpacity>

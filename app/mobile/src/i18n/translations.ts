@@ -94,6 +94,7 @@ export const translations = {
     highest: 'Highest',
     lowest: 'Lowest',
     awaiting_grade: 'Awaiting grade',
+    awaiting_approval: 'Awaiting approval',
     grading_results: 'Grading Results',
     no_submissions: 'No submissions yet for this assignment.',
 
@@ -314,6 +315,7 @@ export const translations = {
     highest: 'Yepamusoro',
     lowest: 'Yapasi',
     awaiting_grade: 'Chakamirira kumakwa',
+    awaiting_approval: 'Chakamirira kutenderwa',
     grading_results: 'Mhedzisiro yeMaka',
     no_submissions: 'Hapana zvakaiswa kuhomeworki iyi.',
 
@@ -527,6 +529,7 @@ export const translations = {
     highest: 'Ephakeme',
     lowest: 'Ephansi',
     awaiting_grade: 'Kulindele ukumakwa',
+    awaiting_approval: 'Kulindele ukuvunywa',
     grading_results: 'Imiphumela yeMaka',
     no_submissions: 'Akukho okufakiweyo kulo msebenzi.',
 
