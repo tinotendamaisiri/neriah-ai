@@ -1,4 +1,4 @@
-"""WhatsApp Cloud API send helpers — identical contract to the Azure build."""
+"""WhatsApp Cloud API send helpers."""
 
 from __future__ import annotations
 

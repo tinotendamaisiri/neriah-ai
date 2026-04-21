@@ -1,4 +1,4 @@
-"""Firestore CRUD helpers — replaces cosmos_client.py from the Azure build."""
+"""Firestore CRUD helpers."""
 
 from __future__ import annotations
 

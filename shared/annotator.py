@@ -1,6 +1,6 @@
 """
 Pillow annotation pipeline — draws ticks, crosses, and scores onto the original
-photo. Identical visual contract to the Azure build; no dependency on Azure libs.
+photo. 
 """
 
 from __future__ import annotations
