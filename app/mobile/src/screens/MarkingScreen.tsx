@@ -71,6 +71,11 @@ export default function MarkingScreen() {
   const [skippedCount, setSkippedCount] = useState(0);
   const [sessionDone, setSessionDone] = useState(false);
 
+  // Held across the duplicate-submission dialog so "Scan again" can re-post
+  // the same payload with replace=true without forcing the teacher to
+  // retake the photo.
+  const scanPayloadRef = useRef<Parameters<typeof submitMark>[0] | null>(null);
+
   // Modal state for pickers
   const [studentPickerVisible, setStudentPickerVisible] = useState(false);
   const [answerKeyPickerVisible, setAnswerKeyPickerVisible] = useState(false);
@@ -139,6 +144,9 @@ export default function MarkingScreen() {
       answer_key_id: selectedAnswerKey.id,
       education_level: educationLevel,
     };
+    // Stash for "Scan again" after a duplicate-submission 409 — lets the
+    // teacher replay the same capture with replace=true without re-shooting.
+    scanPayloadRef.current = scanPayload;
 
     const route = await resolveRoute('grading');
 
@@ -181,10 +189,77 @@ export default function MarkingScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      showError(err);
+      if (err?.status === 409 || err?.error_code === 'DUPLICATE_SUBMISSION') {
+        handleDuplicateSubmission(err);
+      } else {
+        showError(err);
+      }
     } finally {
       setMarking(false);
     }
+  };
+
+  // ── Duplicate-submission dialog ──────────────────────────────────────────
+  // Fires when POST /mark returns 409 DUPLICATE_SUBMISSION. The backend
+  // included `extra = {existing_mark_id, status, approved, timestamp}` in
+  // the response; api.ts's interceptor surfaces it on `err.extra`.
+  const handleDuplicateSubmission = (err: any) => {
+    const extra = err?.extra ?? err?._raw?.response?.data?.extra ?? {};
+    const existingMarkId: string | undefined = extra.existing_mark_id;
+    const studentName = selectedStudent
+      ? `${selectedStudent.first_name} ${selectedStudent.surname}`.trim()
+      : 'this student';
+    const answerKeyTitle = selectedAnswerKey?.title ?? selectedAnswerKey?.subject ?? 'this homework';
+
+    Alert.alert(
+      'Already graded',
+      `${studentName} already has a graded submission for this homework. What would you like to do?`,
+      [
+        {
+          text: 'Review existing',
+          onPress: () => {
+            if (!existingMarkId) {
+              Alert.alert(
+                'Cannot locate submission',
+                'Please go to the homework detail screen to find this submission.',
+              );
+              return;
+            }
+            navigation.navigate('GradingDetail', {
+              mark_id: existingMarkId,
+              student_name: studentName,
+              class_name: className,
+              answer_key_title: answerKeyTitle,
+            });
+          },
+        },
+        {
+          text: 'Scan again',
+          style: 'destructive',
+          onPress: async () => {
+            // Re-submit with replace=true. Backend cascade-deletes the old
+            // mark + submission + image blob, then writes a fresh one.
+            if (!scanPayloadRef.current) {
+              Alert.alert('Cannot retry', 'Original scan data was lost — please retake the photo.');
+              return;
+            }
+            setMarking(true);
+            try {
+              const payload = { ...scanPayloadRef.current, replace: true };
+              const markResult = await retryWithBackoff(() => submitMark(payload));
+              setResult(markResult);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (retryErr: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              showError(retryErr);
+            } finally {
+              setMarking(false);
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
   };
 
   // Advance to the next student in the class list. When we run off the end,

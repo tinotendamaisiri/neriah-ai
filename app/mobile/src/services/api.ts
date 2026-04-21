@@ -115,12 +115,18 @@ client.interceptors.response.use(
       429: 'Please wait a moment before trying again.',
     };
 
+    // Some typed errors (e.g. DuplicateSubmissionError) ship structured
+    // `detail` or `extra` payloads the caller needs. Forward both so screen
+    // code doesn't have to dig into `_raw.response.data`.
+    const extra = (data as any)?.extra ?? (data as any)?.detail;
+
     return Promise.reject({
       title: titleByStatus[status] || (status >= 500 ? 'Service error' : 'Request failed'),
       message: serverMsg || fallbackByStatus[status] || 'Please try again. Your data is safe.',
       error_code: errorCode,
       retry_after: retryAfter,
       attempts_remaining: attemptsRemaining,
+      extra,
       status,
       _raw: error,
     });
@@ -424,6 +430,10 @@ export const submitMark = async (payload: {
   class_id: string;
   answer_key_id: string;
   education_level: string;
+  /** When true, backend deletes any existing mark + submission for the same
+   *  (student_id, answer_key_id) before creating this one. Used when the
+   *  teacher chose "Scan again" on the duplicate-submission dialog. */
+  replace?: boolean;
 }): Promise<MarkResult> => {
   const formData = new FormData();
   formData.append('teacher_id', payload.teacher_id);
@@ -432,6 +442,7 @@ export const submitMark = async (payload: {
   formData.append('answer_key_id', payload.answer_key_id);
   formData.append('education_level', payload.education_level);
   formData.append('source', 'app');
+  if (payload.replace) formData.append('replace', 'true');
   // React Native FormData accepts { uri, name, type } for file fields
   formData.append('image', {
     uri: payload.image_uri,
