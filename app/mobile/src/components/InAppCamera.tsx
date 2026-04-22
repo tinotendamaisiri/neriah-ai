@@ -41,15 +41,16 @@ import { COLORS } from '../constants/colors';
 const { width: SW, height: SH } = Dimensions.get('window');
 
 // ── Frame geometry ────────────────────────────────────────────────────────────
-// The visible overlay frame is 95% of the screen width (up from 84%). We keep
-// the A4-ish 1.35 portrait ratio because that's what an exercise-book page
-// looks like. The height is capped to 90% of screen height so the top/bottom
-// masks (and the shutter control row) still have room.
-const FRAME_W = SW * 0.95;
-const FRAME_H = Math.min(FRAME_W * 1.35, SH * 0.78);
-// Computed once so the renderer, the mask, and the crop step all use the same
-// numbers.
+// The visible overlay frame is 95% of the screen width. Height fills the
+// available space between the top margin and the shutter button area —
+// no aspect-ratio cap, since exercise books come in different proportions
+// and the crop step handles trimming. FRAME_TOP_MARGIN and SHUTTER_RESERVED
+// are the ONLY knobs; everything else (renderer, mask, crop math) derives
+// from them.
 const FRAME_TOP_MARGIN = SH * 0.06;
+const SHUTTER_RESERVED = 140;  // px reserved for shutter button + its padding
+const FRAME_W = SW * 0.95;
+const FRAME_H = SH - FRAME_TOP_MARGIN - SHUTTER_RESERVED;
 
 export interface InAppCameraProps {
   visible: boolean;

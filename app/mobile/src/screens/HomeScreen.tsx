@@ -222,7 +222,7 @@ export default function HomeScreen() {
       const gradedMap: Record<string, number> = {};
       subs.forEach(s => {
         countMap[s.answer_key_id] = (countMap[s.answer_key_id] ?? 0) + 1;
-        if (s.status === 'graded') {
+        if (s.status === 'graded' || s.status === 'approved') {
           gradedMap[s.answer_key_id] = (gradedMap[s.answer_key_id] ?? 0) + 1;
         }
       });

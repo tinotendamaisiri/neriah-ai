@@ -234,7 +234,7 @@ export default function MarkingScreen() {
           },
         },
         {
-          text: 'Scan again',
+          text: 'Replace',
           style: 'destructive',
           onPress: async () => {
             // Re-submit with replace=true. Backend cascade-deletes the old

@@ -345,7 +345,7 @@ export default function HomeworkDetailScreen() {
   const isPendingSetup = answerKey.status === 'pending_setup';
   const hasQuestions = answerKey.questions.length > 0;
   const pendingCount = submissions.filter(s => s.status === 'pending').length;
-  const gradedCount = submissions.filter(s => s.status === 'graded').length;
+  const gradedCount = submissions.filter(s => s.status === 'graded' || s.status === 'approved').length;
 
   return (
     <>
