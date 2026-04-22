@@ -18,7 +18,7 @@ import {
   Platform,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { getMarkById, updateMark } from '../services/api';
+import { getMarkById, updateMark, deleteMark } from '../services/api';
 import { GradingVerdict } from '../types';
 import { COLORS } from '../constants/colors';
 
@@ -142,6 +142,42 @@ export default function GradingDetailScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Delete pattern mirrors MarkResult.tsx and GradingResultsScreen.tsx so
+  // teachers see the same confirm copy across every surface that can
+  // trigger a cascade delete.
+  const handleDelete = () => {
+    if (!mark_id) {
+      Alert.alert('Cannot delete', 'This mark has no server ID.');
+      return;
+    }
+    Alert.alert(
+      'Delete submission?',
+      `This will permanently delete ${student_name}'s submission for ${answer_key_title}. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSaving(true);
+            try {
+              await deleteMark(mark_id);
+              Alert.alert(
+                'Deleted',
+                'Submission deleted.',
+                [{ text: 'OK', onPress: () => navigation.goBack() }],
+              );
+            } catch (err: any) {
+              Alert.alert('Could not delete', err.message ?? 'Please try again.');
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -286,6 +322,14 @@ export default function GradingDetailScreen() {
               <Text style={styles.approveBtnText}>Save & Approve ✓</Text>
             </TouchableOpacity>
           )}
+          <TouchableOpacity
+            style={[styles.deleteLink, saving && styles.btnDisabled]}
+            onPress={handleDelete}
+            disabled={saving}
+            accessibilityLabel="Delete submission"
+          >
+            <Text style={styles.deleteLinkText}>Delete submission</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={{ height: 60 }} />
@@ -385,5 +429,9 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: COLORS.teal500,
   },
   approveBtnText: { color: COLORS.teal500, fontWeight: 'bold', fontSize: 16 },
+  deleteLink: {
+    alignSelf: 'center', paddingVertical: 12, marginTop: 4,
+  },
+  deleteLinkText: { color: COLORS.error, fontSize: 12, fontWeight: '600' },
   btnDisabled: { opacity: 0.5 },
 });

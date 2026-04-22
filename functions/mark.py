@@ -432,6 +432,33 @@ def update_mark(mark_id: str):
         )
 
     upsert("marks", mark_id, updates)
+
+    # Sync the linked student_submissions row when the teacher flips approved
+    # to True. HomeworkDetailScreen's amber/green split and downstream
+    # analytics all filter on submission.status, so without this the UI keeps
+    # showing "Awaiting approval" after approval. Only syncs up (graded →
+    # approved); we never sync-downgrade because our model is delete, not
+    # unapprove. Runs AFTER the mark upsert so a sync failure can't undo the
+    # approval itself.
+    if updates.get("approved") is True:
+        try:
+            linked_subs = query(
+                "student_submissions",
+                [("mark_id", "==", mark_id)],
+            )
+            for sub in linked_subs:
+                if sub.get("status") != "approved":
+                    upsert("student_submissions", sub["id"], {
+                        "status": "approved",
+                        "approved": True,
+                        "approved_at": datetime.now(timezone.utc).isoformat(),
+                    })
+        except Exception:
+            logger.exception(
+                "update_mark: failed to sync student_submissions.status for mark %s",
+                mark_id,
+            )
+
     return jsonify({**mark_doc, **updates}), 200
 
 
