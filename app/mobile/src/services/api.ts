@@ -427,6 +427,53 @@ export const extractStudentsFromFile = async (
  * Submit a teacher-scan mark.
  * Reads the image from the local file URI and uploads as multipart/form-data.
  */
+/**
+ * Submit a teacher scan with 1-5 pages. The backend contract is multi-page
+ * only (page_0..page_N + page_count); single-page submissions send one file
+ * via page_0. Replaces the legacy single-`image` field contract.
+ */
+export const submitTeacherScan = async (payload: {
+  studentId: string;
+  answerKeyId: string;
+  classId: string;
+  educationLevel: string;
+  teacherId: string;
+  pages: { uri: string }[];
+  /** When true, backend cascade-deletes any existing mark + submission for
+   *  the same (student_id, answer_key_id) before creating this one. */
+  replace?: boolean;
+}): Promise<MarkResult> => {
+  if (!payload.pages.length || payload.pages.length > 5) {
+    throw new Error(`Invalid page count: ${payload.pages.length} (must be 1..5)`);
+  }
+  const formData = new FormData();
+  formData.append('teacher_id', payload.teacherId);
+  formData.append('student_id', payload.studentId);
+  formData.append('class_id', payload.classId);
+  formData.append('answer_key_id', payload.answerKeyId);
+  formData.append('education_level', payload.educationLevel);
+  formData.append('source', 'app');
+  formData.append('page_count', String(payload.pages.length));
+  if (payload.replace) formData.append('replace', 'true');
+  for (let i = 0; i < payload.pages.length; i++) {
+    formData.append(`page_${i}`, {
+      uri: payload.pages[i].uri,
+      name: `page_${i}.jpg`,
+      type: 'image/jpeg',
+    } as any);
+  }
+  const res: AxiosResponse<MarkResult> = await client.post('/mark', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 90000, // multi-page grading can take ~60s
+  });
+  return res.data;
+};
+
+/**
+ * Legacy single-page wrapper. Kept so offlineQueue replay of old queued
+ * items still runs — forwards to submitTeacherScan with one page. New code
+ * should call submitTeacherScan directly.
+ */
 export const submitMark = async (payload: {
   image_uri: string;
   teacher_id: string;
@@ -434,31 +481,17 @@ export const submitMark = async (payload: {
   class_id: string;
   answer_key_id: string;
   education_level: string;
-  /** When true, backend deletes any existing mark + submission for the same
-   *  (student_id, answer_key_id) before creating this one. Used when the
-   *  teacher chose "Scan again" on the duplicate-submission dialog. */
   replace?: boolean;
 }): Promise<MarkResult> => {
-  const formData = new FormData();
-  formData.append('teacher_id', payload.teacher_id);
-  formData.append('student_id', payload.student_id);
-  formData.append('class_id', payload.class_id);
-  formData.append('answer_key_id', payload.answer_key_id);
-  formData.append('education_level', payload.education_level);
-  formData.append('source', 'app');
-  if (payload.replace) formData.append('replace', 'true');
-  // React Native FormData accepts { uri, name, type } for file fields
-  formData.append('image', {
-    uri: payload.image_uri,
-    name: 'scan.jpg',
-    type: 'image/jpeg',
-  } as any);
-
-  const res: AxiosResponse<MarkResult> = await client.post('/mark', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000, // full pipeline can take up to 40s
+  return submitTeacherScan({
+    studentId: payload.student_id,
+    answerKeyId: payload.answer_key_id,
+    classId: payload.class_id,
+    educationLevel: payload.education_level,
+    teacherId: payload.teacher_id,
+    pages: [{ uri: payload.image_uri }],
+    replace: payload.replace,
   });
-  return res.data;
 };
 
 /** Fetch a single mark document by ID (teacher review or student feedback). */

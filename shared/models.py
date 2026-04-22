@@ -143,10 +143,15 @@ class Mark(BaseModel):
     max_score: float
     percentage: float
     verdicts: list[GradingVerdict] = []
-    marked_image_url: Optional[str] = None
+    marked_image_url: Optional[str] = None  # legacy singular — == annotated_urls[0]
     source: str = MarkSource.TEACHER_SCAN
     approved: bool = True
     timestamp: str = Field(default_factory=lambda: _now().isoformat())
+    # Multi-page fields (2026-04-22). Single-page submissions still work:
+    # page_count=1 and both arrays have one element.
+    page_count: int = 1
+    page_urls: list[str] = []        # signed URLs to originals, one per page
+    annotated_urls: list[str] = []   # signed URLs to annotated pages, same order
 
 
 class Session(BaseModel):

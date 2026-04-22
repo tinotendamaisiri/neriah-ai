@@ -33,7 +33,7 @@ import { showError } from '../utils/showError';
 import { retryWithBackoff } from '../utils/retry';
 import { useAuth } from '../context/AuthContext';
 import { useModel } from '../context/ModelContext';
-import { Student, AnswerKey, MarkResult, RootStackParamList, EducationLevel } from '../types';
+import { Student, AnswerKey, MarkResult, RootStackParamList, EducationLevel, CapturedPage } from '../types';
 import ScanButton from '../components/ScanButton';
 import MarkResultComponent from '../components/MarkResult';
 import { COLORS } from '../constants/colors';
@@ -71,10 +71,10 @@ export default function MarkingScreen() {
   const [skippedCount, setSkippedCount] = useState(0);
   const [sessionDone, setSessionDone] = useState(false);
 
-  // Held across the duplicate-submission dialog so "Scan again" can re-post
-  // the same payload with replace=true without forcing the teacher to
-  // retake the photo.
-  const scanPayloadRef = useRef<Parameters<typeof submitMark>[0] | null>(null);
+  // Last set of pages submitted from PageReviewScreen — held so that on a
+  // duplicate-submission 409, "Replace" can re-navigate to PageReview with
+  // the same pages preloaded + replace=true (teacher doesn't re-shoot).
+  const pendingPagesRef = useRef<CapturedPage[] | null>(null);
 
   // Modal state for pickers
   const [studentPickerVisible, setStudentPickerVisible] = useState(false);
@@ -136,68 +136,61 @@ export default function MarkingScreen() {
     }
     if (!user) return;
 
-    const scanPayload = {
-      image_uri: imageUri,
-      teacher_id: user.id,
-      student_id: selectedStudent.id,
-      class_id: classId,
-      answer_key_id: selectedAnswerKey.id,
-      education_level: educationLevel,
+    // Multi-page flow: this capture is page 1. Navigate to PageReviewScreen
+    // where the teacher can add more pages (up to 5), reorder, delete, then
+    // submit. Submission + Vertex grading happens from there; the result
+    // comes back to this screen via route.params.markResult and is consumed
+    // by the effect below.
+    const firstPage: CapturedPage = {
+      id: `pg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      uri: imageUri,
+      width: 0,
+      height: 0,
+      capturedAt: Date.now(),
     };
-    // Stash for "Scan again" after a duplicate-submission 409 — lets the
-    // teacher replay the same capture with replace=true without re-shooting.
-    scanPayloadRef.current = scanPayload;
+    navigation.navigate('PageReview', {
+      initialPages: [firstPage],
+      studentId: selectedStudent.id,
+      answerKeyId: selectedAnswerKey.id,
+      educationLevel,
+      classId,
+      className,
+      replace: false,
+    });
+  };
 
-    const route = await resolveRoute('grading');
-
-    if (route === 'unavailable') {
-      showUnavailableAlert(() => {
-        queueMarkingScan(scanPayload).catch(() => {});
-      });
-      return;
-    }
-
-    setMarking(true);
-    try {
-      let markResult: MarkResult;
-
-      if (route === 'on-device') {
-        // On-device grading is text-only — requires pre-extracted student answers.
-        // The on-device path is wired here for when LiteRT is linked and the E4B
-        // model is loaded. Falls through to cloud if the model throws (e.g. stub).
-        const questions = selectedAnswerKey.questions.map(q => ({
-          number: q.number,
-          correct_answer: q.correct_answer,
-          max_marks: q.max_marks,
-          marking_notes: q.marking_notes,
-        }));
-        // Serialize available profile context so LiteRT gets curriculum-aware prompts.
-        const onDeviceCtx: OnDeviceUserContext = {
-          education_level: educationLevel,
-          subject: selectedAnswerKey.subject ?? undefined,
-          // country/curriculum come from the teacher's school — not cached locally,
-          // so omit them here; the cloud path injects full RAG context instead.
-        };
-        const raw = await gradeOnDevice(questions, '', educationLevel, onDeviceCtx);
-        markResult = JSON.parse(raw) as MarkResult;
-      } else {
-        // Cloud path — full multimodal pipeline via Vertex Gemma 4.
-        markResult = await retryWithBackoff(() => submitMark(scanPayload));
-      }
-
+  // ── Consume PageReview submit result ───────────────────────────────────────
+  // PageReviewScreen navigates back here with route.params.markResult on
+  // success or route.params.markError on failure. Run the existing post-scan
+  // logic (setResult triggers MarkResultComponent + queue advance) then
+  // clear the params so a re-focus doesn't replay them.
+  useEffect(() => {
+    const markResult: MarkResult | undefined = route.params?.markResult;
+    if (markResult) {
+      pendingPagesRef.current = null;  // success — drop the stash
       setResult(markResult);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      if (err?.status === 409 || err?.error_code === 'DUPLICATE_SUBMISSION') {
-        handleDuplicateSubmission(err);
-      } else {
-        showError(err);
-      }
-    } finally {
-      setMarking(false);
+      navigation.setParams({ markResult: undefined });
     }
-  };
+  }, [route.params?.markResult, navigation]);
+
+  useEffect(() => {
+    const markError = route.params?.markError;
+    if (!markError) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    // Stash the pages PageReview tried to submit, so "Replace" on the
+    // duplicate dialog can re-navigate with them preloaded.
+    pendingPagesRef.current = route.params?.pendingPages ?? null;
+    if (markError.status === 409 || markError.error_code === 'DUPLICATE_SUBMISSION') {
+      handleDuplicateSubmission(markError);
+    } else {
+      showError({
+        title: 'Could not submit',
+        message: markError.message ?? 'Please try again.',
+      });
+    }
+    navigation.setParams({ markError: undefined, pendingPages: undefined });
+  }, [route.params?.markError, route.params?.pendingPages, navigation]);
 
   // ── Duplicate-submission dialog ──────────────────────────────────────────
   // Fires when POST /mark returns 409 DUPLICATE_SUBMISSION. The backend
@@ -236,25 +229,28 @@ export default function MarkingScreen() {
         {
           text: 'Replace',
           style: 'destructive',
-          onPress: async () => {
-            // Re-submit with replace=true. Backend cascade-deletes the old
-            // mark + submission + image blob, then writes a fresh one.
-            if (!scanPayloadRef.current) {
-              Alert.alert('Cannot retry', 'Original scan data was lost — please retake the photo.');
+          onPress: () => {
+            // Re-navigate to PageReview with replace=true and the same pages
+            // preloaded — teacher just taps Submit again. The pages live in
+            // pendingPagesRef, populated by the failed submit's navigation
+            // back into MarkingScreen (see PageReviewScreen.handleSubmit).
+            const pages = pendingPagesRef.current;
+            if (!pages || pages.length === 0 || !selectedStudent || !selectedAnswerKey || !classId) {
+              Alert.alert(
+                'Cannot retry',
+                'Original scan data was lost — please retake the photo.',
+              );
               return;
             }
-            setMarking(true);
-            try {
-              const payload = { ...scanPayloadRef.current, replace: true };
-              const markResult = await retryWithBackoff(() => submitMark(payload));
-              setResult(markResult);
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            } catch (retryErr: any) {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-              showError(retryErr);
-            } finally {
-              setMarking(false);
-            }
+            navigation.navigate('PageReview', {
+              initialPages: pages,
+              studentId: selectedStudent.id,
+              answerKeyId: selectedAnswerKey.id,
+              educationLevel,
+              classId,
+              className,
+              replace: true,
+            });
           },
         },
         { text: 'Cancel', style: 'cancel' },

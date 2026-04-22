@@ -23,7 +23,6 @@ from functools import wraps
 from flask import Blueprint, jsonify, request
 from google.api_core import exceptions as gcp_exc
 
-from shared.annotator import annotate_image
 from shared.auth import require_role
 from shared.config import settings
 from shared.errors import (
@@ -44,7 +43,9 @@ from shared.gemma_client import (
     check_image_quality_strict,
     grade_submission,
     grade_submission_strict,
+    grade_submission_strict_multi,
 )
+from shared.annotator import annotate_image, annotate_pages
 from shared.guardrails import log_ai_interaction, validate_output
 from shared.models import GradingVerdict, Mark
 from shared.router import AIRequestType, route_ai_request
@@ -153,10 +154,20 @@ def mark():
     if not _check_mark_rate_limit(teacher_id):
         raise RateLimitError(f"Teacher {teacher_id} hit daily limit of {_MARK_DAILY_LIMIT}")
 
-    # Expect multipart/form-data: image file + JSON fields
-    image_file = request.files.get("image")
-    if not image_file:
-        return jsonify({"error": "image file is required"}), 400
+    # ── Multi-page multipart ingestion ────────────────────────────────────────
+    # Contract: form-data with fields page_0, page_1, ..., page_{N-1}, plus
+    # page_count=N. Mobile ships with multi support in the same release — no
+    # legacy single `file` field accepted.
+    try:
+        page_count = int(request.form.get("page_count", "1"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "page_count must be an integer"}), 400
+
+    if page_count < 1 or page_count > 5:
+        err = ImageQualityRejectedError(f"page_count out of range: {page_count}")
+        err.user_message = "You can submit between 1 and 5 pages per student. Please try again."
+        err.extra = {"received": page_count}
+        raise err
 
     student_id = (request.form.get("student_id") or "").strip()
     answer_key_id = (request.form.get("answer_key_id") or "").strip()
@@ -164,8 +175,26 @@ def mark():
     if not student_id or not answer_key_id:
         return jsonify({"error": "student_id and answer_key_id are required"}), 400
 
-    # ── Image size guard ──────────────────────────────────────────────────────
-    image_bytes = image_file.read()
+    # Read every page up-front so we can enforce size limits before any
+    # Vertex calls or GCS uploads happen.
+    pages_bytes: list[bytes] = []
+    for i in range(page_count):
+        field = f"page_{i}"
+        file_obj = request.files.get(field)
+        if file_obj is None:
+            err = ImageQualityRejectedError(f"Missing page field: {field}")
+            err.user_message = (
+                f"The app said you submitted {page_count} page(s) but page "
+                f"{i + 1} was missing. Please retake and try again."
+            )
+            err.extra = {"missing_field": field, "page_count": page_count}
+            raise err
+        page_bytes = file_obj.read()
+        if len(page_bytes) > _MAX_IMAGE_BYTES:
+            raise ImageTooLargeError(
+                f"page_{i} is {len(page_bytes)} bytes (max {_MAX_IMAGE_BYTES})"
+            )
+        pages_bytes.append(page_bytes)
 
     # ── Duplicate-submission guard ────────────────────────────────────────────
     # One graded submission per (student_id, answer_key_id). If one exists,
@@ -223,14 +252,14 @@ def mark():
                 except Exception:
                     logger.exception("[mark] Failed to delete old submission %s", sub_id)
 
-    if len(image_bytes) > _MAX_IMAGE_BYTES:
-        raise ImageTooLargeError(f"Received {len(image_bytes)} bytes, max {_MAX_IMAGE_BYTES}")
-
     # ── Route: all AI calls in this endpoint go to cloud ─────────────────────
     route_ai_request(AIRequestType.GRADING)  # always AIRoute.CLOUD on the backend
 
-    # ── 1. Image quality gate ─────────────────────────────────────────────────
-    quality = check_image_quality_strict(image_bytes)
+    # ── 1. Image quality gate — page 0 only as a representative sample ────────
+    # Running the quality check against every page would triple-to-5x Vertex
+    # calls before we even start grading. Page 0 acts as a cheap preflight;
+    # Gemma's grading call later is tolerant of rough pages 2-N.
+    quality = check_image_quality_strict(pages_bytes[0])
     if not quality.get("pass", True):
         reason = (quality.get("reason") or "").lower()
         suggestion = quality.get("suggestion") or "Retake the photo in better lighting."
@@ -261,12 +290,13 @@ def mark():
         class_doc.get("education_level") if class_doc else "Form 4"
     )
 
-    # ── 2. Grade (Gemma 4 reads handwriting directly, with RAG context) ─────────
+    # ── 2. Grade across all pages in one Vertex call ──────────────────────────
     class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
     user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
     _t0 = time.time()
-    raw_verdicts = grade_submission_strict(image_bytes, answer_key, education_level,
-                                           user_context=user_ctx)
+    raw_verdicts = grade_submission_strict_multi(
+        pages_bytes, answer_key, education_level, user_context=user_ctx,
+    )
     _latency_ms = int((time.time() - _t0) * 1000)
 
     # ── Output guardrails: validate grading JSON ──────────────────────────────
@@ -274,7 +304,6 @@ def mark():
         q.get("marks", 0) for q in answer_key.get("questions", [])
     ) or 1)
     _raw_json = json.dumps(raw_verdicts) if isinstance(raw_verdicts, list) else str(raw_verdicts)
-    # Validate each verdict's awarded_marks against total
     _total_awarded = sum(v.get("awarded_marks", 0) for v in raw_verdicts if isinstance(v, dict))
     _verdict_json = json.dumps({"score": _total_awarded})
     valid_out, _out_err = validate_output(
@@ -292,41 +321,57 @@ def mark():
     max_score = sum(v.max_marks for v in verdicts) or float(answer_key.get("total_marks", 1))
     percentage = round(score / max_score * 100, 1) if max_score else 0.0
 
-    # ── 3. Optional bounding boxes for annotation ─────────────────────────────
-    bounding_boxes: list[dict] = []
-    if settings.DOCAI_PROCESSOR_ID:
-        try:
-            from shared.ocr_client import extract_text_with_boxes
-            _, bounding_boxes = extract_text_with_boxes(image_bytes, mime_type="image/jpeg")
-        except Exception:
-            logger.warning("Document AI bounding boxes unavailable — annotating without.")
+    # page_index is stashed on the raw_verdicts dicts but not on the Pydantic
+    # GradingVerdict model. Pull it back from the raw list, aligned by
+    # question_number so re-ordering by Pydantic construction doesn't scramble
+    # it. Fallback to 0 when missing (defensive — grade_submission_strict_multi
+    # already clamps).
+    page_index_by_qn: dict = {}
+    for rv in raw_verdicts:
+        if isinstance(rv, dict) and "question_number" in rv:
+            page_index_by_qn[rv["question_number"]] = int(rv.get("page_index", 0))
+    verdicts_dicts = []
+    for v in verdicts:
+        vd = v.model_dump()
+        vd["page_index"] = page_index_by_qn.get(v.question_number, 0)
+        verdicts_dicts.append(vd)
 
-    # ── 4. Annotate image ─────────────────────────────────────────────────────
-    verdicts_dicts = [v.model_dump() for v in verdicts]
-    annotated_bytes = annotate_image(image_bytes, verdicts_dicts, bounding_boxes or None)
+    # ── 3. Annotate each page with only its own verdicts ──────────────────────
+    annotated_pages = annotate_pages(pages_bytes, verdicts_dicts)
 
-    # ── 5. Upload to Cloud Storage (private) ─────────────────────────────────
-    blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
+    # ── 4. Upload originals + annotated pages to Cloud Storage ───────────────
+    mark_id = str(uuid.uuid4())
+    page_urls: list[str] = []
+    annotated_urls: list[str] = []
     try:
-        upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
+        for i, page_bytes in enumerate(pages_bytes):
+            orig_blob = f"submissions/{student_id}/{mark_id}/page_{i}.jpg"
+            upload_bytes(settings.GCS_BUCKET_SUBMISSIONS, orig_blob, page_bytes, public=False)
+            page_urls.append(generate_signed_url(
+                settings.GCS_BUCKET_SUBMISSIONS, orig_blob, expiry_minutes=60 * 24 * 7,
+            ))
+        for i, annotated_bytes in enumerate(annotated_pages):
+            ann_blob = f"{mark_id}/annotated_{i}.jpg"
+            upload_bytes(settings.GCS_BUCKET_MARKED, ann_blob, annotated_bytes, public=False)
+            annotated_urls.append(generate_signed_url(
+                settings.GCS_BUCKET_MARKED, ann_blob, expiry_minutes=60 * 24 * 7,
+            ))
     except gcp_exc.NotFound as exc:
         raise StorageBucketMissingError(
-            f"Bucket {settings.GCS_BUCKET_MARKED} does not exist"
+            f"Bucket missing during multi-page upload: {exc}"
         ) from exc
     except Exception as exc:
         raise StorageUploadError(
-            f"Upload to {settings.GCS_BUCKET_MARKED} failed: {exc}"
+            f"Multi-page upload failed: {exc}"
         ) from exc
-    # Generate a 7-day signed URL for the response and persistent storage.
-    marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
-    # ── 6. Write Mark to Firestore ────────────────────────────────────────────
-    # approved=False: the teacher sees the result immediately on the device,
-    # but the mark is not yet visible to the student. Teacher must Approve
-    # (via /marks/<id> PUT with approved=True, or the bulk endpoint) after
-    # reviewing. Matches the AI-batch flow: graded → approved is a teacher
-    # action, not an automatic step.
+    # ── 5. Write Mark to Firestore ───────────────────────────────────────────
+    # approved=False: teacher sees the result immediately but the student
+    # doesn't until approval. Matches the AI-batch flow.
+    # marked_image_url and page_urls[0]/annotated_urls[0] are kept as legacy
+    # singular aliases for any UI screen still reading the old field names.
     mark_doc = Mark(
+        id=mark_id,
         student_id=student_id,
         class_id=answer_key["class_id"],
         answer_key_id=answer_key_id,
@@ -335,15 +380,16 @@ def mark():
         max_score=max_score,
         percentage=percentage,
         verdicts=verdicts,
-        marked_image_url=marked_url,
+        marked_image_url=annotated_urls[0] if annotated_urls else None,
         source="teacher_scan",
         approved=False,
+        page_count=page_count,
+        page_urls=page_urls,
+        annotated_urls=annotated_urls,
     )
     upsert("marks", mark_doc.id, mark_doc.model_dump())
 
-    # ── Create companion student_submissions row ──────────────────────────────
-    # Parity with AI-batch flow: every graded artifact has a submission row so
-    # downstream readers (homework detail, analytics, teacher inbox) see it.
+    # ── Companion student_submissions row ─────────────────────────────────────
     submission_id = f"sub_{uuid.uuid4().hex[:12]}"
     now_iso = datetime.now(timezone.utc).isoformat()
     upsert("student_submissions", submission_id, {
@@ -355,7 +401,7 @@ def mark():
         "mark_id": mark_doc.id,
         "source": "teacher_scan",
         "status": "graded",
-        "image_urls": [marked_url] if marked_url else [],
+        "image_urls": list(annotated_urls),  # all annotated pages in order
         "submitted_at": now_iso,
         "graded_at": now_iso,
     })
@@ -368,16 +414,12 @@ def mark():
         tokens_used=len(verdicts_dicts) * 10, latency_ms=_latency_ms, blocked=False,
     )
 
-    # ── 7. Notify student ──────────────────────────────────────────────────────
-    # Only push when this mark is being published immediately (approved=True).
-    # Manual teacher scans now start as approved=False — the teacher must review
-    # and approve before the student is alerted. The push fires from the approve
-    # pipeline (approve_submission / approve-bulk) instead.
+    # ── 6. Notify student (only if already approved — see flow note above) ───
     if mark_doc.approved:
         try:
             from functions.push import send_student_notification
             student_doc = get_doc("students", student_id)
-            student_name = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "Student"
+            _ = f"{(student_doc or {}).get('first_name', '')} {(student_doc or {}).get('surname', '')}".strip() or "Student"
             hw_title = answer_key.get("title") or answer_key.get("subject") or "Assignment"
             send_student_notification(
                 student_id,
@@ -388,13 +430,16 @@ def mark():
         except Exception:
             pass  # non-fatal
 
-    # ── 8. Return result ──────────────────────────────────────────────────────
+    # ── 7. Return result ──────────────────────────────────────────────────────
     return jsonify({
         "mark_id": mark_doc.id,
         "score": score,
         "max_score": max_score,
         "percentage": percentage,
-        "marked_image_url": marked_url,
+        "marked_image_url": annotated_urls[0] if annotated_urls else None,
+        "page_count": page_count,
+        "page_urls": page_urls,
+        "annotated_urls": annotated_urls,
         "verdicts": verdicts_dicts,
     }), 200
 

@@ -40,7 +40,7 @@ import { ModelProvider, useModel } from './src/context/ModelContext';
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinLoginScreen from './src/screens/PinLoginScreen';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
-import { startNetworkListener } from './src/services/offlineQueue';
+import { startNetworkListener, migrateQueueIfNeeded } from './src/services/offlineQueue';
 import { detectAndStoreCapability } from './src/services/deviceCapabilities';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkBanner from './src/components/NetworkBanner';
@@ -63,6 +63,7 @@ import StudentRegisterScreen from './src/screens/StudentRegisterScreen';
 // ── Teacher screens ───────────────────────────────────────────────────────────
 import HomeScreen from './src/screens/HomeScreen';
 import MarkingScreen from './src/screens/MarkingScreen';
+import PageReviewScreen from './src/screens/PageReviewScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ClassSetupScreen from './src/screens/ClassSetupScreen';
@@ -237,6 +238,11 @@ function TeacherNavigator() {
         name="Mark"
         component={MarkingScreen}
         options={{ headerShown: true, title: 'Mark Books', headerBackTitleVisible: false }}
+      />
+      <TeacherStack.Screen
+        name="PageReview"
+        component={PageReviewScreen}
+        options={{ headerShown: false }}
       />
       <TeacherStack.Screen
         name="TeacherClassAnalytics"
@@ -437,9 +443,12 @@ function AppShell() {
       .catch(() => {});
   }, []);
 
-  // Offline queue replay only needed for teachers (marking pipeline)
+  // Offline queue replay only needed for teachers (marking pipeline).
+  // Run the v1→v2 migration on first launch of the multi-page build so any
+  // stale single-image queued scans don't blow up replay.
   React.useEffect(() => {
     if (user?.role === 'teacher') {
+      migrateQueueIfNeeded().catch(() => {});
       const unsubscribe = startNetworkListener();
       return unsubscribe;
     }

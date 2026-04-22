@@ -386,6 +386,16 @@ export type MainTabParamList = {
   Settings: undefined;
 };
 
+/** A single captured (and overlay-cropped) exercise-book page. The teacher
+ *  can stage 1-5 of these before submitting for grading. */
+export type CapturedPage = {
+  id: string;
+  uri: string;
+  width: number;
+  height: number;
+  capturedAt: number;
+};
+
 export type RootStackParamList = {
   Main: undefined;
   ClassSetup: undefined;
@@ -409,7 +419,31 @@ export type RootStackParamList = {
   HomeworkList: { class_id: string; class_name: string };
   GradingResults: { answer_key_id?: string; class_id: string; class_name: string; answer_key_title?: string };
   GradingDetail: { mark_id: string; student_name: string; class_name: string; answer_key_title: string };
-  Mark: { class_id: string; class_name: string; education_level: EducationLevel; answer_key_id?: string } | undefined;
+  Mark: {
+    class_id: string;
+    class_name: string;
+    education_level: EducationLevel;
+    answer_key_id?: string;
+    /** Set by PageReviewScreen after a successful submit. MarkingScreen
+     *  consumes this on focus and runs its existing post-scan logic
+     *  (duplicate dialog, queue advance, etc.). Cleared after consumption. */
+    markResult?: MarkResult;
+    /** Set by PageReviewScreen when submitTeacherScan raises a 409 so the
+     *  MarkingScreen can surface its existing "Replace existing?" dialog. */
+    markError?: { status?: number; error_code?: string; message?: string; extra?: Record<string, unknown> };
+    /** The pages that were submitted (and failed) — stashed so a "Replace"
+     *  re-navigation to PageReview can preload them and skip a re-shoot. */
+    pendingPages?: CapturedPage[];
+  } | undefined;
+  PageReview: {
+    initialPages: CapturedPage[];
+    studentId: string;
+    answerKeyId: string;
+    educationLevel: EducationLevel;
+    classId: string;
+    className: string;
+    replace?: boolean;
+  };
   TeacherClassAnalytics: { class_id: string; class_name: string };
   TeacherStudentAnalytics: { student_id: string; student_name: string; class_id: string; class_name: string };
   HomeworkAnalytics: { homework_id: string; homework_title: string; class_id: string; class_name: string };

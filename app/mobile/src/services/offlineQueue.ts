@@ -2,18 +2,27 @@
 // Offline scan queue backed by AsyncStorage.
 // When the device loses connectivity, scans are queued locally.
 // When connectivity is restored, replayQueue() re-submits them.
+//
+// Queue schema v2 (2026-04-22): scans store an array of page URIs instead
+// of a single image_uri, matching the multi-page /mark backend contract.
+// Legacy v1 items (single image_uri) from pre-multi builds are FLUSHED on
+// app startup by migrateQueueIfNeeded() — the scans are lost, teacher
+// re-scans.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
-import { submitMark } from './api';
+import { submitTeacherScan } from './api';
 
 const QUEUE_KEY = 'neriah_offline_queue';
 const DEAD_LETTER_KEY = 'neriah_offline_dead_letter';
+const QUEUE_VERSION_KEY = 'neriah_offline_queue_version';
+const QUEUE_VERSION = 2;
 const MAX_RETRIES = 3;
 
 export interface QueuedScan {
   id: string;
-  image_uri: string;
+  /** 1-5 page URIs in order. */
+  pages: { uri: string }[];
   teacher_id: string;
   student_id: string;
   class_id: string;
@@ -22,6 +31,44 @@ export interface QueuedScan {
   queued_at: string;
   retry_count: number;
 }
+
+/**
+ * Flush the queue once on first launch of a build running schema v2.
+ * v1 items (single image_uri) can't be safely upgraded — the file URIs
+ * may no longer exist on disk, and the mental model is different. So we
+ * drop them and log the count. Teacher re-scans.
+ *
+ * Call this once on app startup, before any replay.
+ */
+export const migrateQueueIfNeeded = async (): Promise<{ flushed: number }> => {
+  let flushed = 0;
+  try {
+    const rawVersion = await AsyncStorage.getItem(QUEUE_VERSION_KEY);
+    const currentVersion = rawVersion ? parseInt(rawVersion, 10) : 1;
+    if (currentVersion >= QUEUE_VERSION) return { flushed: 0 };
+
+    // Stored at v1 (or missing entirely) — count + drop.
+    const raw = await AsyncStorage.getItem(QUEUE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        flushed = Array.isArray(parsed) ? parsed.length : 0;
+      } catch {
+        // Corrupted — treat as drop-and-reset.
+        flushed = 0;
+      }
+      await AsyncStorage.removeItem(QUEUE_KEY);
+    }
+    await AsyncStorage.setItem(QUEUE_VERSION_KEY, String(QUEUE_VERSION));
+    if (flushed > 0) {
+      // Visible in Flipper / adb logcat for post-deploy impact checks.
+      console.warn(`[offlineQueue] v1→v2 migration flushed ${flushed} pre-multi queued scan(s)`);
+    }
+  } catch {
+    // Best-effort — don't crash app startup over this.
+  }
+  return { flushed };
+};
 
 // ── Queue operations ──────────────────────────────────────────────────────────
 
@@ -102,13 +149,13 @@ export const replayQueue = async (): Promise<{ submitted: number; failed: number
     }
 
     try {
-      await submitMark({
-        image_uri: item.image_uri,
-        teacher_id: item.teacher_id,
-        student_id: item.student_id,
-        class_id: item.class_id,
-        answer_key_id: item.answer_key_id,
-        education_level: item.education_level,
+      await submitTeacherScan({
+        teacherId: item.teacher_id,
+        studentId: item.student_id,
+        classId: item.class_id,
+        answerKeyId: item.answer_key_id,
+        educationLevel: item.education_level,
+        pages: item.pages,
       });
       submitted++;
       // Successfully submitted — do not add back to remaining

@@ -1051,6 +1051,141 @@ Rules:
     return parsed
 
 
+def grade_submission_strict_multi(
+    pages: list[bytes],
+    answer_key: dict,
+    education_level: str,
+    user_context: dict | None = None,
+) -> list[dict]:
+    """Multi-page sibling of grade_submission_strict.
+
+    Sends 1-5 pages to Gemma in a single call via the OpenAI-compatible
+    Vertex chat-completions endpoint, with one text content-block followed
+    by one image_url content-block per page (in order: page 1 first).
+
+    The prompt asks Gemma to emit a single unified verdicts array covering
+    all questions, with a `page_index` integer on each verdict indicating
+    which page (0 = first) the student's answer lived on. Missing /
+    out-of-range page_index values are defensively clamped to 0 so a sloppy
+    model output doesn't crash the annotator downstream.
+
+    Raises:
+      VertexAITimeoutError / VertexAIQuotaError / VertexAIAuthError
+      VertexAIUnavailableError — Vertex API call failed
+      GradingParseError  — Gemma returned unparseable JSON or non-list
+      GradingEmptyError  — Gemma returned empty content or empty array
+    """
+    if not pages:
+        raise GradingEmptyError("No pages provided")
+
+    ctx = user_context or {}
+    questions_json = json.dumps(answer_key.get("questions", []), indent=2)
+
+    subject    = ctx.get("subject") or answer_key.get("subject") or ""
+    curriculum = ctx.get("curriculum") or ""
+
+    logger.info(
+        "[gemma-strict-multi] pages=%d level=%s curriculum=%s subject=%s",
+        len(pages), education_level, curriculum or "-", subject or "-",
+    )
+
+    rag_section = _build_rag_context(
+        query_text=f"{curriculum} {subject} {education_level} {questions_json[:400]}",
+        user_context=ctx,
+    )
+
+    prompt = f"""{_NERIAH_IDENTITY}
+You are an expert teacher marking a student's handwritten work at {education_level} level.
+Grading intensity: {_intensity(education_level)}.
+{f"Subject: {subject}" if subject else ""}
+{f"Curriculum: {curriculum}" if curriculum else ""}
+{rag_section}
+The student's work spans {len(pages)} page(s). You will receive {len(pages)} image(s)
+in order (page 1 first, page 2 second, etc). A single question's answer may
+span two pages — read ALL pages before assigning verdicts.
+
+Answer key:
+{questions_json}
+
+For each question in the answer key, locate the student's handwritten answer
+across the pages and assess it.
+
+Return ONE unified JSON array — one object per question, across ALL pages:
+[
+  {{
+    "question_number": 1,
+    "page_index": 0,
+    "student_answer": "<verbatim text you read from the image>",
+    "expected_answer": "<from answer key>",
+    "verdict": "correct" | "incorrect" | "partial",
+    "awarded_marks": <number>,
+    "max_marks": <number from answer key>,
+    "feedback": "<one constructive sentence, or null>"
+  }}
+]
+
+Rules:
+- EVERY verdict MUST include a "page_index" integer field. 0 = page 1,
+  1 = page 2, etc. Use the page where the student's ANSWER appeared (not
+  the question number label).
+- If a question is unanswered on any page, verdict is "incorrect",
+  awarded_marks is 0, and page_index may be 0.
+- Partial credit only where the answer key marks allow fractional marks.
+- Never award more than max_marks for any question.
+- Return raw JSON array only — no markdown fences, no commentary."""
+
+    # Build multi-image chat-completions content: one text block, then one
+    # image_url block per page. Matches the pattern in _generate() for
+    # single-image calls, just extended to N images.
+    content: list = [{"type": "text", "text": prompt}]
+    for page_bytes in pages:
+        b64 = base64.b64encode(page_bytes).decode("utf-8")
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
+    messages = [{"role": "user", "content": content}]
+
+    try:
+        raw = _vertex_chat_completions(messages)
+    except Exception as exc:
+        logger.exception("[gemma-strict-multi] Vertex call failed")
+        raise classify_vertex_exception(exc) from exc
+
+    if not raw or not raw.strip():
+        logger.error("[gemma-strict-multi] Vertex returned empty content")
+        raise GradingEmptyError("Vertex returned empty string")
+
+    parsed = _parse_json(raw, None)
+    if parsed is None:
+        logger.error("[gemma-strict-multi] JSON parse failed. Raw (first 500): %.500s", raw)
+        raise GradingParseError(f"JSON parse failed: {raw[:200]}")
+
+    if not isinstance(parsed, list):
+        logger.error("[gemma-strict-multi] JSON parsed but was not a list: %s", type(parsed).__name__)
+        raise GradingParseError(f"Expected JSON array, got {type(parsed).__name__}")
+
+    if len(parsed) == 0:
+        logger.error("[gemma-strict-multi] Gemma returned empty verdicts array")
+        raise GradingEmptyError("Empty verdicts array from Gemma")
+
+    # Defensive: clamp page_index into [0, len(pages)) so a sloppy model
+    # response can't crash annotate_pages or confuse downstream UIs.
+    for v in parsed:
+        if not isinstance(v, dict):
+            continue
+        raw_pi = v.get("page_index")
+        try:
+            pi = int(raw_pi) if raw_pi is not None else 0
+        except (TypeError, ValueError):
+            pi = 0
+        if pi < 0 or pi >= len(pages):
+            pi = 0
+        v["page_index"] = pi
+
+    return parsed
+
+
 def check_image_quality_strict(image_bytes: bytes) -> dict:
     """Like check_image_quality but raises typed NeriahError on Vertex failure."""
     prompt = (

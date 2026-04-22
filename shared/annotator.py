@@ -214,3 +214,27 @@ def _bounding_box_y(
                 y = word.get("y", 0) * img_height
                 return int(y)
     return None
+
+
+def annotate_pages(pages: list[bytes], verdicts: list[dict]) -> list[bytes]:
+    """Annotate each page with only the verdicts that apply to it.
+
+    Multi-page sibling of annotate_image. Filters `verdicts` by `page_index`
+    and delegates to annotate_image per page, so the existing tick/cross/
+    score-bubble rendering is reused unchanged.
+
+    `page_index` defaults to 0 when missing on a verdict — that way a
+    single-page submission works even if Gemma forgot to emit the field.
+
+    Returns a list of annotated JPEG bytes, same order + length as `pages`.
+    Pages with no matching verdicts still get annotated (just without per-
+    question marks), preserving the summary score bubble.
+    """
+    annotated: list[bytes] = []
+    for i, page_bytes in enumerate(pages):
+        page_verdicts = [
+            v for v in verdicts
+            if int(v.get("page_index", 0)) == i
+        ]
+        annotated.append(annotate_image(page_bytes, page_verdicts))
+    return annotated
