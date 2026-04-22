@@ -574,31 +574,6 @@ export default function CurriculumAdminPage() {
     setSyllabuses([]);
   };
 
-  const [demoLaunching, setDemoLaunching] = useState(false);
-  const [demoError, setDemoError]         = useState('');
-
-  const handleLaunchDemo = async () => {
-    setDemoLaunching(true);
-    setDemoError('');
-    try {
-      const res = await fetch('/api/admin/demo-token', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        setDemoError(body.error || 'Failed to launch demo.');
-        return;
-      }
-      // Cookie is now set — open demo in a new tab so the admin panel stays open
-      window.open('/demo', '_blank', 'noopener');
-    } catch {
-      setDemoError('Network error. Please try again.');
-    } finally {
-      setDemoLaunching(false);
-    }
-  };
-
   // Still checking cookie
   if (!authChecked) {
     return (
@@ -650,16 +625,6 @@ export default function CurriculumAdminPage() {
             padding: '4px 12px' }}>
             {adminEmail}
           </span>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-            <Btn variant="outline" color={C.teal}
-              disabled={demoLaunching}
-              onClick={handleLaunchDemo}>
-              {demoLaunching ? 'Opening…' : 'Launch Demo'}
-            </Btn>
-            {demoError && (
-              <span style={{ fontSize: 11, color: C.red }}>{demoError}</span>
-            )}
-          </div>
           <Btn variant="ghost" onClick={handleLogout} color={C.g500}>
             Logout
           </Btn>
