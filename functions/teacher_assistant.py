@@ -1,6 +1,5 @@
 """
 Teacher AI Assistant — POST /api/teacher/assistant
-                       POST /api/teacher/assistant/export
 
 Handles 7 action types for an AI assistant embedded in the teacher's app.
 All calls are role-locked to teachers, run through input/output guardrails,
@@ -15,9 +14,12 @@ Action types:
   teaching_methods   — suggest teaching strategies for a topic
   exam_questions     — generate exam questions with mark scheme (structured JSON)
 
-Export:
-  POST /api/teacher/assistant/export — persist AI-generated homework/quiz to Firestore
-  as a draft answer_key record; teacher reviews before making live to students.
+Note: the create_homework / create_quiz actions return structured JSON that
+was previously exported to Firestore via POST /api/teacher/assistant/export.
+That export endpoint was removed 2026-04-22 because it created draft
+answer_key rows that polluted analytics counts. The action types remain
+(tests depend on them + the chat flow still produces the structures), but
+nothing consumes the structured output as a persistable artifact today.
 """
 
 from __future__ import annotations
@@ -874,115 +876,11 @@ def teacher_assistant():
     return jsonify(resp), 200
 
 
-# ── POST /api/teacher/assistant/export ───────────────────────────────────────
-
-@teacher_assistant_bp.post("/teacher/assistant/export")
-def teacher_assistant_export():
-    """
-    Persist AI-generated homework or quiz to Firestore as a draft answer_key.
-    The teacher can review and activate it from the app.
-
-    Body:
-      content_type  str   — "homework" | "quiz"
-      content       dict  — the structured object from /api/teacher/assistant
-      class_id      str   — target class
-      title         str   — optional override title
-    """
-    teacher_id, err = require_role(request, "teacher")
-    if err:
-        return jsonify({"error": err}), 401
-
-    body = request.get_json(silent=True) or {}
-    content_type = (body.get("content_type") or "").strip().lower()
-    content      = body.get("content") or {}
-    class_id     = (body.get("class_id") or "").strip()
-    title        = (body.get("title") or content.get("title") or "").strip()
-
-    if content_type not in ("homework", "quiz"):
-        return jsonify({"error": "content_type must be 'homework' or 'quiz'"}), 400
-    if not class_id:
-        return jsonify({"error": "class_id is required"}), 400
-    if not content:
-        return jsonify({"error": "content is required"}), 400
-
-    # Verify teacher owns the class
-    cls = get_doc("classes", class_id)
-    if not cls:
-        return jsonify({"error": "Class not found"}), 404
-    if cls.get("teacher_id") != teacher_id:
-        return jsonify({"error": "forbidden"}), 403
-
-    if not title:
-        title = f"AI {content_type.capitalize()} — {datetime.now(timezone.utc).strftime('%d %b %Y')}"
-
-    # Convert AI content to AnswerKey-compatible questions list
-    questions: list[dict] = []
-    raw_questions = content.get("questions") or []
-    for i, q in enumerate(raw_questions):
-        if content_type == "quiz":
-            # MCQ: store options and correct answer in marking_notes
-            opts = q.get("options") or {}
-            opts_str = "; ".join(f"{k}) {v}" for k, v in opts.items())
-            correct  = q.get("correct_answer", "")
-            answer   = opts.get(correct, correct)
-            questions.append({
-                "question_number": q.get("number", i + 1),
-                "question_text":   q.get("question", ""),
-                "answer":          answer,
-                "marks":           int(q.get("marks", 1)),
-                "marking_notes":   f"Options: {opts_str}. Correct: {correct}) {answer}",
-            })
-        else:
-            # Homework / exam
-            questions.append({
-                "question_number": q.get("number", i + 1),
-                "question_text":   q.get("question", ""),
-                "answer":          q.get("mark_scheme") or q.get("answer") or "",
-                "marks":           int(q.get("marks", 1)),
-                "marking_notes":   q.get("mark_scheme") or None,
-            })
-
-    total_marks = content.get("total_marks") or sum(q["marks"] for q in questions)
-    education_level = (cls or {}).get("education_level") or "Form 4"
-
-    now = datetime.now(timezone.utc).isoformat()
-    answer_key_id = str(uuid.uuid4())
-    answer_key_doc = {
-        "id":                 answer_key_id,
-        "class_id":           class_id,
-        "teacher_id":         teacher_id,
-        "title":              title,
-        "subject":            (cls or {}).get("subject") or None,
-        "education_level":    education_level,
-        "questions":          questions,
-        "total_marks":        total_marks,
-        "open_for_submission": False,
-        "generated":          True,
-        "ai_generated":       True,
-        "status":             "draft",
-        "source":             f"teacher_assistant_{content_type}",
-        "created_at":         now,
-        "updated_at":         now,
-    }
-    if content_type == "homework" and content.get("due_suggestion"):
-        answer_key_doc["due_suggestion"] = content["due_suggestion"]
-    if content_type == "homework" and content.get("instructions"):
-        answer_key_doc["instructions"] = content["instructions"]
-
-    if not questions:
-        return jsonify({"error": "AI generated no questions. Try again or create manually."}), 422
-
-    upsert("answer_keys", answer_key_id, answer_key_doc)
-    logger.info(
-        "teacher_assistant/export: created answer_key=%s class=%s teacher=%s type=%s",
-        answer_key_id, class_id, teacher_id, content_type,
-    )
-
-    return jsonify({
-        "answer_key_id": answer_key_id,
-        "title":         title,
-        "class_id":      class_id,
-        "status":        "draft",
-        "questions":     len(questions),
-        "total_marks":   total_marks,
-    }), 201
+# NOTE: The POST /api/teacher/assistant/export endpoint was removed 2026-04-22.
+# It used to persist AI-generated homework/quiz structures as draft answer_keys
+# but those drafts polluted analytics counts (they appeared in Analytics class
+# pickers but not on the HomeScreen card because the card filters on
+# open_for_submission=true). Root-cause fix was to remove the feature.
+# The action_types "create_homework" and "create_quiz" remain valid on the
+# /teacher/assistant chat endpoint; they return structured JSON that is no
+# longer persistable from the mobile app.

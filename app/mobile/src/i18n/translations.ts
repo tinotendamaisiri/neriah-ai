@@ -107,7 +107,6 @@ export const translations = {
     subject_placeholder: 'e.g. Mathematics',
     select_class: 'Select a class',
     generate_ai_toggle: 'Generate marking scheme with AI',
-    create_homework: 'Create Homework',
     generate_create: 'Generate & Create',
 
     // Auth — Phone screen
@@ -327,7 +326,6 @@ export const translations = {
     subject_placeholder: 'p.s. Matematikisi',
     select_class: 'Sarudza kirasi',
     generate_ai_toggle: 'Gadzira chema chemaka ne AI',
-    create_homework: 'Gadzira Homeworiki',
     generate_create: 'Gadzira & Isa',
 
     tagline: 'Kumaka homeworiki ne AI kuna vadzidzisi veAfrica',
@@ -541,7 +539,6 @@ export const translations = {
     subject_placeholder: 'p.s. Imathemathiki',
     select_class: 'Khetha ikilasi',
     generate_ai_toggle: 'Yenza isikhema semaka nge-AI',
-    create_homework: 'Dala Umsebenzi',
     generate_create: 'Yenza & Dala',
 
     tagline: 'Ukumaka umsebenzi nge-AI kuze abafundisi base-Afrika',

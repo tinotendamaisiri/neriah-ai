@@ -922,15 +922,6 @@ export interface AssistantResponse {
   off_topic?:       boolean;
 }
 
-export interface AssistantExportResult {
-  answer_key_id: string;
-  title:         string;
-  class_id:      string;
-  status:        string;
-  questions:     number;
-  total_marks:   number;
-}
-
 /**
  * POST /api/teacher/assistant
  * Send a message to the teacher AI assistant.
@@ -950,19 +941,7 @@ export const teacherAssistantChat = async (params: {
   return res.data;
 };
 
-/**
- * POST /api/teacher/assistant/export
- * Persist AI-generated homework or quiz to Firestore as a draft answer_key.
- */
-export const teacherAssistantExport = async (params: {
-  content_type: 'homework' | 'quiz';
-  content:      Record<string, unknown>;
-  class_id:     string;
-  title?:       string;
-}): Promise<AssistantExportResult> => {
-  const res: AxiosResponse<AssistantExportResult> = await client.post(
-    '/teacher/assistant/export',
-    params,
-  );
-  return res.data;
-};
+// teacherAssistantExport / AssistantExportResult removed 2026-04-22. The
+// /teacher/assistant/export backend endpoint was deleted because it created
+// draft answer_keys that polluted analytics counts. The chat endpoint above
+// still emits structured homework/quiz content — nothing persists it now.

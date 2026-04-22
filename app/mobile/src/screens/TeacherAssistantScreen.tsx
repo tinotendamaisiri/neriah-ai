@@ -33,14 +33,12 @@ import {
   AssistantActionType,
   AssistantChatMessage,
   AssistantResponse,
-  listClasses,
   teacherAssistantChat,
-  teacherAssistantExport,
 } from '../services/api';
 import InAppCamera from '../components/InAppCamera';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useAuth } from '../context/AuthContext';
-import { Class, RootStackParamList } from '../types';
+import { RootStackParamList } from '../types';
 
 // ── Neriah brand palette ───────────────────────────────────────────────────────
 const AI = {
@@ -67,19 +65,16 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 // ── Action type mapping ────────────────────────────────────────────────────────
 
+// "Create Homework" + "Create a Quiz" removed from the menu 2026-04-22 along
+// with the export endpoint that persisted those structures as draft answer_keys.
+// The action types stay in AssistantActionType so the chat routing / tests
+// still work; teachers just can't pick them as a button anymore.
 const QUICK_ACTIONS: Array<{ label: string; action: AssistantActionType }> = [
-  { label: 'Create Homework',            action: 'create_homework' },
-  { label: 'Create a Quiz',              action: 'create_quiz' },
   { label: 'Prepare Notes',             action: 'prepare_notes' },
   { label: 'How is my class performing?', action: 'class_performance' },
   { label: 'Suggest teaching methods',  action: 'teaching_methods' },
   { label: 'Generate exam questions',   action: 'exam_questions' },
 ];
-
-const EXPORTABLE_ACTIONS: ReadonlySet<AssistantActionType> = new Set([
-  'create_homework',
-  'create_quiz',
-]);
 
 // ── Curriculum / Level data ────────────────────────────────────────────────────
 
@@ -164,9 +159,10 @@ interface ChatSession {
 // ── Structured output card helpers ────────────────────────────────────────────
 
 function cardIcon(action: AssistantActionType): string {
+  // create_homework / create_quiz cases removed 2026-04-22 along with the
+  // export feature. If the chat endpoint ever returns one of those action
+  // types now, it falls through to the default bulb icon — harmless.
   switch (action) {
-    case 'create_homework':  return 'document-text-outline';
-    case 'create_quiz':      return 'checkbox-outline';
     case 'prepare_notes':    return 'book-outline';
     case 'exam_questions':   return 'ribbon-outline';
     case 'class_performance':return 'bar-chart-outline';
@@ -176,8 +172,6 @@ function cardIcon(action: AssistantActionType): string {
 
 function cardLabel(action: AssistantActionType): string {
   switch (action) {
-    case 'create_homework':  return 'Homework';
-    case 'create_quiz':      return 'Quiz';
     case 'prepare_notes':    return 'Lesson Notes';
     case 'exam_questions':   return 'Exam Questions';
     case 'class_performance':return 'Class Performance';
@@ -267,42 +261,10 @@ function TypingIndicator() {
   );
 }
 
-// ── Class picker modal ────────────────────────────────────────────────────────
+// ClassPicker component removed 2026-04-22 — its only caller was the export
+// flow (now deleted). Class list state and listClasses() fetch also removed
+// from the main screen below.
 
-interface ClassPickerProps {
-  visible:   boolean;
-  classes:   Class[];
-  onSelect:  (cls: Class) => void;
-  onDismiss: () => void;
-}
-function ClassPicker({ visible, classes, onSelect, onDismiss }: ClassPickerProps) {
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
-      <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={onDismiss}>
-        <View style={s.modalSheet}>
-          <Text style={s.modalTitle}>Export to which class?</Text>
-          {classes.map(cls => (
-            <TouchableOpacity
-              key={cls.id}
-              style={s.classRow}
-              onPress={() => onSelect(cls)}
-            >
-              <Ionicons name="people-outline" size={18} color={AI.teal} style={{ marginRight: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={s.classRowName}>{cls.name}</Text>
-                <Text style={s.classRowLevel}>{cls.education_level}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={AI.teal} />
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity style={s.cancelBtn} onPress={onDismiss}>
-            <Text style={s.cancelTxt}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
-}
 
 // ── Main screen ────────────────────────────────────────────────────────────────
 
@@ -319,11 +281,8 @@ export default function TeacherAssistantScreen() {
   const [typing, setTyping]               = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
 
-  // Export state
-  const [classes, setClasses]             = useState<Class[]>([]);
-  const [exportMsg, setExportMsg]         = useState<ChatMessage | null>(null);
-  const [showClassPicker, setShowClassPicker] = useState(false);
-  const [exporting, setExporting]         = useState(false);
+  // Export state (classes, exportMsg, showClassPicker, exporting) removed
+  // 2026-04-22 along with the export flow.
   const [toastMsg, setToastMsg]           = useState('');
   const [toastVisible, setToastVisible]   = useState(false);
   const [attachment, setAttachment]       = useState<{
@@ -368,10 +327,8 @@ export default function TeacherAssistantScreen() {
     }
   }, [messages, typing]);
 
-  // ── Load classes (for export picker) ─────────────────────────────────────
-  useEffect(() => {
-    listClasses().then(setClasses).catch(() => {});
-  }, []);
+  // (listClasses effect removed — classes state only existed to feed the
+  // export-to-class picker, which is gone.)
 
   // ── Persist history (legacy key — kept for API context window) ───────────
   const persistHistory = useCallback((msgs: ChatMessage[]) => {
@@ -595,46 +552,8 @@ export default function TeacherAssistantScreen() {
     }
   }, [typing, messages, curriculum, level, conversationId, persistHistory, currentChatId, saveToSessionHistory]);
 
-  // ── Export flow ───────────────────────────────────────────────────────────
-  const handleExport = useCallback((msg: ChatMessage) => {
-    if (classes.length === 0) {
-      showToast('No classes found. Create a class first.');
-      return;
-    }
-    if (classes.length === 1) {
-      doExport(msg, classes[0]);
-      return;
-    }
-    setExportMsg(msg);
-    setShowClassPicker(true);
-  }, [classes]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const doExport = useCallback(async (msg: ChatMessage, cls: Class) => {
-    if (!msg.structured || !msg.actionType) return;
-    setShowClassPicker(false);
-    setExporting(true);
-    try {
-      const contentType = msg.actionType === 'create_quiz' ? 'quiz' : 'homework';
-      const result = await teacherAssistantExport({
-        content_type: contentType,
-        content:      msg.structured,
-        class_id:     cls.id,
-        title:        (msg.structured.title as string | undefined) ?? undefined,
-      });
-      showToast(`${contentType === 'quiz' ? 'Quiz' : 'Homework'} added to ${cls.name} as draft — review before opening`);
-      setTimeout(() => {
-        navigation.navigate('HomeworkCreated', {
-          answer_key_id: result.answer_key_id,
-          class_id:      cls.id,
-          class_name:    cls.name,
-        });
-      }, 1200);
-    } catch {
-      showToast('Export failed. Please try again.');
-    } finally {
-      setExporting(false);
-    }
-  }, [navigation]);
+  // handleExport / doExport removed 2026-04-22 along with
+  // POST /api/teacher/assistant/export.
 
   const levels = CURRICULUM_LEVELS[curriculum] ?? CURRICULUM_LEVELS.ZIMSEC;
 
@@ -683,37 +602,15 @@ export default function TeacherAssistantScreen() {
                 {previewLines(item.structured, item.actionType)}
               </Text>
 
-              {/* Export buttons */}
-              {item.exportable && EXPORTABLE_ACTIONS.has(item.actionType) && (
-                <View style={s.exportRow}>
-                  <TouchableOpacity
-                    style={s.exportBtn}
-                    onPress={() => handleExport(item)}
-                    disabled={exporting}
-                  >
-                    {exporting ? (
-                      <ActivityIndicator size="small" color={AI.text} />
-                    ) : (
-                      <>
-                        <Ionicons name="cloud-upload-outline" size={14} color={AI.text} />
-                        <Text style={s.exportBtnTxt}>Export to Class</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={s.editBtn}
-                    onPress={() => sendMessage(`Edit the ${cardLabel(item.actionType).toLowerCase()} — `, item.actionType)}
-                  >
-                    <Text style={s.editBtnTxt}>Edit first</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              {/* Export-to-class buttons removed 2026-04-22 along with the
+                  export endpoint. Structured homework/quiz cards now render
+                  preview-only. */}
             </View>
           )}
         </View>
       </View>
     );
-  }, [exporting, handleExport, sendMessage]);
+  }, [sendMessage]);
 
   return (
     <View style={s.screen}>
@@ -887,12 +784,15 @@ export default function TeacherAssistantScreen() {
               <TouchableOpacity
                 style={[s.sendBtn, ((!input.trim() && !attachment) || typing) && s.sendDisabled]}
                 onPress={() => {
-                  // Detect action type from input keywords
+                  // Detect action type from input keywords. 'create_homework'
+                  // and 'create_quiz' auto-mappings removed 2026-04-22 along
+                  // with the export UI — teachers can still get structured
+                  // homework/quiz output by explicitly asking the assistant,
+                  // but we don't auto-route free-form input to those action
+                  // types anymore.
                   const q = input.toLowerCase();
                   let action: AssistantActionType = 'chat';
-                  if (q.includes('homework'))    action = 'create_homework';
-                  else if (q.includes('quiz'))   action = 'create_quiz';
-                  else if (q.includes('notes') || q.includes('prepare')) action = 'prepare_notes';
+                  if (q.includes('notes') || q.includes('prepare')) action = 'prepare_notes';
                   else if (q.includes('exam'))   action = 'exam_questions';
                   else if (q.includes('performing') || q.includes('performance')) action = 'class_performance';
                   else if (q.includes('teaching') || q.includes('method')) action = 'teaching_methods';
@@ -952,15 +852,7 @@ export default function TeacherAssistantScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Class picker modal */}
-      <ClassPicker
-        visible={showClassPicker}
-        classes={classes}
-        onSelect={cls => {
-          if (exportMsg) doExport(exportMsg, cls);
-        }}
-        onDismiss={() => setShowClassPicker(false)}
-      />
+      {/* Class picker modal removed 2026-04-22 (export feature deleted). */}
 
       {/* Toast */}
       <Toast message={toastMsg} visible={toastVisible} />
