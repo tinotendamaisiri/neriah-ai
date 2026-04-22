@@ -19,6 +19,7 @@ from shared.auth import (
     verify_pin,
 )
 from shared.config import is_demo
+from shared.constants import TERMS_URL, TERMS_VERSION
 from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Student, Teacher
 from shared.sms_client import (
@@ -27,6 +28,7 @@ from shared.sms_client import (
     is_bypassed,
     send_otp as _dispatch_otp,
 )
+from shared.utils import get_client_ip
 
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint("auth", __name__)
@@ -171,6 +173,30 @@ def _check_ip_rate_limit(ip: str) -> tuple[bool, dict]:
     return False, headers
 
 
+def _build_terms_record(body: dict) -> tuple[dict | None, tuple[str, str] | None]:
+    """Validate + build the 6-field terms record from a register body.
+
+    Returns:
+        (record, None) when accepted — record is the dict to merge into the
+            user doc (after OTP verify) AND into pending_data (so the IP is
+            captured at register time, when the user was on their network).
+        (None, (message, code)) when terms_accepted is missing or false.
+    """
+    if not body.get("terms_accepted"):
+        return None, ("Terms of Service must be accepted to register.", "TERMS_NOT_ACCEPTED")
+
+    client_terms_version = str(body.get("terms_version") or "unknown")
+    record = {
+        "terms_accepted": True,
+        "terms_accepted_at": datetime.now(timezone.utc).isoformat(),
+        "terms_version": client_terms_version,
+        "terms_version_server": TERMS_VERSION,
+        "terms_url": TERMS_URL,
+        "terms_ip": get_client_ip(request),
+    }
+    return record, None
+
+
 def _send_otp(phone: str, otp: str) -> str:
     """Send OTP, persist method info, return channel used."""
     if is_demo():
@@ -255,6 +281,11 @@ def auth_register():
     if not phone_valid:
         return _err(phone_err, phone_code, 400)
 
+    terms_record, terms_err = _build_terms_record(body)
+    if terms_err is not None:
+        msg, code = terms_err
+        return _err(msg, code, 400)
+
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     ip_blocked, ip_headers = _check_ip_rate_limit(ip)
     if ip_blocked:
@@ -281,12 +312,15 @@ def auth_register():
 
     # Don't create the teacher doc yet — store registration data in the OTP doc.
     # Teacher is only created in Firestore after OTP is successfully verified.
+    # Terms record is stashed here so the client IP is captured at register
+    # time (when the user actually ticked the checkbox), not at verify time.
     otp, rl_headers = _store_otp(phone, pending_data={
         "name": name,
         "title": title,
         "school_name": school_name,
         "school_id": school_id,
         "phone": phone,
+        "terms": terms_record,
     })
     if otp is None:
         wait = _retry_after(rl_headers)
@@ -545,7 +579,14 @@ def auth_verify():
             phone=pending_data["phone"],
             class_id=class_id,
         )
-        upsert("students", student.id, student.model_dump())
+        student_doc = student.model_dump()
+        # Merge the terms record captured at register time (including client
+        # IP). Teacher/Student Pydantic models don't declare these fields, so
+        # we merge on the dict before the single write.
+        terms_record = pending_data.get("terms") or {}
+        if terms_record:
+            student_doc.update(terms_record)
+        upsert("students", student.id, student_doc)
         # Increment student_count on the class
         if class_id and class_id != "pending":
             cls = get_doc("classes", class_id)
@@ -565,8 +606,14 @@ def auth_verify():
             school_name=pending_data.get("school_name"),
             school_id=pending_data.get("school_id"),
         )
-        upsert("teachers", teacher.id, teacher.model_dump())
         teacher_doc = teacher.model_dump()
+        # Merge the terms record captured at register time (including client
+        # IP). Teacher/Student Pydantic models don't declare these fields, so
+        # we merge on the dict before the single write.
+        terms_record = pending_data.get("terms") or {}
+        if terms_record:
+            teacher_doc.update(terms_record)
+        upsert("teachers", teacher.id, teacher_doc)
     else:
         # Login flow: check teachers first, then students
         teacher_doc = query_single("teachers", [("phone", "==", phone)])
@@ -1178,6 +1225,11 @@ def auth_student_register():
             400,
         )
 
+    terms_record, terms_err = _build_terms_record(body)
+    if terms_err is not None:
+        msg, code = terms_err
+        return _err(msg, code, 400)
+
     # Resolve join code → class_id if not already provided
     if class_join_code and not class_id:
         cls = query_single("classes", [("join_code", "==", class_join_code)])
@@ -1218,6 +1270,7 @@ def auth_student_register():
         "phone": phone,
         "class_id": class_id,
         "manual_class_name": manual_class_name,
+        "terms": terms_record,
     })
     if otp is None:
         wait = _retry_after(rl_headers)

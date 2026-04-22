@@ -160,6 +160,10 @@ export const requestRegisterOtp = async (payload: {
   surname: string;
   school_id?: string;       // from picker — preferred
   school_name?: string;     // free-text fallback when school not in list
+  /** User ticked the "I agree to the Terms" checkbox. Backend requires true. */
+  terms_accepted: boolean;
+  /** Version of the terms the user saw (from src/constants/legal.ts). */
+  terms_version: string;
 }): Promise<OtpSentResponse> => {
   const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/register', payload);
   return res.data;
@@ -565,6 +569,10 @@ export const studentRegister = async (data: {
   class_id?: string;
   class_join_code?: string;
   manual_class_name?: string;
+  /** User ticked the "I agree to the Terms" checkbox. Backend requires true. */
+  terms_accepted: boolean;
+  /** Version of the terms the user saw (from src/constants/legal.ts). */
+  terms_version: string;
 }): Promise<OtpSentResponse> => {
   const res = await client.post('/auth/student/register', data);
   return res.data;

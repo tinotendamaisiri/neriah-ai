@@ -12,13 +12,16 @@ import {
   ScrollView,
   Platform,
   Alert,
+  Linking,
   Modal,
+  Pressable,
   SectionList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { requestRegisterOtp, getSchools } from '../services/api';
+import { TERMS_URL, TERMS_VERSION } from '../constants/legal';
 import { useLanguage } from '../context/LanguageContext';
 import { School, AuthStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
@@ -55,6 +58,16 @@ export default function TeacherRegisterScreen() {
   const [surname, setSurname] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  // Per-field error state for the phone number — only shown when the field
+  // has been blurred at least once AND is non-empty, so the "too short" copy
+  // never fires on keystroke or on empty initial render.
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+  // Checkbox at the bottom of the form — must be ticked before submit.
+  // Inline-legal replaces the old UserAgreementScreen post-login interstitial.
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+
+  const openLegal = () => Linking.openURL(TERMS_URL);
 
   const TITLES = ['Mr', 'Mrs', 'Miss', 'Ms', 'Dr', 'Prof', 'Sir', 'Eng', 'Rev'];
 
@@ -139,9 +152,14 @@ export default function TeacherRegisterScreen() {
       return;
     }
     if (!ph || !isValidE164(ph)) {
+      // Flag the field so the inline error under PhoneInput becomes visible.
+      setPhoneTouched(true);
+      setPhoneError(t('invalid_number_msg'));
       Alert.alert(t('invalid_number'), t('invalid_number_msg'));
       return;
     }
+    // Phone passed client validation — clear any stale error.
+    setPhoneError('');
     const schoolId = showCustomInput ? undefined : selectedSchoolId;
     const schoolNameVal = showCustomInput ? customSchool.trim() : undefined;
     if (!schoolId && !schoolNameVal) {
@@ -157,6 +175,11 @@ export default function TeacherRegisterScreen() {
         surname: sn,
         ...(title ? { title } : {}),
         ...(schoolId ? { school_id: schoolId } : { school_name: schoolNameVal }),
+        // Checkbox gate is enforced on the submit button, so agreedToTerms
+        // is always true here — passing it explicitly keeps the contract
+        // honest if the gate ever changes.
+        terms_accepted: agreedToTerms,
+        terms_version: TERMS_VERSION,
       };
       const res = await requestRegisterOtp(payload);
       navigation.navigate('OTP', {
@@ -180,7 +203,12 @@ export default function TeacherRegisterScreen() {
           ],
         );
       } else if (status === 400) {
-        Alert.alert(t('error'), t('fill_all_fields'));
+        // Pin the 400 copy to the phone field so the user sees what's wrong
+        // under the input, not just in a transient alert.
+        const msg = err?.message ?? t('fill_all_fields');
+        setPhoneTouched(true);
+        setPhoneError(msg);
+        Alert.alert(t('error'), msg);
       } else if (status === 429) {
         Alert.alert(t('error'), t('too_many_attempts'));
       } else {
@@ -232,6 +260,8 @@ export default function TeacherRegisterScreen() {
               placeholder="e.g. Tendai"
               value={firstName}
               onChangeText={setFirstName}
+              keyboardType="default"
+              textContentType="givenName"
               autoCapitalize="words"
               autoCorrect={false}
               returnKeyType="next"
@@ -243,6 +273,8 @@ export default function TeacherRegisterScreen() {
               placeholder="e.g. Moyo"
               value={surname}
               onChangeText={setSurname}
+              keyboardType="default"
+              textContentType="familyName"
               autoCapitalize="words"
               autoCorrect={false}
               returnKeyType="next"
@@ -250,9 +282,16 @@ export default function TeacherRegisterScreen() {
 
             <Text style={styles.label}>{t('phone_number')}</Text>
             <PhoneInput
-              onChangePhone={setPhone}
+              onChangePhone={(p) => {
+                setPhone(p);
+                // Clear any stale backend error the moment the user edits.
+                if (phoneError) setPhoneError('');
+              }}
               disabled={loading}
             />
+            {phoneTouched && phone.length > 0 && phoneError ? (
+              <Text style={styles.fieldError}>{phoneError}</Text>
+            ) : null}
 
             <Text style={styles.label}>{t('school')}</Text>
             {showCustomInput ? (
@@ -284,10 +323,31 @@ export default function TeacherRegisterScreen() {
               </TouchableOpacity>
             )}
 
+            {/* Inline legal acceptance — replaces the old post-login
+                UserAgreementScreen interstitial. */}
+            <Pressable
+              style={styles.termsRow}
+              onPress={() => setAgreedToTerms(v => !v)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: agreedToTerms }}
+            >
+              <View style={[styles.checkbox, agreedToTerms && styles.checkboxChecked]}>
+                {agreedToTerms ? (
+                  <Ionicons name="checkmark" size={16} color={COLORS.white} />
+                ) : null}
+              </View>
+              <Text style={styles.termsText}>
+                I agree to the{' '}
+                <Text style={styles.termsLink} onPress={openLegal}>Terms of Service</Text>
+                {' '}and{' '}
+                <Text style={styles.termsLink} onPress={openLegal}>Privacy Policy</Text>
+              </Text>
+            </Pressable>
+
             <TouchableOpacity
-              style={[styles.button, loading && styles.buttonDisabled]}
+              style={[styles.button, (loading || !agreedToTerms) && styles.buttonDisabled]}
               onPress={handleRegister}
-              disabled={loading}
+              disabled={loading || !agreedToTerms}
             >
               <Text style={styles.buttonText}>
                 {loading ? t('creating_account') : t('create_account')}
@@ -440,6 +500,29 @@ const styles = StyleSheet.create({
   altLink: { marginTop: 24, alignItems: 'center' },
   altLinkText: { fontSize: 14, color: COLORS.teal500, fontWeight: '600' },
   legal: { marginTop: 16, textAlign: 'center', fontSize: 12, color: COLORS.textLight },
+  fieldError: { color: COLORS.error, fontSize: 13, marginTop: 6 },
+
+  // Inline terms checkbox row
+  termsRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    marginTop: 20, paddingHorizontal: 2,
+  },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 5,
+    borderWidth: 1.5, borderColor: COLORS.gray200,
+    backgroundColor: COLORS.white,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: 2,
+  },
+  checkboxChecked: {
+    backgroundColor: COLORS.teal500, borderColor: COLORS.teal500,
+  },
+  termsText: {
+    flex: 1, fontSize: 13, lineHeight: 19, color: COLORS.text,
+  },
+  termsLink: {
+    color: COLORS.teal500, fontWeight: '600', textDecorationLine: 'underline',
+  },
 
   // ── School picker modal ──────────────────────────────────────────────────────
   modal: { flex: 1, backgroundColor: COLORS.white },

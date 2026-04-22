@@ -415,7 +415,6 @@ export type RootStackParamList = {
   HomeworkAnalytics: { homework_id: string; homework_title: string; class_id: string; class_name: string };
   EditProfile: undefined;
   TermsOfService: { initialTab?: 'terms' | 'privacy' } | undefined;
-  UserAgreement: undefined;
 };
 
 export type StudentTabParamList = {

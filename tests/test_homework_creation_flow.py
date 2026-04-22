@@ -2295,6 +2295,182 @@ class TestTeacherRegister:
         assert payload.get("role") == "teacher",     "JWT role must be 'teacher'"
 
 
+# ── TestTermsAcceptance ────────────────────────────────────────────────────────
+
+class TestTermsAcceptance:
+    """Registration must validate + persist Terms-of-Service acceptance.
+
+    Tests target the production /api/auth/register and /api/auth/student/register
+    endpoints. The register endpoint itself writes to otp_verifications (not
+    teachers/students) — the terms record is stashed in pending_data there so
+    the client IP can be captured at register time. These tests also cover the
+    auth_verify flow where pending_data is flushed onto the user doc.
+    """
+
+    _TEACHER_BASE = {
+        "phone":      "+263772220001",
+        "first_name": "Tino",
+        "surname":    "Maisiri",
+        "school_name": "Test High School",
+        "terms_version": "1.0",
+    }
+
+    _STUDENT_BASE = {
+        "phone":          "+263772220002",
+        "first_name":     "Ruva",
+        "surname":        "Moyo",
+        "manual_class_name": "Form 2A",
+        "terms_version":  "1.0",
+    }
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _mock_clean_firestore(self):
+        """Return mocks wired for a 'no existing account' register call.
+
+        Captures every upsert into a dict keyed by (collection, doc_id) so
+        tests can assert on what landed where.
+        """
+        saved: dict[tuple, dict] = {}
+
+        def fake_upsert(collection, doc_id, data):
+            key = (collection, doc_id)
+            existing = saved.get(key, {})
+            saved[key] = {**existing, **data}
+
+        def fake_query_single(collection, filters):
+            # No pre-existing accounts; no pre-existing classes either.
+            return None
+
+        def fake_get_doc(collection, doc_id):
+            # No rate-limit record; no prior OTP doc.
+            return None
+
+        return saved, fake_upsert, fake_query_single, fake_get_doc
+
+    def _post_register(self, client, body, *, headers=None):
+        saved, fu, fqs, fgd = self._mock_clean_firestore()
+        with patch("functions.auth.upsert", side_effect=fu), \
+             patch("functions.auth.query_single", side_effect=fqs), \
+             patch("functions.auth.get_doc", side_effect=fgd), \
+             patch("functions.auth._send_otp", return_value="log"):
+            resp = client.post(
+                "/api/auth/register",
+                json=body,
+                content_type="application/json",
+                headers=headers or {},
+            )
+        return resp, saved
+
+    def _post_student_register(self, client, body, *, headers=None):
+        saved, fu, fqs, fgd = self._mock_clean_firestore()
+        with patch("functions.auth.upsert", side_effect=fu), \
+             patch("functions.auth.query_single", side_effect=fqs), \
+             patch("functions.auth.get_doc", side_effect=fgd), \
+             patch("functions.auth._send_otp", return_value="log"):
+            resp = client.post(
+                "/api/auth/student/register",
+                json=body,
+                content_type="application/json",
+                headers=headers or {},
+            )
+        return resp, saved
+
+    # ── Teacher register ───────────────────────────────────────────────────────
+
+    @feature_test("teacher_register_requires_terms")
+    def test_teacher_register_requires_terms_accepted(self, client):
+        """Missing terms_accepted → 400 with TERMS_NOT_ACCEPTED code."""
+        body = {**self._TEACHER_BASE}  # no terms_accepted field
+        resp, _saved = self._post_register(client, body)
+        assert resp.status_code == 400, resp.get_data(as_text=True)
+        data = resp.get_json()
+        assert data.get("error_code") == "TERMS_NOT_ACCEPTED"
+        assert "terms" in (data.get("error") or "").lower()
+
+        # And explicitly false is also rejected.
+        resp2, _ = self._post_register(client, {**body, "terms_accepted": False})
+        assert resp2.status_code == 400
+        assert resp2.get_json().get("error_code") == "TERMS_NOT_ACCEPTED"
+
+    @feature_test("teacher_register_records_terms_fields")
+    def test_teacher_register_records_terms_fields_in_pending_data(self, client):
+        """With terms_accepted=true, the 6 terms fields land on the OTP
+        doc's pending_data.terms."""
+        body = {**self._TEACHER_BASE, "terms_accepted": True}
+        resp, saved = self._post_register(client, body)
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+
+        # The register endpoint writes otp_verifications[phone].pending_data.terms
+        otp_writes = [v for (c, _), v in saved.items() if c == "otp_verifications"]
+        assert otp_writes, f"No otp_verifications write recorded: {saved!r}"
+        merged = {}
+        for w in otp_writes:
+            merged.update(w)
+        terms = (merged.get("pending_data") or {}).get("terms") or {}
+
+        assert terms.get("terms_accepted") is True
+        assert isinstance(terms.get("terms_accepted_at"), str) and "T" in terms["terms_accepted_at"]
+        assert terms.get("terms_version") == "1.0"
+        assert terms.get("terms_version_server") == "1.0"
+        assert terms.get("terms_url") == "https://neriah.ai/legal"
+        assert isinstance(terms.get("terms_ip"), str)
+
+    @feature_test("teacher_register_captures_xff_ip")
+    def test_teacher_register_captures_xff_ip(self, client):
+        """X-Forwarded-For chain → terms_ip is the first (client) entry."""
+        body = {**self._TEACHER_BASE, "terms_accepted": True}
+        resp, saved = self._post_register(
+            client, body,
+            headers={"X-Forwarded-For": "197.221.45.123, 10.0.0.1"},
+        )
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        merged = {}
+        for (c, _), v in saved.items():
+            if c == "otp_verifications":
+                merged.update(v)
+        assert merged["pending_data"]["terms"]["terms_ip"] == "197.221.45.123"
+
+    # ── Student register ───────────────────────────────────────────────────────
+
+    @feature_test("student_register_requires_terms")
+    def test_student_register_requires_terms_accepted(self, client):
+        body = {**self._STUDENT_BASE}
+        resp, _ = self._post_student_register(client, body)
+        assert resp.status_code == 400, resp.get_data(as_text=True)
+        assert resp.get_json().get("error_code") == "TERMS_NOT_ACCEPTED"
+
+    @feature_test("student_register_records_terms_fields")
+    def test_student_register_records_terms_fields_in_pending_data(self, client):
+        body = {**self._STUDENT_BASE, "terms_accepted": True}
+        resp, saved = self._post_student_register(client, body)
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        merged = {}
+        for (c, _), v in saved.items():
+            if c == "otp_verifications":
+                merged.update(v)
+        terms = merged["pending_data"]["terms"]
+        assert terms["terms_accepted"] is True
+        assert terms["terms_version"] == "1.0"
+        assert terms["terms_version_server"] == "1.0"
+        assert terms["terms_url"] == "https://neriah.ai/legal"
+        assert isinstance(terms["terms_ip"], str)
+
+    @feature_test("student_register_captures_xff_ip")
+    def test_student_register_captures_xff_ip(self, client):
+        body = {**self._STUDENT_BASE, "terms_accepted": True}
+        resp, saved = self._post_student_register(
+            client, body,
+            headers={"X-Forwarded-For": "41.220.11.5, 10.0.0.1"},
+        )
+        assert resp.status_code == 201, resp.get_data(as_text=True)
+        merged = {}
+        for (c, _), v in saved.items():
+            if c == "otp_verifications":
+                merged.update(v)
+        assert merged["pending_data"]["terms"]["terms_ip"] == "41.220.11.5"
+
+
 # ── TestHomeworkDetail ─────────────────────────────────────────────────────────
 
 class TestHomeworkDetail:
@@ -7625,7 +7801,8 @@ class TestCrossRoleAuthGate:
         with patch("functions.auth.query_single", side_effect=fake_query_single), \
              patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
             rv = client.post("/api/auth/register", json={
-                "phone": "+263774444444", "first_name": "Test", "surname": "Teacher"
+                "phone": "+263774444444", "first_name": "Test", "surname": "Teacher",
+                "terms_accepted": True, "terms_version": "1.0",
             })
 
         assert rv.status_code == 409
@@ -7645,7 +7822,8 @@ class TestCrossRoleAuthGate:
              patch("functions.auth._check_ip_rate_limit", return_value=(False, {})):
             rv = client.post("/api/auth/student/register", json={
                 "phone": "+263775555555", "first_name": "Test", "surname": "Student",
-                "class_id": "cls-test"
+                "class_id": "cls-test",
+                "terms_accepted": True, "terms_version": "1.0",
             })
 
         assert rv.status_code == 409

@@ -14,14 +14,18 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Linking,
   Modal,
+  Pressable,
   SectionList,
   FlatList,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { studentRegister, getSchools, getClassesBySchool } from '../services/api';
+import { TERMS_URL, TERMS_VERSION } from '../constants/legal';
 import { AuthStackParamList, School } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
@@ -97,6 +101,17 @@ export default function StudentRegisterScreen() {
   const [surname, setSurname] = useState('');
 
   const [loading, setLoading] = useState(false);
+
+  // Per-field error for phone on Step 1 — surfaced under the input only
+  // when the field was blurred AND has non-empty input.
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+
+  // Inline legal acceptance — replaces the old UserAgreementScreen
+  // interstitial. Required before the Step 4 "Join class" submit fires.
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+
+  const openLegal = () => Linking.openURL(TERMS_URL);
 
   // ── Load schools on mount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -246,6 +261,10 @@ export default function StudentRegisterScreen() {
         ...(selectedClassId ? { class_id: selectedClassId } : {}),
         ...(isPendingClass && manualJoinCode.trim() ? { class_join_code: manualJoinCode.trim().toUpperCase() } : {}),
         ...(isPendingClass ? { manual_class_name: selectedClassName } : {}),
+        // Checkbox gate is enforced on the Step 4 submit button; explicit
+        // here so the contract stays honest if the gate changes.
+        terms_accepted: agreedToTerms,
+        terms_version: TERMS_VERSION,
       });
       navigation.navigate('OTP', {
         phone: phone.trim(),
@@ -321,11 +340,28 @@ export default function StudentRegisterScreen() {
 
             <View style={styles.form}>
               <Text style={styles.label}>Phone number</Text>
-              <PhoneInput onChangePhone={setPhone} disabled={false} />
+              <PhoneInput
+                onChangePhone={(p) => {
+                  setPhone(p);
+                  if (phoneError) setPhoneError('');
+                }}
+                disabled={false}
+              />
+              {phoneTouched && phone.length > 0 && phoneError ? (
+                <Text style={styles.fieldError}>{phoneError}</Text>
+              ) : null}
 
               <TouchableOpacity
                 style={[styles.button, !isValidE164(phone) && styles.buttonDisabled]}
-                onPress={() => { setStep('school'); }}
+                onPress={() => {
+                  if (!isValidE164(phone)) {
+                    setPhoneTouched(true);
+                    setPhoneError('Please enter a valid phone number.');
+                    return;
+                  }
+                  setPhoneError('');
+                  setStep('school');
+                }}
                 disabled={!isValidE164(phone)}
               >
                 <Text style={styles.buttonText}>Continue</Text>
@@ -488,6 +524,8 @@ export default function StudentRegisterScreen() {
                 placeholder="e.g. Tendai"
                 value={firstName}
                 onChangeText={setFirstName}
+                keyboardType="default"
+                textContentType="givenName"
                 autoCapitalize="words"
                 autoCorrect={false}
                 returnKeyType="next"
@@ -498,16 +536,39 @@ export default function StudentRegisterScreen() {
                 placeholder="e.g. Moyo"
                 value={surname}
                 onChangeText={setSurname}
+                keyboardType="default"
+                textContentType="familyName"
                 autoCapitalize="words"
                 autoCorrect={false}
                 returnKeyType="done"
                 onSubmitEditing={handleRegister}
               />
 
+              {/* Inline legal acceptance — replaces the old post-login
+                  UserAgreementScreen interstitial. */}
+              <Pressable
+                style={styles.termsRow}
+                onPress={() => setAgreedToTerms(v => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: agreedToTerms }}
+              >
+                <View style={[styles.checkbox, agreedToTerms && styles.checkboxChecked]}>
+                  {agreedToTerms ? (
+                    <Ionicons name="checkmark" size={16} color={COLORS.white} />
+                  ) : null}
+                </View>
+                <Text style={styles.termsText}>
+                  I agree to the{' '}
+                  <Text style={styles.termsLink} onPress={openLegal}>Terms of Service</Text>
+                  {' '}and{' '}
+                  <Text style={styles.termsLink} onPress={openLegal}>Privacy Policy</Text>
+                </Text>
+              </Pressable>
+
               <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
+                style={[styles.button, (loading || !agreedToTerms) && styles.buttonDisabled]}
                 onPress={handleRegister}
-                disabled={loading}
+                disabled={loading || !agreedToTerms}
               >
                 {loading
                   ? <ActivityIndicator color={COLORS.white} />
@@ -655,6 +716,29 @@ const styles = StyleSheet.create({
 
   altLink: { marginTop: 24, alignItems: 'center' },
   altLinkText: { fontSize: 14, color: COLORS.amber300, fontWeight: '600' },
+  fieldError: { color: COLORS.error, fontSize: 13, marginTop: 6 },
+
+  // Inline terms checkbox row (matches TeacherRegisterScreen)
+  termsRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    marginTop: 20, paddingHorizontal: 2,
+  },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 5,
+    borderWidth: 1.5, borderColor: COLORS.gray200,
+    backgroundColor: COLORS.white,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: 2,
+  },
+  checkboxChecked: {
+    backgroundColor: COLORS.teal500, borderColor: COLORS.teal500,
+  },
+  termsText: {
+    flex: 1, fontSize: 13, lineHeight: 19, color: COLORS.text,
+  },
+  termsLink: {
+    color: COLORS.teal500, fontWeight: '600', textDecorationLine: 'underline',
+  },
 
   // School picker button
   pickerButton: {

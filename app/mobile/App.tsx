@@ -82,7 +82,6 @@ import HomeworkAnalyticsScreen from './src/screens/HomeworkAnalyticsScreen';
 import TeacherAssistantScreen from './src/screens/TeacherAssistantScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
 import TermsOfServiceScreen from './src/screens/TermsOfServiceScreen';
-import UserAgreementScreen from './src/screens/UserAgreementScreen';
 
 // ── Student screens ───────────────────────────────────────────────────────────
 import StudentHomeScreen from './src/screens/StudentHomeScreen';
@@ -105,18 +104,11 @@ const TeacherTab = createBottomTabNavigator<MainTabParamList>();
 const TeacherStack = createNativeStackNavigator<RootStackParamList>();
 const StudentTab = createBottomTabNavigator<StudentTabParamList>();
 const StudentRootStack = createNativeStackNavigator<import('./src/types').StudentRootStackParamList>();
-const AgreementStack = createNativeStackNavigator<RootStackParamList>();
 
-// ── Agreement navigator — shown once until terms accepted ─────────────────────
-
-function AgreementNavigator() {
-  return (
-    <AgreementStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
-      <AgreementStack.Screen name="UserAgreement" component={UserAgreementScreen} />
-      <AgreementStack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
-    </AgreementStack.Navigator>
-  );
-}
+// The AgreementNavigator + UserAgreementScreen post-login interstitial was
+// removed. Terms acceptance now happens inline via a checkbox on the two
+// register screens (TeacherRegisterScreen, StudentRegisterScreen). The
+// TermsOfServiceScreen is still reachable from Settings for review.
 
 // ── Auth navigator (shared by both roles) ─────────────────────────────────────
 
@@ -434,7 +426,7 @@ const promptStyles = StyleSheet.create({
 // ── App shell — auth gate + role routing ──────────────────────────────────────
 
 function AppShell() {
-  const { user, loading, hasPin, pinUnlocked, needsPinSetup, termsAccepted } = useAuth();
+  const { user, loading, hasPin, pinUnlocked, needsPinSetup } = useAuth();
   const { initPrompt } = useModel();
 
   // Device capability detection — runs once on first launch only.
@@ -467,11 +459,10 @@ function AppShell() {
   } else if (hasPin && !pinUnlocked) {
     // Cold start with PIN set — require PIN before anything else
     content = <PinLoginScreen />;
-  } else if (!termsAccepted) {
-    // First login — must accept terms before going further
-    content = <AgreementNavigator />;
   } else if (needsPinSetup) {
-    // Terms accepted, first OTP login — prompt user to set a PIN (or skip)
+    // First OTP login after registration — prompt user to set a PIN
+    // (or skip). Terms are now accepted inline during registration, so no
+    // post-login agreement interstitial here.
     content = <PinSetupScreen />;
   } else if (user.role === 'teacher') {
     content = <TeacherNavigator />;
