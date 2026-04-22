@@ -28,7 +28,7 @@ else
   SKIP_EXPR=""
 fi
 
-eval python -m pytest tests/ -v --tb=short $SKIP_EXPR
+eval python3 -m pytest tests/ -v --tb=short $SKIP_EXPR
 
 if [ $? -ne 0 ]; then
     echo ""
