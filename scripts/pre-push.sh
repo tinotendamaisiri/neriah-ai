@@ -19,7 +19,11 @@ fi
 
 if [ "$OLLAMA_UP" -eq 0 ]; then
   echo "Ollama not running — skipping tests that require local inference."
-  SKIP_EXPR="-k 'not (test_grade_submission_non_empty or test_verdicts_non_empty or TestSchemeGeneration)'"
+  # test_integration.py is wholesale excluded — every test in it depends on
+  # mark_response, which hits live Gemma through Vertex AI. The two other
+  # names cover a grade-submission test and a scheme-generation suite that
+  # both require live inference (Ollama or Vertex).
+  SKIP_EXPR="-k 'not (test_integration or test_grade_submission_non_empty or TestSchemeGeneration)'"
 else
   SKIP_EXPR=""
 fi
