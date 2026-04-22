@@ -12,9 +12,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
   Alert,
   ActivityIndicator,
   Modal,
@@ -28,6 +25,7 @@ import { studentRegister, getSchools, getClassesBySchool } from '../services/api
 import { AuthStackParamList, School } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'StudentRegister'>;
 
@@ -299,11 +297,9 @@ export default function StudentRegisterScreen() {
   const stepNumber = step === 'phone' ? 1 : step === 'school' ? 2 : step === 'class_list' ? 3 : 4;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <>
+      <ScreenContainer>
+        <View style={styles.container}>
 
         {/* Back */}
         <TouchableOpacity style={styles.back} onPress={handleBack}>
@@ -521,7 +517,8 @@ export default function StudentRegisterScreen() {
             </View>
           </>
         )}
-      </ScrollView>
+        </View>
+      </ScreenContainer>
 
       {/* ── School picker modal ──────────────────────────────────────────────── */}
       <Modal visible={schoolModalVisible} animationType="slide" presentationStyle="pageSheet">
@@ -614,15 +611,14 @@ export default function StudentRegisterScreen() {
           )}
         </SafeAreaView>
       </Modal>
-    </KeyboardAvoidingView>
+    </>
   );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.white },
-  container: { flexGrow: 1, padding: 24, paddingTop: 48 },
+  container: { padding: 24, paddingTop: 48 },
 
   back: { marginBottom: 16 },
   backText: { fontSize: 16, color: COLORS.gray500 },

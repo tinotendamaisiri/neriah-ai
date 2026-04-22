@@ -53,6 +53,17 @@ function getPhoneExample(dialCode: string): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// TODO(country-detection): current behavior is device-locale via
+// expo-localization, falling back to DEFAULT_COUNTRY_CODE ('ZW'). That means
+// a US-locale device shows +1, not +263, even when the user is sitting in
+// Zimbabwe. Runtime IP-based detection is pending a decision between:
+//   (a) a new backend /api/country endpoint that proxies ipapi.co + caches
+//       server-side (one hop per user, deterministic rate limits);
+//   (b) continuing with expo-localization only (offline, no API call, but
+//       tied to device region which doesn't always match physical location);
+//   (c) a direct ipapi.co call from the app with a 24h AsyncStorage cache
+//       (no backend work, but rate-limited to 1000/IP/day on free tier).
+// Default must NEVER fall back to +1 — Zimbabwe is Neriah's primary market.
 function detectDefaultCountry(): Country {
   try {
     const regionCode = Localization.getLocales()[0]?.regionCode ?? '';

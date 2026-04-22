@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
   ScrollView,
   Platform,
   Alert,
@@ -25,6 +24,7 @@ import { School, AuthStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'TeacherRegister'>;
 
@@ -193,14 +193,8 @@ export default function TeacherRegisterScreen() {
 
   return (
     <>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.container}
-          keyboardShouldPersistTaps="handled"
-        >
+      <ScreenContainer>
+        <View style={styles.container}>
           <TouchableOpacity style={styles.back} onPress={() => navigation.goBack()}>
             <Text style={styles.backText}>{t('back')}</Text>
           </TouchableOpacity>
@@ -306,8 +300,8 @@ export default function TeacherRegisterScreen() {
           </TouchableOpacity>
 
           <Text style={styles.legal}>{t('otp_legal_text')}</Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+      </ScreenContainer>
 
       {/* School picker modal */}
       <Modal
@@ -397,8 +391,7 @@ export default function TeacherRegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.white },
-  container: { flexGrow: 1, padding: 24, paddingTop: 48 },
+  container: { padding: 24, paddingTop: 48 },
   back: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
   iconBadge: {

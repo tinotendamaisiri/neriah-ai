@@ -13,8 +13,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   Alert,
   Image,
 } from 'react-native';
@@ -26,6 +24,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
+import { ScreenContainer } from '../components/ScreenContainer';
 const logoImage = require('../../assets/icon-transparent.png');
 
 
@@ -83,10 +82,7 @@ export default function PhoneScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <ScreenContainer scroll={false}>
       <View style={styles.container}>
         {/* Branding */}
         <View style={styles.brand}>
@@ -122,12 +118,11 @@ export default function PhoneScreen() {
           <Text style={styles.registerLinkText}>{t('new_user_register')}</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.white },
   container: { flex: 1, padding: 24, justifyContent: 'center' },
   brand: { alignItems: 'center', marginBottom: 48 },
   logoMark: {
