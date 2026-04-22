@@ -191,10 +191,11 @@ def mark_response(live_server):
     resp = requests.post(
         f"{live_server['base_url']}/api/mark",
         headers={"Authorization": f"Bearer {live_server['token']}"},
-        files={"image": ("exercise_book.jpg", image_bytes, "image/jpeg")},
+        files={"page_0": ("exercise_book.jpg", image_bytes, "image/jpeg")},
         data={
             "student_id":    STUDENT_ID,
             "answer_key_id": ANSWER_KEY_ID,
+            "page_count":    "1",
         },
         timeout=120,
     )
