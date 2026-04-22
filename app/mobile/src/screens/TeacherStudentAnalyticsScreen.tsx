@@ -86,7 +86,11 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
   const performance_over_time = data.performance_over_time ?? [];
   const strengths = data.strengths ?? [];
   const weaknesses = data.weaknesses ?? [];
+  const weaknessesAggregated = data.weaknesses_aggregated ?? [];
   const submissions = data.submissions ?? [];
+  const MAX_STRUGGLING_ROWS = 7;
+  const strugglingVisible = weaknessesAggregated.slice(0, MAX_STRUGGLING_ROWS);
+  const strugglingHiddenCount = Math.max(0, weaknessesAggregated.length - MAX_STRUGGLING_ROWS);
 
   // ── Performance chart (guard every field — chart-kit crashes on NaN/undefined) ─
   const hasPotData = performance_over_time.length >= 2;
@@ -250,6 +254,31 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
             ) : null)}
           </View>
         </>
+      )}
+
+      {/* Areas they're struggling with — topic-aggregated weaknesses from the
+          /analytics/student/<id> response's weaknesses_aggregated field. */}
+      <Text style={styles.sectionTitle}>Areas they're struggling with</Text>
+      {strugglingVisible.length === 0 ? (
+        <View style={styles.noDataBox}>
+          <Text style={styles.noDataText}>Not enough graded work to identify patterns yet.</Text>
+        </View>
+      ) : (
+        <View style={styles.listCard}>
+          {strugglingVisible.map((row) => (
+            <View key={row.topic} style={styles.strugglingRow}>
+              <Text style={styles.strugglingTopic} numberOfLines={2}>{row.topic}</Text>
+              <Text style={styles.strugglingMeta}>
+                {row.accuracy_pct}% accuracy ({row.attempts} attempt{row.attempts === 1 ? '' : 's'})
+              </Text>
+            </View>
+          ))}
+          {strugglingHiddenCount > 0 && (
+            <Text style={styles.strugglingMore}>
+              + {strugglingHiddenCount} more
+            </Text>
+          )}
+        </View>
       )}
 
       {/* Submission History */}
@@ -517,5 +546,29 @@ const styles = StyleSheet.create({
     color: COLORS.teal700,
     lineHeight: 20,
     fontWeight: '500',
+  },
+
+  // "Areas they're struggling with" topic-aggregated rows
+  strugglingRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    gap: 2,
+  },
+  strugglingTopic: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  strugglingMeta: {
+    fontSize: 12,
+    color: COLORS.gray500,
+  },
+  strugglingMore: {
+    marginTop: 8,
+    fontSize: 12,
+    color: COLORS.teal500,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

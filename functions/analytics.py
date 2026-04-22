@@ -297,6 +297,7 @@ def analytics_student(student_id: str):
             "performance_over_time": [],
             "strengths": [],
             "weaknesses": [],
+            "weaknesses_aggregated": [],
             "submissions": [],
         }), 200
 
@@ -312,6 +313,51 @@ def analytics_student(student_id: str):
 
     weaknesses = list({v.get("question_text", "")[:50] for v in incorrect if v.get("question_text")})[:5]
     strengths  = list({v.get("question_text", "")[:50] for v in correct   if v.get("question_text")})[:5]
+
+    # ── Aggregated weaknesses — topic → (attempts, correct, accuracy_pct, last_seen_at).
+    # Unlike the flat `weaknesses` list above (unique incorrect topics, newest-
+    # first), this version counts BOTH correct and incorrect attempts per topic
+    # so accuracy has a valid denominator. Used by TeacherStudentAnalyticsScreen's
+    # "Areas they're struggling with" section.
+    #
+    # TODO(topic-quality): topic key is currently question_text[:50]. Similar
+    # questions with slightly different wording will count as separate topics.
+    # A proper fix needs either an LLM classifier or curriculum-tagged
+    # questions. Accepted for now.
+    _topic_stats: dict[str, dict] = {}
+    for m in approved:
+        m_ts = m.get("timestamp", "")
+        for v in m.get("verdicts", []):
+            qt = (v.get("question_text") or "").strip()[:50]
+            if not qt:
+                continue
+            entry = _topic_stats.setdefault(qt, {
+                "topic": qt,
+                "attempts": 0,
+                "correct": 0,
+                "last_seen_at": "",
+            })
+            entry["attempts"] += 1
+            if v.get("verdict") == "correct":
+                entry["correct"] += 1
+            # Track the most recent time the student attempted this topic.
+            if m_ts and m_ts > entry["last_seen_at"]:
+                entry["last_seen_at"] = m_ts
+
+    weaknesses_aggregated = []
+    for entry in _topic_stats.values():
+        if entry["attempts"] < 2:
+            continue  # not enough data to flag as a weakness
+        accuracy_pct = round(entry["correct"] / entry["attempts"] * 100)
+        weaknesses_aggregated.append({
+            "topic": entry["topic"],
+            "attempts": entry["attempts"],
+            "correct": entry["correct"],
+            "accuracy_pct": accuracy_pct,
+            "last_seen_at": entry["last_seen_at"] or None,
+        })
+    # Weakest first — tie-break on more attempts (higher confidence) first.
+    weaknesses_aggregated.sort(key=lambda e: (e["accuracy_pct"], -e["attempts"]))
 
     # Batch-fetch unique answer keys to avoid N+1 queries
     unique_ak_ids = list({m.get("answer_key_id", "") for m in approved if m.get("answer_key_id")})
@@ -355,6 +401,7 @@ def analytics_student(student_id: str):
         "performance_over_time": perf_over_time,
         "strengths": [{"topic": s} for s in strengths],
         "weaknesses": [{"topic": w} for w in weaknesses],
+        "weaknesses_aggregated": weaknesses_aggregated,
         "submissions": submissions_out,
     }), 200
 

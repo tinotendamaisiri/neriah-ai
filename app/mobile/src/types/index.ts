@@ -340,6 +340,16 @@ export interface TeacherStudentAnalyticsData {
   }>;
   strengths: Array<{ homework_title: string; score: number; class_average: number }>;
   weaknesses: Array<{ homework_title: string; score: number; class_average: number }>;
+  /** Topic-aggregated weakness list — sorted weakest-first, min 2 attempts
+   *  per topic. Used by the "Areas they're struggling with" section to show
+   *  "Word problems — 30% accuracy (5 attempts)"-style rows. */
+  weaknesses_aggregated: Array<{
+    topic: string;
+    attempts: number;
+    correct: number;
+    accuracy_pct: number;
+    last_seen_at?: string | null;
+  }>;
   submissions: Array<{
     id: string;
     homework_title: string;
