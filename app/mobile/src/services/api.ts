@@ -463,9 +463,14 @@ export const submitTeacherScan = async (payload: {
     } as any);
   }
   const res: AxiosResponse<MarkResult> = await client.post('/mark', formData, {
-    // No explicit Content-Type — axios auto-sets `multipart/form-data;
-    // boundary=...` from the FormData. Setting it manually strips the
-    // boundary parameter and the backend's multipart parser returns 422.
+    headers: {
+      // The axios instance default is `application/json` (see client.create
+      // above), which would override FormData's auto-detected
+      // `multipart/form-data; boundary=...` and cause Flask's parser to 422.
+      // Setting undefined lets axios recompute the correct multipart header
+      // from the FormData body (boundary included).
+      'Content-Type': undefined,
+    },
     timeout: 90000, // multi-page grading can take ~60s
   });
   return res.data;
