@@ -370,10 +370,11 @@ export default function InAppCamera({
           flash={flash}
           onCameraReady={() => {
             // On Android, onCameraReady fires before the camera surface is
-            // fully stable. A 2 s buffer prevents takePictureAsync from
-            // racing the surface and returning null/throwing.
+            // fully stable. A 500 ms buffer is enough now that the Modal
+            // uses animationType="none" — no slide animation competing with
+            // the native surface init.
             if (Platform.OS === 'android') {
-              setTimeout(() => setCameraReady(true), 2000);
+              setTimeout(() => setCameraReady(true), 500);
             } else {
               setCameraReady(true);
             }
@@ -441,7 +442,7 @@ export default function InAppCamera({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="none"
       presentationStyle="fullScreen"
       statusBarTranslucent
       onRequestClose={handleClose}
