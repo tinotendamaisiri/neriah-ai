@@ -96,14 +96,19 @@ export default function InAppCamera({
 
   const handleCapture = useCallback(async () => {
     if (processing) return;
-    // Two separate guards — both needed. On Android the CameraView ref can
-    // stay null even after onCameraReady fires if the Modal animation hasn't
-    // finished mounting the component tree. cameraReady alone is not enough.
-    if (!cameraRef.current) {
+    if (!cameraReady) {
       Alert.alert('Camera not ready', 'Please wait a moment and try again.');
       return;
     }
-    if (!cameraReady) {
+    // Poll for the CameraView ref — on Android the ref can stay null for
+    // seconds after onCameraReady fires, and fails non-deterministically
+    // inside a Modal. Wait up to 3 s before giving up.
+    let waited = 0;
+    while (!cameraRef.current && waited < 3000) {
+      await new Promise(r => setTimeout(r, 100));
+      waited += 100;
+    }
+    if (!cameraRef.current) {
       Alert.alert('Camera not ready', 'Please wait a moment and try again.');
       return;
     }
@@ -319,10 +324,10 @@ export default function InAppCamera({
         flash={flash}
         onCameraReady={() => {
           // On Android, onCameraReady fires before the camera surface is
-          // fully stable. A 500 ms buffer prevents takePictureAsync from
+          // fully stable. A 1 s buffer prevents takePictureAsync from
           // racing the surface and returning null/throwing.
           if (Platform.OS === 'android') {
-            setTimeout(() => setCameraReady(true), 500);
+            setTimeout(() => setCameraReady(true), 1000);
           } else {
             setCameraReady(true);
           }
@@ -374,6 +379,9 @@ export default function InAppCamera({
         >
           <View style={styles.captureInner} />
         </TouchableOpacity>
+        {Platform.OS === 'android' && !cameraReady && (
+          <Text style={styles.initHint}>Initializing camera…</Text>
+        )}
       </View>
     </View>
   );
@@ -576,6 +584,12 @@ const styles = StyleSheet.create({
     height: 62,
     borderRadius: 31,
     backgroundColor: COLORS.teal500,
+  },
+  initHint: {
+    marginTop: 10,
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12,
+    fontStyle: 'italic',
   },
 
   // ── Preview ─────────────────────────────────────────────────────────────────
