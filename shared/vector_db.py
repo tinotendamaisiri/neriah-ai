@@ -108,21 +108,26 @@ def store_document(
     doc_id: str,
     text: str,
     metadata: Optional[dict] = None,
-) -> None:
+) -> bool:
     """
     Embed *text* and store in Firestore with the vector.
 
     metadata should include: country, curriculum, subject, education_level,
     and any other searchable fields.
+
+    Returns True when the document was written, False when the text was empty,
+    the embedding failed (e.g. Vertex quota or transient error), or the
+    Firestore write itself errored. Existing call sites that don't care about
+    success can continue to ignore the return value.
     """
     if not text or not text.strip():
         logger.warning("[vector_db] store_document called with empty text (id=%s)", doc_id)
-        return
+        return False
 
     embedding = get_embedding(text)
     if not embedding:
         logger.warning("[vector_db] Embedding failed for doc %s — not stored", doc_id)
-        return
+        return False
 
     meta = metadata or {}
 
@@ -144,8 +149,10 @@ def store_document(
             "metadata":   meta,
             "created_at": _now_iso(),
         })
+        return True
     except Exception:
         logger.exception("[vector_db] Firestore store failed for doc %s", doc_id)
+        return False
 
 
 def search_similar(
@@ -166,7 +173,13 @@ def search_similar(
     if not query_text or not query_text.strip():
         return []
 
-    query_embedding = get_embedding(query_text)
+    # Search path: embed with RETRIEVAL_QUERY so the vector lands in the
+    # asymmetric "query side" of gemini-embedding-001's retrieval space.
+    # Documents in Firestore were embedded with RETRIEVAL_DOCUMENT (the
+    # default used by store_document → get_embedding). The mismatch between
+    # query-task and doc-task is intentional and required for best cosine
+    # similarity per Google's embedding guidance.
+    query_embedding = get_embedding(query_text, task_type="RETRIEVAL_QUERY")
     if not query_embedding:
         return []
 

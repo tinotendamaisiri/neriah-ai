@@ -130,6 +130,37 @@ def chunk_text(text: str, chunk_chars: int, overlap_chars: int) -> list[str]:
     return [c.strip() for c in chunks if c.strip()]
 
 
+# ── Chunk quality filter ──────────────────────────────────────────────────────
+
+def is_valid_chunk(text: str) -> bool:
+    """Reject chunks that are almost certainly not useful to index.
+
+    Catches the usual PDF-extraction garbage: answer-line fill-ins (___),
+    column-reorder fragments, OCR noise, and glyph-stream blobs where most
+    "words" are not actually words. Rejections never hit Vertex — saving
+    quota and preventing silent zero-information embeddings in Firestore.
+    """
+    text = text.strip()
+    # Too short to carry meaning.
+    if len(text) < 50:
+        return False
+    # Exam-paper fill-in lines: long runs of underscores.
+    if text.count("_") / len(text) > 0.3:
+        return False
+    words = text.split()
+    if len(words) < 5:
+        return False
+    # Ratio of tokens that look like real words (>3 chars, mostly letters).
+    # Handles English, Shona, Ndebele — all alphabetic scripts.
+    real_words = [
+        w for w in words
+        if len(w) > 3 and sum(c.isalpha() for c in w) / len(w) > 0.7
+    ]
+    if len(real_words) / max(len(words), 1) < 0.4:
+        return False
+    return True
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -164,15 +195,18 @@ def main():
         except Exception:
             pass
 
-    total_chunks = 0
-    total_skipped = 0
+    total_stored          = 0   # chunks where store_document returned True
+    total_chunk_skipped   = 0   # chunks whose embedding failed or Firestore errored
+    total_chunk_filtered  = 0   # chunks rejected by is_valid_chunk before embedding
+    total_files_skipped   = 0   # files short-circuited because already indexed
+    total_files_processed = 0
 
     for pdf_path in pdfs:
         filename = pdf_path.name
 
         if filename in existing_files and not args.force:
             logger.info("  SKIP %s (already indexed)", filename)
-            total_skipped += 1
+            total_files_skipped += 1
             continue
 
         # Parse metadata from filename
@@ -203,8 +237,16 @@ def main():
         logger.info("    Extracted %d chars → %d chunks", len(text), len(chunks))
 
         if args.dry_run:
-            total_chunks += len(chunks)
+            valid_count = sum(1 for c in chunks if is_valid_chunk(c))
+            total_stored         += valid_count
+            total_chunk_filtered += len(chunks) - valid_count
+            total_files_processed += 1
             continue
+
+        total_files_processed += 1
+        file_stored   = 0
+        file_skipped  = 0
+        file_filtered = 0
 
         # Store each chunk
         for i, chunk in enumerate(chunks):
@@ -215,22 +257,54 @@ def main():
                 "chunk_index": i,
             }
 
-            try:
-                store_document("syllabuses", doc_id, chunk, chunk_meta)
-            except Exception as e:
-                logger.error("    Chunk %d failed: %s", i, e)
+            # Pre-embedding garbage filter — saves quota and prevents
+            # low-information chunks from polluting search results. Rejected
+            # chunks DO NOT sleep because they never hit Vertex.
+            if not is_valid_chunk(chunk):
+                file_filtered += 1
                 continue
 
-            total_chunks += 1
+            try:
+                ok = store_document("syllabuses", doc_id, chunk, chunk_meta)
+            except Exception as e:
+                logger.error("    Chunk %d raised: %s", i, e)
+                ok = False
 
-            # Small delay to avoid rate limiting on embedding API
-            if (i + 1) % 10 == 0:
-                time.sleep(0.5)
+            if ok:
+                file_stored += 1
+            else:
+                file_skipped += 1
 
-        logger.info("    Stored %d chunks for %s", len(chunks), filename)
+            # Rate-limit gemini-embedding-001 on Vertex — per-minute quota is
+            # tighter than the previous text-embedding-005 allowance. 4s
+            # between chunks ≈ 15 RPM, conservative for a low-quota project
+            # (a 500-chunk run takes ~33 minutes; increase when quota raises).
+            time.sleep(4)
+
+        total_stored         += file_stored
+        total_chunk_skipped  += file_skipped
+        total_chunk_filtered += file_filtered
+
+        msg = f"Stored {file_stored}/{len(chunks)} chunks for {filename}"
+        notes = []
+        if file_filtered:
+            notes.append(f"{file_filtered} filtered")
+        if file_skipped:
+            notes.append(f"{file_skipped} skipped")
+        if notes:
+            msg += f" ({', '.join(notes)})"
+        logger.info("    %s", msg)
 
     logger.info("")
-    logger.info("Done. %d chunks indexed, %d files skipped.", total_chunks, total_skipped)
+    logger.info(
+        "Done. %d chunks stored, %d chunks skipped (embedding failed), "
+        "%d chunks filtered (garbage), %d files processed.",
+        total_stored, total_chunk_skipped, total_chunk_filtered,
+        total_files_processed,
+    )
+    if total_files_skipped:
+        logger.info("(%d files skipped because already indexed — pass --force to re-embed)",
+                    total_files_skipped)
     if args.dry_run:
         logger.info("(dry run — nothing was stored)")
 
