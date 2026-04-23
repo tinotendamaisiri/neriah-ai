@@ -24,6 +24,7 @@ import {
   StyleSheet,
   Modal,
   ActivityIndicator,
+  Alert,
   Linking,
   Platform,
   Image,
@@ -85,6 +86,7 @@ export default function InAppCamera({
   const [facing, setFacing]       = useState<CameraType>('back');
   const [flash, setFlash]         = useState<FlashMode>('off');
   const [processing, setProcessing] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
 
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
@@ -93,16 +95,41 @@ export default function InAppCamera({
   // ── Capture + enhance + quality check ────────────────────────────────────────
 
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || processing) return;
+    if (processing) return;
+    // Two separate guards — both needed. On Android the CameraView ref can
+    // stay null even after onCameraReady fires if the Modal animation hasn't
+    // finished mounting the component tree. cameraReady alone is not enough.
+    if (!cameraRef.current) {
+      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
+      return;
+    }
+    if (!cameraReady) {
+      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
+      return;
+    }
     setProcessing(true);
     try {
-      // 1. Raw capture — no base64 here; we read it after enhancement
-      const photo = await cameraRef.current.takePictureAsync({
-        quality,
-        base64: false,
-        skipProcessing: false,
-      });
-      if (!photo?.uri) return;
+      // 1. Raw capture — no base64 here; we read it after enhancement.
+      //    Android CameraView inside a Modal occasionally fails the first
+      //    takePictureAsync call even after onCameraReady fires, so retry
+      //    up to 3 times with a short delay. skipProcessing: true bypasses
+      //    Android's slow post-processing pass.
+      let photo: Awaited<ReturnType<CameraView['takePictureAsync']>> | null = null;
+      let attempts = 0;
+      while (!photo && attempts < 3) {
+        try {
+          photo = await cameraRef.current.takePictureAsync({
+            quality,
+            base64: false,
+            skipProcessing: true,
+          });
+        } catch (e) {
+          attempts++;
+          if (attempts >= 3) throw e;
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      if (!photo?.uri) throw new Error('Failed to capture image after 3 attempts');
 
       // 1b. Crop to the on-screen overlay frame. The sensor image is much
       //     larger than the preview (typically 3024×4032 vs ~400×850 points),
@@ -161,10 +188,11 @@ export default function InAppCamera({
       setPreview({ uri: enhancedUri, base64, warnings: qualityResult.warnings });
     } catch (err) {
       console.warn('[InAppCamera] capture/enhance error:', err);
+      Alert.alert('Could not capture photo', 'Please try again.');
     } finally {
       setProcessing(false);
     }
-  }, [processing, quality]);
+  }, [processing, cameraReady, quality]);
 
   const handleUsePhoto = useCallback(() => {
     if (!preview) return;
@@ -174,10 +202,12 @@ export default function InAppCamera({
 
   const handleRetake = useCallback(() => {
     setPreview(null);
+    setCameraReady(false);
   }, []);
 
   const handleClose = useCallback(() => {
     setPreview(null);
+    setCameraReady(false);
     onClose();
   }, [onClose]);
 
@@ -287,6 +317,16 @@ export default function InAppCamera({
         style={StyleSheet.absoluteFill}
         facing={facing}
         flash={flash}
+        onCameraReady={() => {
+          // On Android, onCameraReady fires before the camera surface is
+          // fully stable. A 500 ms buffer prevents takePictureAsync from
+          // racing the surface and returning null/throwing.
+          if (Platform.OS === 'android') {
+            setTimeout(() => setCameraReady(true), 500);
+          } else {
+            setCameraReady(true);
+          }
+        }}
       />
 
       {/* ── Document frame overlay ─────────────────────────────────────────── */}
@@ -350,7 +390,7 @@ export default function InAppCamera({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="none"
       presentationStyle="fullScreen"
       statusBarTranslucent
       onRequestClose={handleClose}

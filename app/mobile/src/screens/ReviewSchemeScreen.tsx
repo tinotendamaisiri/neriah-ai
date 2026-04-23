@@ -400,7 +400,7 @@ export default function ReviewSchemeScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.white },
-  container: { flexGrow: 1, padding: 24, paddingTop: 48, paddingBottom: 48 },
+  container: { flexGrow: 1, padding: 24, paddingBottom: 48 },
   back: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },

@@ -486,7 +486,7 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 40 },
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingTop: 60, paddingBottom: 16,
+    paddingBottom: 16,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text },

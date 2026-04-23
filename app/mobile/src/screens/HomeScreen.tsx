@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   centre: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    backgroundColor: COLORS.white, paddingHorizontal: 20, paddingTop: 60,
+    backgroundColor: COLORS.white, paddingHorizontal: 20,
     paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   headerRow: {

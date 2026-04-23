@@ -91,6 +91,11 @@ export default function MarkingScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!classId) return;
+      // Do not reset selection/result when returning from PageReview with a
+      // result or error. The markResult / markError effects below handle
+      // that transition — resetting here would wipe selectedStudent before
+      // the approval UI has a chance to render.
+      if (route.params?.markResult || route.params?.markError) return;
       setSelectedStudent(null);
       setSelectedAnswerKey(null);
       setResult(null);
@@ -98,7 +103,7 @@ export default function MarkingScreen() {
       setSkippedCount(0);
       setSessionDone(false);
       loadClassData(classId);
-    }, [classId]),
+    }, [classId, route.params?.markResult, route.params?.markError]),
   );
 
   const loadClassData = async (cid: string) => {
@@ -200,8 +205,16 @@ export default function MarkingScreen() {
   const handleDuplicateSubmission = (err: any) => {
     const extra = err?.extra ?? err?._raw?.response?.data?.extra ?? {};
     const existingMarkId: string | undefined = extra.existing_mark_id;
-    const studentName = selectedStudent
-      ? `${selectedStudent.first_name} ${selectedStudent.surname}`.trim()
+    // Prefer the student_id PageReviewScreen forwards on the extra payload —
+    // resolve the name from the already-loaded students list so the dialog
+    // shows the correct name even if `selectedStudent` has been cleared.
+    const studentIdFromExtra: string | undefined = extra.student_id;
+    const studentFromList = studentIdFromExtra
+      ? students.find(s => s.id === studentIdFromExtra)
+      : undefined;
+    const resolvedStudent = studentFromList ?? selectedStudent;
+    const studentName = resolvedStudent
+      ? `${resolvedStudent.first_name} ${resolvedStudent.surname}`.trim()
       : 'this student';
     const answerKeyTitle = selectedAnswerKey?.title ?? selectedAnswerKey?.subject ?? 'this homework';
 
@@ -342,7 +355,7 @@ export default function MarkingScreen() {
     );
   }
 
-  const showResult = result && selectedStudent;
+  const showResult = !!result;
 
   // Header: shared between the capture view and the result view. Done button
   // is gated on `sessionHasProgress` so it doesn't appear on a cold load.
@@ -593,7 +606,7 @@ function PickerModal({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
   header: {
-    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16,
+    paddingHorizontal: 20, paddingBottom: 16,
     borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: COLORS.white,
   },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text },

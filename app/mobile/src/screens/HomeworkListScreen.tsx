@@ -250,7 +250,7 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingTop: 56, paddingBottom: 12,
+    paddingHorizontal: 12, paddingBottom: 12,
     backgroundColor: COLORS.white,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },

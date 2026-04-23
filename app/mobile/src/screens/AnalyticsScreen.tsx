@@ -211,7 +211,7 @@ export default function AnalyticsScreen() {
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
       <View style={styles.container}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>
         <Text style={styles.screenHeading}>{t('analytics')}</Text>
         <AvatarWithStatus
           initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}

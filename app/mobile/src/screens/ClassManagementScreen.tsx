@@ -351,7 +351,7 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    backgroundColor: COLORS.teal500, paddingHorizontal: 16, paddingTop: 56, paddingBottom: 18,
+    backgroundColor: COLORS.teal500, paddingHorizontal: 16, paddingBottom: 18,
     flexDirection: 'row', alignItems: 'center',
   },
   backBtn: { padding: 6 },

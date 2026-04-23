@@ -641,8 +641,9 @@ export default function HomeworkDetailScreen() {
                   <View style={[
                     styles.submissionBadge,
                     // Green (teal) only when the teacher has approved. `graded`
-                    // gets amber so students/teachers don't see a premature
-                    // "final" colour for AI-only results.
+                    // and `graded_pending_approval` get amber so students/
+                    // teachers don't see a premature "final" colour for
+                    // AI-only results.
                     s.status === 'approved' ? styles.badgeGraded : styles.badgePending,
                   ]}>
                     <Text style={[
@@ -650,8 +651,8 @@ export default function HomeworkDetailScreen() {
                       s.status === 'approved' ? styles.badgeGradedText : styles.badgePendingText,
                     ]}>
                       {s.status === 'approved'
-                        ? `${s.score ?? 0}/${s.max_score ?? '?'}`
-                        : s.status === 'graded'
+                        ? t('graded')
+                        : s.status === 'graded' || s.status === 'graded_pending_approval'
                         ? t('awaiting_approval')
                         : t('pending')}
                     </Text>
@@ -788,7 +789,7 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingTop: 56, paddingBottom: 20,
+    paddingBottom: 20,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   backText: { fontSize: 14, color: COLORS.teal500, marginBottom: 10 },

@@ -1105,7 +1105,7 @@ const s = StyleSheet.create({
   },
   drawerHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16,
+    paddingHorizontal: 16, paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
   },
   drawerTitle: { fontSize: 17, fontWeight: '700', color: AI.text },

@@ -451,7 +451,7 @@ export default function TeacherRegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 24, paddingTop: 48 },
+  container: { padding: 24 },
   back: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
   iconBadge: {

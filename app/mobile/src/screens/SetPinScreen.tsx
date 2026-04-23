@@ -146,7 +146,7 @@ export default function SetPinScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.white },
-  container: { flex: 1, padding: 24, paddingTop: 60, alignItems: 'center' },
+  container: { flex: 1, padding: 24, alignItems: 'center' },
   back: { alignSelf: 'flex-start', marginBottom: 32 },
   backText: { fontSize: 16, color: COLORS.gray500 },
   heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },

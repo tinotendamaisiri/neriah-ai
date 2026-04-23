@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, color: COLORS.textLight, textAlign: 'center', lineHeight: 20 },
   header: {
     backgroundColor: COLORS.teal500,
-    paddingTop: 52, paddingBottom: 16, paddingHorizontal: 16,
+    paddingBottom: 16, paddingHorizontal: 16,
   },
   backBtn: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 2 },
   backText: { color: COLORS.white, fontSize: 14, opacity: 0.9 },

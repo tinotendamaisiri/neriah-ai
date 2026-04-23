@@ -239,7 +239,7 @@ export default function OTPScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.white },
-  container: { flex: 1, padding: 24, paddingTop: 60 },
+  container: { flex: 1, padding: 24 },
   backButton: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
   channelRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },

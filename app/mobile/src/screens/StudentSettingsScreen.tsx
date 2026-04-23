@@ -627,7 +627,7 @@ function Row({ label, value }: { label: string; value: string }) {
 const s = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: COLORS.background },
   content: { paddingBottom: 48 },
-  headerBar: { backgroundColor: COLORS.white, paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  headerBar: { backgroundColor: COLORS.white, paddingHorizontal: 18, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   heading: { fontSize: 22, fontWeight: '800', color: COLORS.text },
 
   section: { marginHorizontal: 16, marginTop: 20 },

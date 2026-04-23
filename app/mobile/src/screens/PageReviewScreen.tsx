@@ -191,7 +191,9 @@ export default function PageReviewScreen() {
           status: err?.status,
           error_code: err?.error_code,
           message: err?.message,
-          extra: err?.extra,
+          // Forward the studentId so MarkingScreen can resolve the name for
+          // the duplicate-submission dialog without relying on selectedStudent.
+          extra: { ...(err?.extra ?? {}), student_id: studentId },
         },
         pendingPages: pages,
       });
