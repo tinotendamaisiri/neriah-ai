@@ -16,16 +16,14 @@
 //     onClose={() => setCameraVisible(false)}
 //   />
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  StatusBar,
+  Modal,
   ActivityIndicator,
-  Alert,
-  BackHandler,
   Linking,
   Platform,
   Image,
@@ -43,16 +41,15 @@ import { COLORS } from '../constants/colors';
 const { width: SW, height: SH } = Dimensions.get('window');
 
 // ── Frame geometry ────────────────────────────────────────────────────────────
-// The visible overlay frame is 95% of the screen width. Height fills the
-// available space between the top margin and the shutter button area —
-// no aspect-ratio cap, since exercise books come in different proportions
-// and the crop step handles trimming. FRAME_TOP_MARGIN and SHUTTER_RESERVED
-// are the ONLY knobs; everything else (renderer, mask, crop math) derives
-// from them.
-const FRAME_TOP_MARGIN = SH * 0.06;
-const SHUTTER_RESERVED = 140;  // px reserved for shutter button + its padding
+// The visible overlay frame is 95% of the screen width (up from 84%). We keep
+// the A4-ish 1.35 portrait ratio because that's what an exercise-book page
+// looks like. The height is capped to 90% of screen height so the top/bottom
+// masks (and the shutter control row) still have room.
 const FRAME_W = SW * 0.95;
-const FRAME_H = SH - FRAME_TOP_MARGIN - SHUTTER_RESERVED;
+const FRAME_H = Math.min(FRAME_W * 1.35, SH * 0.78);
+// Computed once so the renderer, the mask, and the crop step all use the same
+// numbers.
+const FRAME_TOP_MARGIN = SH * 0.06;
 
 export interface InAppCameraProps {
   visible: boolean;
@@ -87,7 +84,6 @@ export default function InAppCamera({
   const [facing, setFacing]       = useState<CameraType>('back');
   const [flash, setFlash]         = useState<FlashMode>('off');
   const [processing, setProcessing] = useState(false);
-  const [cameraReady, setCameraReady] = useState(false);
 
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
@@ -96,34 +92,16 @@ export default function InAppCamera({
   // ── Capture + enhance + quality check ────────────────────────────────────────
 
   const handleCapture = useCallback(async () => {
-    if (processing) return;
-    if (!cameraReady || !cameraRef.current) {
-      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
-      return;
-    }
+    if (!cameraRef.current || processing) return;
     setProcessing(true);
     try {
-      // 1. Raw capture — no base64 here; we read it after enhancement.
-      //    Android CameraView inside a Modal occasionally fails the first
-      //    takePictureAsync call even after onCameraReady fires, so retry
-      //    up to 3 times with a short delay. skipProcessing: true bypasses
-      //    Android's slow post-processing pass.
-      let photo: Awaited<ReturnType<CameraView['takePictureAsync']>> | null = null;
-      let attempts = 0;
-      while (!photo && attempts < 3) {
-        try {
-          photo = await cameraRef.current.takePictureAsync({
-            quality,
-            base64: false,
-            skipProcessing: true,
-          });
-        } catch (e) {
-          attempts++;
-          if (attempts >= 3) throw e;
-          await new Promise(r => setTimeout(r, 300));
-        }
-      }
-      if (!photo?.uri) throw new Error('Failed to capture image after 3 attempts');
+      // 1. Raw capture — no base64 here; we read it after enhancement
+      const photo = await cameraRef.current.takePictureAsync({
+        quality,
+        base64: false,
+        skipProcessing: false,
+      });
+      if (!photo?.uri) return;
 
       // 1b. Crop to the on-screen overlay frame. The sensor image is much
       //     larger than the preview (typically 3024×4032 vs ~400×850 points),
@@ -182,11 +160,10 @@ export default function InAppCamera({
       setPreview({ uri: enhancedUri, base64, warnings: qualityResult.warnings });
     } catch (err) {
       console.warn('[InAppCamera] capture/enhance error:', err);
-      Alert.alert('Could not capture photo', 'Please try again.');
     } finally {
       setProcessing(false);
     }
-  }, [processing, cameraReady, quality]);
+  }, [processing, quality]);
 
   const handleUsePhoto = useCallback(() => {
     if (!preview) return;
@@ -196,35 +173,12 @@ export default function InAppCamera({
 
   const handleRetake = useCallback(() => {
     setPreview(null);
-    setCameraReady(false);
   }, []);
 
   const handleClose = useCallback(() => {
     setPreview(null);
-    setCameraReady(false);
     onClose();
   }, [onClose]);
-
-  // While visible, subscribe to the Android hardware back button so it closes
-  // the camera instead of popping the underlying navigation stack. On hide
-  // (or unmount), reset transient state so the next show starts clean and a
-  // fresh CameraView mount fires its own onCameraReady.
-  useEffect(() => {
-    if (visible) {
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        handleClose();
-        return true;
-      });
-      return () => {
-        sub.remove();
-        setCameraReady(false);
-        setPreview(null);
-      };
-    } else {
-      setCameraReady(false);
-      setPreview(null);
-    }
-  }, [visible]);
 
   const toggleFacing = useCallback(() => {
     setFacing(f => (f === 'back' ? 'front' : 'back'));
@@ -332,16 +286,6 @@ export default function InAppCamera({
         style={StyleSheet.absoluteFill}
         facing={facing}
         flash={flash}
-        onCameraReady={() => {
-          // On Android, onCameraReady fires before the camera surface is
-          // fully stable. A 1 s buffer prevents takePictureAsync from
-          // racing the surface and returning null/throwing.
-          if (Platform.OS === 'android') {
-            setTimeout(() => setCameraReady(true), 1000);
-          } else {
-            setCameraReady(true);
-          }
-        }}
       />
 
       {/* ── Document frame overlay ─────────────────────────────────────────── */}
@@ -389,9 +333,6 @@ export default function InAppCamera({
         >
           <View style={styles.captureInner} />
         </TouchableOpacity>
-        {Platform.OS === 'android' && !cameraReady && (
-          <Text style={styles.initHint}>Initializing camera…</Text>
-        )}
       </View>
     </View>
   );
@@ -405,17 +346,18 @@ export default function InAppCamera({
     return renderCamera();
   };
 
-  // Render nothing when hidden. Kept out of Modal on purpose — on Android,
-  // CameraView's ref attachment is unreliable inside RN's Modal, so we render
-  // a plain full-screen View in the main component tree instead. The parent
-  // controls visibility via the `visible` prop.
-  if (!visible) return null;
-
   return (
-    <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {resolveContent()}
-    </View>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      onRequestClose={handleClose}
+    >
+      <View style={styles.root}>
+        {resolveContent()}
+      </View>
+    </Modal>
   );
 }
 
@@ -423,10 +365,8 @@ export default function InAppCamera({
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     backgroundColor: '#000',
-    zIndex: 999,
-    elevation: 999,
   },
 
   // ── Permission / processing ─────────────────────────────────────────────────
@@ -595,12 +535,6 @@ const styles = StyleSheet.create({
     height: 62,
     borderRadius: 31,
     backgroundColor: COLORS.teal500,
-  },
-  initHint: {
-    marginTop: 10,
-    color: 'rgba(255,255,255,0.78)',
-    fontSize: 12,
-    fontStyle: 'italic',
   },
 
   // ── Preview ─────────────────────────────────────────────────────────────────
