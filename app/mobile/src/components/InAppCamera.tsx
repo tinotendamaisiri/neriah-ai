@@ -16,15 +16,16 @@
 //     onClose={() => setCameraVisible(false)}
 //   />
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Modal,
+  StatusBar,
   ActivityIndicator,
   Alert,
+  BackHandler,
   Linking,
   Platform,
   Image,
@@ -96,19 +97,7 @@ export default function InAppCamera({
 
   const handleCapture = useCallback(async () => {
     if (processing) return;
-    if (!cameraReady) {
-      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
-      return;
-    }
-    // Poll for the CameraView ref — on Android the ref can stay null for
-    // seconds after onCameraReady fires, and fails non-deterministically
-    // inside a Modal. Wait up to 3 s before giving up.
-    let waited = 0;
-    while (!cameraRef.current && waited < 3000) {
-      await new Promise(r => setTimeout(r, 100));
-      waited += 100;
-    }
-    if (!cameraRef.current) {
+    if (!cameraReady || !cameraRef.current) {
       Alert.alert('Camera not ready', 'Please wait a moment and try again.');
       return;
     }
@@ -215,6 +204,27 @@ export default function InAppCamera({
     setCameraReady(false);
     onClose();
   }, [onClose]);
+
+  // While visible, subscribe to the Android hardware back button so it closes
+  // the camera instead of popping the underlying navigation stack. On hide
+  // (or unmount), reset transient state so the next show starts clean and a
+  // fresh CameraView mount fires its own onCameraReady.
+  useEffect(() => {
+    if (visible) {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleClose();
+        return true;
+      });
+      return () => {
+        sub.remove();
+        setCameraReady(false);
+        setPreview(null);
+      };
+    } else {
+      setCameraReady(false);
+      setPreview(null);
+    }
+  }, [visible]);
 
   const toggleFacing = useCallback(() => {
     setFacing(f => (f === 'back' ? 'front' : 'back'));
@@ -395,18 +405,17 @@ export default function InAppCamera({
     return renderCamera();
   };
 
+  // Render nothing when hidden. Kept out of Modal on purpose — on Android,
+  // CameraView's ref attachment is unreliable inside RN's Modal, so we render
+  // a plain full-screen View in the main component tree instead. The parent
+  // controls visibility via the `visible` prop.
+  if (!visible) return null;
+
   return (
-    <Modal
-      visible={visible}
-      animationType="none"
-      presentationStyle="fullScreen"
-      statusBarTranslucent
-      onRequestClose={handleClose}
-    >
-      <View style={styles.root}>
-        {resolveContent()}
-      </View>
-    </Modal>
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      {resolveContent()}
+    </View>
   );
 }
 
@@ -414,8 +423,10 @@ export default function InAppCamera({
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000',
+    zIndex: 999,
+    elevation: 999,
   },
 
   // ── Permission / processing ─────────────────────────────────────────────────
