@@ -22,6 +22,7 @@ import { StudentSubmission, StudentRootStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -104,6 +105,7 @@ export default function StudentResultsScreen() {
   }
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -210,6 +212,7 @@ export default function StudentResultsScreen() {
         }}
       />
     </View>
+    </ScreenContainer>
   );
 }
 

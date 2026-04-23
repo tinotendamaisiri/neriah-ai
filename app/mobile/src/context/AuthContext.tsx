@@ -18,6 +18,7 @@ import Constants from 'expo-constants';
 import { JWT_STORAGE_KEY, USER_STORAGE_KEY, registerPushToken, setUnauthorizedHandler } from '../services/api';
 import { AuthUser, VerifyResponse } from '../types';
 import { PENDING_JOIN_CODE_KEY } from '../constants';
+import { clearDeadLetter, clearQueue, getQueue } from '../services/offlineQueue';
 
 const PIN_SET_KEY = 'neriah_has_pin';
 const TERMS_ACCEPTED_KEY = 'neriah_terms_accepted';
@@ -208,6 +209,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Clear the offline scan queue so the next teacher on this device
+    // doesn't inherit stale items. Log discarded items first (never drop
+    // silently) so post-hoc debugging is possible.
+    try {
+      const pending = await getQueue();
+      if (pending.length > 0) {
+        console.warn(
+          `[logout] discarding ${pending.length} queued scan(s):`,
+          pending.map((i) => ({
+            id: i.id,
+            student_id: i.student_id,
+            queued_at: i.queued_at,
+            retry_count: i.retry_count,
+          })),
+        );
+      }
+      await clearQueue();
+      await clearDeadLetter();
+    } catch {
+      // Best-effort — never block logout on storage errors
+    }
+
     await Promise.all([
       SecureStore.deleteItemAsync(JWT_STORAGE_KEY),
       SecureStore.deleteItemAsync(USER_STORAGE_KEY),

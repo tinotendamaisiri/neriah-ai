@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { getStudentClassAnalytics } from '../services/api';
 import { StudentClassAnalytics, StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentAnalytics'>;
 
@@ -95,6 +96,7 @@ export default function StudentAnalyticsScreen({ route, navigation }: Props) {
     : null;
 
   return (
+    <ScreenContainer scroll={false}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
 
       {/* Section 1: Personal Performance */}
@@ -260,6 +262,7 @@ export default function StudentAnalyticsScreen({ route, navigation }: Props) {
         </View>
       )}
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

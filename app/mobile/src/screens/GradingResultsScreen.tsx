@@ -20,6 +20,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { RootStackParamList, TeacherSubmission } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -361,6 +362,7 @@ export default function GradingResultsScreen() {
   );
 
   return (
+    <ScreenContainer scroll={false}>
     <View style={styles.flex}>
       {/* Header */}
       <View style={styles.header}>
@@ -402,6 +404,7 @@ export default function GradingResultsScreen() {
         />
       )}
     </View>
+    </ScreenContainer>
   );
 }
 

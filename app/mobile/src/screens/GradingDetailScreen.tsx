@@ -18,6 +18,7 @@ import {
   Platform,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { getMarkById, updateMark, deleteMark } from '../services/api';
 import { GradingVerdict } from '../types';
 import { COLORS } from '../constants/colors';
@@ -189,11 +190,7 @@ export default function GradingDetailScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={80}
-    >
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} keyboardVerticalOffset={80}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
@@ -334,7 +331,7 @@ export default function GradingDetailScreen() {
 
         <View style={{ height: 60 }} />
       </ScrollView>
-    </KeyboardAvoidingView>
+    </ScreenContainer>
   );
 }
 

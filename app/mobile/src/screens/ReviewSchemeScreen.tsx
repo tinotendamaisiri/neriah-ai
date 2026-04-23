@@ -15,7 +15,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { updateAnswerKey, regenerateScheme } from '../services/api';
 import { ReviewQuestion } from '../types';
@@ -313,11 +313,7 @@ export default function ReviewSchemeScreen() {
   const isDisabled = confirming || regenerating;
 
   return (
-    <SafeAreaView style={styles.flex}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+    <ScreenContainer>
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
@@ -398,8 +394,7 @@ export default function ReviewSchemeScreen() {
             )}
           </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

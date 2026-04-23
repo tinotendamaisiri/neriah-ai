@@ -23,6 +23,7 @@ import { BarChart, LineChart } from 'react-native-chart-kit';
 
 import { getClassAnalytics, listAnswerKeys } from '../services/api';
 import type { AnswerKey } from '../types';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsDetail, RootStackParamList } from '../types';
@@ -181,6 +182,7 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
   const improvPct = summary.improvement_pct;
 
   return (
+    <ScreenContainer scroll={false}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
@@ -382,6 +384,7 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

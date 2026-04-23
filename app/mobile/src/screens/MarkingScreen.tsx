@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { Ionicons } from '@expo/vector-icons';
 import { listStudents, listAnswerKeys, submitMark } from '../services/api';
 import {
@@ -376,6 +377,7 @@ export default function MarkingScreen() {
   );
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
     <View style={styles.container}>
       {renderHeader()}
 
@@ -538,6 +540,7 @@ export default function MarkingScreen() {
         </View>
       </Modal>
     </View>
+    </ScreenContainer>
   );
 }
 

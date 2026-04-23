@@ -19,6 +19,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { getHomeworkAnalytics } from '../services/api';
 import { COLORS } from '../constants/colors';
 import type { RootStackParamList } from '../types';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'HomeworkAnalytics'>;
 
@@ -79,26 +80,31 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-        <Text style={styles.loadingText}>Loading analytics…</Text>
-      </View>
+      <ScreenContainer scroll={false}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+          <Text style={styles.loadingText}>Loading analytics…</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
   if (error || !data) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>{error ?? 'Error loading analytics'}</Text>
-        <TouchableOpacity onPress={load} style={styles.retryBtn}>
-          <Text style={styles.retryText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
+      <ScreenContainer scroll={false}>
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{error ?? 'Error loading analytics'}</Text>
+          <TouchableOpacity onPress={load} style={styles.retryBtn}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </ScreenContainer>
     );
   }
 
   if (!data.has_data) {
     return (
+      <ScreenContainer scroll={false}>
       <View style={styles.flex}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -116,10 +122,12 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
           </Text>
         </View>
       </View>
+      </ScreenContainer>
     );
   }
 
   return (
+    <ScreenContainer scroll={false}>
     <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
       {/* Header */}
       <View style={styles.header}>
@@ -210,6 +218,7 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

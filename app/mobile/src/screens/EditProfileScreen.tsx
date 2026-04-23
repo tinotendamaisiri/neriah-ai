@@ -14,7 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -183,11 +183,7 @@ export default function EditProfileScreen() {
 
   if (step === 'verify') {
     return (
-      <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+      <ScreenContainer scroll={false}>
           {showSuccess && (
             <Animated.View style={[styles.successBanner, { opacity: bannerOpacity }]}>
               <Ionicons name="checkmark-circle" size={18} color={COLORS.white} />
@@ -238,19 +234,14 @@ export default function EditProfileScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   // ── Render: edit step ────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+    <ScreenContainer>
         <ScrollView
           style={styles.flex}
           contentContainerStyle={styles.scrollContent}
@@ -351,8 +342,7 @@ export default function EditProfileScreen() {
             </Text>
           </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

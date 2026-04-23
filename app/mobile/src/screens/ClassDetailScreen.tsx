@@ -21,6 +21,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { listStudents, createStudent, deleteStudent } from '../services/api';
 import { Student } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 export default function ClassDetailScreen() {
   const route = useRoute<any>();
@@ -79,6 +80,7 @@ export default function ClassDetailScreen() {
   const curriculumLabel = curriculum === 'cambridge' ? 'Cambridge' : 'ZIMSEC';
 
   return (
+    <ScreenContainer scroll={false}>
     <View style={styles.container}>
       <FlatList
         data={students}
@@ -163,6 +165,7 @@ export default function ClassDetailScreen() {
         }}
       />
     </View>
+    </ScreenContainer>
   );
 }
 

@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'SubmissionSuccess'>;
 
@@ -51,6 +52,7 @@ export default function SubmissionSuccessScreen({ route, navigation }: Props) {
   };
 
   return (
+    <ScreenContainer scroll={false} style={{ backgroundColor: COLORS.background }}>
     <View style={styles.container}>
       <Ionicons name={content.iconName} size={72} color={content.iconColor} style={styles.icon} />
       <Text style={styles.headline}>{content.headline}</Text>
@@ -60,6 +62,7 @@ export default function SubmissionSuccessScreen({ route, navigation }: Props) {
         <Text style={styles.homeBtnText}>Go to Home</Text>
       </TouchableOpacity>
     </View>
+    </ScreenContainer>
   );
 }
 

@@ -11,7 +11,7 @@ import {
   StyleSheet,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,7 +27,7 @@ export default function RoleSelectScreen() {
   const { t } = useLanguage();
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ScreenContainer scroll={false}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -61,7 +61,7 @@ export default function RoleSelectScreen() {
         </View>
 
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

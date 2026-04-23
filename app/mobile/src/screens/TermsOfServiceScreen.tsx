@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
@@ -106,7 +106,7 @@ export default function TermsOfServiceScreen() {
   const lastUpdated = 'April 2026';
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ScreenContainer scroll={false}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backRow} onPress={() => navigation.goBack()}>
@@ -154,7 +154,7 @@ export default function TermsOfServiceScreen() {
           <Text style={styles.footerText}>Last updated: {lastUpdated}</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

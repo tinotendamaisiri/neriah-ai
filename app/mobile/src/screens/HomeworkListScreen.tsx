@@ -19,6 +19,7 @@ import { listAnswerKeys } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { AnswerKey, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type FilterTab = 'all' | 'graded' | 'pending';
@@ -93,6 +94,7 @@ export default function HomeworkListScreen() {
   const visible = tab === 'graded' ? graded : tab === 'pending' ? pending : homeworks;
 
   return (
+    <ScreenContainer scroll={false}>
     <View style={s.container}>
       {/* Header */}
       <View style={s.header}>
@@ -159,6 +161,7 @@ export default function HomeworkListScreen() {
         />
       )}
     </View>
+    </ScreenContainer>
   );
 }
 

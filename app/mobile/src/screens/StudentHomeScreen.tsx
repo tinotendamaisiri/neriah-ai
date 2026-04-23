@@ -26,6 +26,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useLanguage } from '../context/LanguageContext';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -157,6 +158,7 @@ export default function StudentHomeScreen() {
   const firstName = user?.first_name ?? 'there';
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -306,6 +308,7 @@ export default function StudentHomeScreen() {
         </>
       )}
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

@@ -28,6 +28,7 @@ import { maskPhone } from '../utils/maskPhone';
 import { useModel } from '../context/ModelContext';
 import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from '../services/modelManager';
 import { useVerificationGate } from '../hooks/useVerificationGate';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -300,11 +301,7 @@ export default function StudentSettingsScreen() {
   const languageLabel = LANGUAGES.find(l => l.code === language)?.label ?? 'English';
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-    >
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}>
     <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       {/* Header */}
       <View style={s.headerBar}>
@@ -610,7 +607,7 @@ export default function StudentSettingsScreen() {
         </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
-    </KeyboardAvoidingView>
+    </ScreenContainer>
   );
 }
 

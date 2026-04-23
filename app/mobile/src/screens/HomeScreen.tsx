@@ -23,6 +23,7 @@ import { AnswerKey, Class, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useModel } from '../context/ModelContext';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
 
@@ -304,13 +305,16 @@ export default function HomeScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centre}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-      </View>
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
+        <View style={styles.centre}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+        </View>
+      </ScreenContainer>
     );
   }
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -448,6 +452,7 @@ export default function HomeScreen() {
         <Ionicons name={fabOpen ? 'close' : 'add'} size={28} color={COLORS.white} />
       </TouchableOpacity>
     </View>
+    </ScreenContainer>
   );
 }
 

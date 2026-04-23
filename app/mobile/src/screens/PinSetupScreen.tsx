@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setPin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -59,7 +59,7 @@ export default function PinSetupScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ScreenContainer scroll={false}>
       <View style={styles.container}>
         <View style={styles.top}>
           <Text style={styles.heading}>Secure your account</Text>
@@ -114,7 +114,7 @@ export default function PinSetupScreen() {
           </TouchableOpacity>
         )}
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

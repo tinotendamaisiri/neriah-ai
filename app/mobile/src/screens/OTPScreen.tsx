@@ -22,6 +22,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Route = RouteProp<AuthStackParamList, 'OTP'>;
 
@@ -156,10 +157,7 @@ export default function OTPScreen() {
     : t('check_your_sms');
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <ScreenContainer scroll={false}>
       <View style={styles.container}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backText}>{t('back')}</Text>
@@ -235,7 +233,7 @@ export default function OTPScreen() {
           </TouchableOpacity>
         )}
       </View>
-    </KeyboardAvoidingView>
+    </ScreenContainer>
   );
 }
 

@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { updateAnswerKey } from '../services/api';
 import { COLORS } from '../constants/colors';
@@ -43,7 +43,7 @@ export default function HomeworkCreatedScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer scroll={false}>
       <View style={styles.content}>
         <View style={styles.iconWrap}>
           <Text style={styles.checkmark}>✓</Text>
@@ -70,7 +70,7 @@ export default function HomeworkCreatedScreen() {
           <Text style={styles.laterText}>I'll do this later</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

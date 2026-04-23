@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
@@ -226,11 +227,7 @@ export default function ClassSetupScreen() {
         onClose={() => setCameraVisible(false)}
         quality={0.85}
       />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-      >
+      <ScreenContainer scroll={false} edges={['bottom', 'left', 'right']} keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}>
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -402,7 +399,7 @@ export default function ClassSetupScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
-      </KeyboardAvoidingView>
+      </ScreenContainer>
 
       {/* Education level picker modal */}
       <Modal

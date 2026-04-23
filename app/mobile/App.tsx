@@ -40,7 +40,13 @@ import { ModelProvider, useModel } from './src/context/ModelContext';
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinLoginScreen from './src/screens/PinLoginScreen';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
-import { startNetworkListener, migrateQueueIfNeeded } from './src/services/offlineQueue';
+import NetInfo from '@react-native-community/netinfo';
+import {
+  getQueueLength,
+  migrateQueueIfNeeded,
+  replayQueue,
+  startNetworkListener,
+} from './src/services/offlineQueue';
 import { detectAndStoreCapability } from './src/services/deviceCapabilities';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkBanner from './src/components/NetworkBanner';
@@ -447,11 +453,29 @@ function AppShell() {
   // Run the v1→v2 migration on first launch of the multi-page build so any
   // stale single-image queued scans don't blow up replay.
   React.useEffect(() => {
-    if (user?.role === 'teacher') {
-      migrateQueueIfNeeded().catch(() => {});
-      const unsubscribe = startNetworkListener();
-      return unsubscribe;
-    }
+    if (user?.role !== 'teacher') return;
+    let unsubscribe: (() => void) | undefined;
+    (async () => {
+      await migrateQueueIfNeeded().catch(() => {});
+      // Kick replay on cold start if we're already online with queued items.
+      // The NetInfo listener inside startNetworkListener only fires on
+      // offline→online transitions, so without this items queued in a prior
+      // session would never drain on a fresh launch.
+      try {
+        const netInfo = await NetInfo.fetch();
+        if (netInfo.isConnected && (await getQueueLength()) > 0) {
+          replayQueue().catch((err) =>
+            console.error('[startup] replayQueue failed', err),
+          );
+        }
+      } catch {
+        // Best-effort — don't block startup on NetInfo/storage errors
+      }
+      unsubscribe = startNetworkListener();
+    })();
+    return () => {
+      unsubscribe?.();
+    };
   }, [user?.role]);
 
   if (loading) {
@@ -463,6 +487,7 @@ function AppShell() {
   }
 
   let content: React.ReactElement;
+  let isAuthed = false;
   if (!user) {
     content = <AuthNavigator />;
   } else if (hasPin && !pinUnlocked) {
@@ -475,14 +500,16 @@ function AppShell() {
     content = <PinSetupScreen />;
   } else if (user.role === 'teacher') {
     content = <TeacherNavigator />;
+    isAuthed = true;
   } else {
     content = <StudentNavigator />;
+    isAuthed = true;
   }
 
   return (
     <NavigationContainer>
       <View style={{ flex: 1 }}>
-        <NetworkBanner />
+        {isAuthed && <NetworkBanner />}
         <ErrorBoundary>
           {content}
         </ErrorBoundary>

@@ -17,6 +17,7 @@ import {
   Platform,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { ScreenContainer } from '../components/ScreenContainer';
 import {
   listAnswerKeys,
   updateAnswerKey,
@@ -355,11 +356,7 @@ export default function HomeworkDetailScreen() {
         onClose={handleCameraClose}
         quality={0.85}
       />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-      >
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']} keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
@@ -670,7 +667,7 @@ export default function HomeworkDetailScreen() {
         {/* Spacer for bottom button */}
         <View style={{ height: 100 }} />
       </ScrollView>
-      </KeyboardAvoidingView>
+      </ScreenContainer>
 
       {/* Bottom action button */}
       <View style={styles.bottomBar}>

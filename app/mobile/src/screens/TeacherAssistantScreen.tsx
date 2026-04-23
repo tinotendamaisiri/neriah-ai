@@ -20,7 +20,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -615,12 +615,7 @@ export default function TeacherAssistantScreen() {
   return (
     <View style={s.screen}>
       <StatusBar barStyle="light-content" backgroundColor={AI.headerBg} />
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-        >
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']} keyboardVerticalOffset={0}>
           {/* Dropdown backdrop */}
           {(showCurrDrop || showLvlDrop) && (
             <TouchableOpacity
@@ -804,8 +799,7 @@ export default function TeacherAssistantScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+      </ScreenContainer>
 
       {/* In-app camera */}
       <InAppCamera

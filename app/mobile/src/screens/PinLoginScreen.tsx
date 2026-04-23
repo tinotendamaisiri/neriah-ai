@@ -19,7 +19,7 @@ import {
   View,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
 import * as SecureStore from 'expo-secure-store';
 import { verifyPin, requestProfileOtp, updateProfile, setPin as apiSetPin, deletePin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -280,11 +280,7 @@ export default function PinLoginScreen() {
 
   if (step === 'otp') {
     return (
-      <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+      <ScreenContainer scroll={false}>
           <View style={styles.container}>
             <TouchableOpacity style={styles.backRow} onPress={() => { setStep('pin'); setOtp(''); }}>
               <Text style={styles.backText}>← Back</Text>
@@ -329,8 +325,7 @@ export default function PinLoginScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -338,7 +333,7 @@ export default function PinLoginScreen() {
 
   if (step === 'new_pin') {
     return (
-      <SafeAreaView style={styles.safe}>
+      <ScreenContainer scroll={false}>
         <View style={styles.container}>
           <View style={styles.top}>
             <Text style={styles.heading}>Create new PIN</Text>
@@ -383,14 +378,14 @@ export default function PinLoginScreen() {
             }
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   // ── Render: PIN entry step (default) ─────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ScreenContainer scroll={false}>
       <View style={styles.container}>
         <View style={styles.top}>
           <Text style={styles.heading}>Welcome back, {displayName}</Text>
@@ -452,7 +447,7 @@ export default function PinLoginScreen() {
           <Text style={styles.linkText}>Forgot PIN?</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

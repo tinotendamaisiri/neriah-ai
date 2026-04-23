@@ -15,6 +15,7 @@ import {
   getClassesBySchool, searchSchools,
 } from '../services/api';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type ClassItem = {
   class_id: string; name: string; subject: string;
@@ -190,10 +191,15 @@ export default function ClassManagementScreen() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   if (loading) {
-    return <View style={s.centered}><ActivityIndicator size="large" color={COLORS.teal500} /></View>;
+    return (
+      <ScreenContainer scroll={false}>
+        <View style={s.centered}><ActivityIndicator size="large" color={COLORS.teal500} /></View>
+      </ScreenContainer>
+    );
   }
 
   return (
+    <ScreenContainer scroll={false}>
     <View style={s.container}>
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
@@ -335,6 +341,7 @@ export default function ClassManagementScreen() {
         </KeyboardAvoidingView>
       </Modal>
     </View>
+    </ScreenContainer>
   );
 }
 

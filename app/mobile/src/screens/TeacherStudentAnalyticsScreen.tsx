@@ -23,6 +23,7 @@ import { getTeacherStudentAnalytics } from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { TeacherStudentAnalyticsData, RootStackParamList } from '../types';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TeacherStudentAnalytics'>;
 
@@ -156,6 +157,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
   }
 
   return (
+    <ScreenContainer scroll={false}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
@@ -327,6 +329,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

@@ -20,6 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getClassesAnalytics } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import AvatarWithStatus from '../components/AvatarWithStatus';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsSummary, RootStackParamList } from '../types';
@@ -185,26 +186,31 @@ export default function AnalyticsScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-        <Text style={styles.loadingText}>{t('analytics_loading')}</Text>
-      </View>
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+          <Text style={styles.loadingText}>{t('analytics_loading')}</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity onPress={() => load()} style={styles.retryBtn}>
-          <Text style={styles.retryText}>{t('retry')}</Text>
-        </TouchableOpacity>
-      </View>
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={() => load()} style={styles.retryBtn}>
+            <Text style={styles.retryText}>{t('retry')}</Text>
+          </TouchableOpacity>
+        </View>
+      </ScreenContainer>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
+      <View style={styles.container}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 }}>
         <Text style={styles.screenHeading}>{t('analytics')}</Text>
         <AvatarWithStatus
@@ -246,7 +252,8 @@ export default function AnalyticsScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
       />
-    </View>
+      </View>
+    </ScreenContainer>
   );
 }
 

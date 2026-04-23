@@ -20,6 +20,7 @@ import { getTeacherSubmissions, approveSubmission } from '../services/api';
 import { showError } from '../utils/showError';
 import { TeacherSubmission, RootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -108,6 +109,7 @@ export default function TeacherInboxScreen() {
   }
 
   return (
+    <ScreenContainer scroll={false}>
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -208,6 +210,7 @@ export default function TeacherInboxScreen() {
         }}
       />
     </View>
+    </ScreenContainer>
   );
 }
 

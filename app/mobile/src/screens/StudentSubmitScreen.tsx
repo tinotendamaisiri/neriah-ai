@@ -19,6 +19,7 @@ import { getAssignments } from '../services/api';
 import { Assignment, StudentRootStackParamList } from '../types';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -73,6 +74,7 @@ export default function StudentSubmitScreen() {
   }
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Submit Work</Text>
@@ -122,6 +124,7 @@ export default function StudentSubmitScreen() {
         />
       )}
     </View>
+    </ScreenContainer>
   );
 }
 

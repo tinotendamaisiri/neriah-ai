@@ -27,6 +27,7 @@ import { useDebouncePress } from '../hooks/useDebouncePress';
 import { StudentRootStackParamList } from '../types';
 import { NERIAH_WHATSAPP_NUMBER, NERIAH_EMAIL } from '../constants';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentConfirm'>;
 
@@ -157,6 +158,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
   };
 
   return (
+    <ScreenContainer scroll={false}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Summary */}
       <View style={styles.summaryCard}>
@@ -226,6 +228,7 @@ export default function StudentConfirmScreen({ route, navigation }: Props) {
         All channels deliver to the same marking pipeline. Your teacher will see the result.
       </Text>
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

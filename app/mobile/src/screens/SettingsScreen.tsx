@@ -19,6 +19,7 @@ import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
 import { useModel } from '../context/ModelContext';
 import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from '../services/modelManager';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 const LANGUAGES: Array<{ code: LangCode; label: string }> = [
   { code: 'en', label: 'English' },
@@ -254,6 +255,7 @@ export default function SettingsScreen() {
     : '';
 
   return (
+    <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {/* Header */}
       <View style={styles.header}>
@@ -475,6 +477,7 @@ export default function SettingsScreen() {
       </Modal>
 
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

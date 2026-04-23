@@ -18,6 +18,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { getMark } from '../services/api';
 import { StudentMark, GradingVerdict, StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'Feedback'>;
 
@@ -59,17 +60,21 @@ export default function FeedbackScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-      </View>
+      <ScreenContainer scroll={false}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+        </View>
+      </ScreenContainer>
     );
   }
 
   if (!mark) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>Could not load feedback. Go back and try again.</Text>
-      </View>
+      <ScreenContainer scroll={false}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Could not load feedback. Go back and try again.</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
@@ -82,6 +87,7 @@ export default function FeedbackScreen({ route, navigation }: Props) {
   navigation.setOptions({ title: mark.answer_key_title ?? 'Feedback' });
 
   return (
+    <ScreenContainer scroll={false} style={{ backgroundColor: COLORS.background }}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Score header */}
       <View style={[styles.scoreHeader, { backgroundColor: color }]}>
@@ -173,6 +179,7 @@ export default function FeedbackScreen({ route, navigation }: Props) {
         </View>
       </View>
     </ScrollView>
+    </ScreenContainer>
   );
 }
 

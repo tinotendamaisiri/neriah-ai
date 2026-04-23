@@ -23,6 +23,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { enhanceImage } from '../services/imageEnhance';
+import { ScreenContainer } from '../components/ScreenContainer';
 import { checkImageQuality } from '../services/imageQuality';
 import InAppCamera from '../components/InAppCamera';
 
@@ -110,10 +111,12 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
 
   if (optimizing) {
     return (
-      <View style={styles.optimizingContainer}>
-        <ActivityIndicator size="large" color={COLORS.teal500} />
-        <Text style={styles.optimizingText}>Optimizing images…</Text>
-      </View>
+      <ScreenContainer scroll={false} style={{ backgroundColor: '#111827' }}>
+        <View style={styles.optimizingContainer}>
+          <ActivityIndicator size="large" color={COLORS.teal500} />
+          <Text style={styles.optimizingText}>Optimizing images…</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
@@ -125,6 +128,7 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
         onClose={() => setRetakeIndex(null)}
         quality={0.85}
       />
+      <ScreenContainer scroll={false} style={{ backgroundColor: '#111827' }}>
       <View style={styles.container}>
       {/* Quality warnings */}
       {qualityWarnings.length > 0 && (
@@ -201,6 +205,7 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       </View>
     </View>
+    </ScreenContainer>
     </>
   );
 }

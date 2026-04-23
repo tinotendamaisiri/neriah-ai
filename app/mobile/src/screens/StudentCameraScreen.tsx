@@ -20,6 +20,7 @@ import { StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import InAppCamera from '../components/InAppCamera';
 import { getAnswerKeyQuestions } from '../services/api';
+import { ScreenContainer } from '../components/ScreenContainer';
 
 type QuestionItem = { question_number: number; question_text: string; marks: number };
 
@@ -147,6 +148,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
         </View>
       </Modal>
 
+      <ScreenContainer scroll={false}>
       <View style={styles.container}>
       {/* Assignment context */}
       <View style={styles.header}>
@@ -222,6 +224,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
         )}
       </View>
     </View>
+    </ScreenContainer>
     </>
   );
 }

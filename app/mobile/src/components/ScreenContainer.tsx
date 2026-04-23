@@ -1,33 +1,50 @@
 // src/components/ScreenContainer.tsx
-// Shared screen wrapper that solves two cross-platform issues at once:
-//   1. Android keyboard covering inputs — KeyboardAvoidingView + Android
-//      softwareKeyboardLayoutMode=resize in app.json means inputs lift above
-//      the keyboard instead of being covered by it.
-//   2. Status-bar overlap on Android — SafeAreaView + StatusBar translucent
-//      false keeps custom headers below the time/battery icons.
+// Shared screen wrapper — correct safe-area handling on both iOS and Android.
 //
-// Usage:
-//   <ScreenContainer>...</ScreenContainer>                    // scrolling (default)
-//   <ScreenContainer scroll={false}>...</ScreenContainer>     // fixed layout
+// Uses SafeAreaView from react-native-safe-area-context (NOT the one from
+// 'react-native' — that one only handles iOS system-provided insets and
+// silently ignores Android status-bar and display cutouts).
 //
-// Drop-in — replaces the outer SafeAreaView + KeyboardAvoidingView combo
-// that most auth/form screens hand-roll today.
+// Requires <SafeAreaProvider> at the app root (already present in App.tsx).
+//
+// Variants:
+//   <ScreenContainer>...</ScreenContainer>
+//     Default: scroll=true, all four edges insetted.
+//
+//   <ScreenContainer scroll={false}>...</ScreenContainer>
+//     Fixed layout (camera-adjacent screens, full-screen results).
+//
+//   <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
+//     Sticky bottom bar — the bar renders its own bottom inset.
+//
+//   <ScreenContainer edges={['top', 'left', 'right']}>
+//     Screen inside a bottom tab navigator — the tab bar handles bottom.
+//
+//   <ScreenContainer edges={['bottom', 'left', 'right']}>
+//     Content inside a React Native <Modal> — Modal handles the top edge on iOS.
 
 import React from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  SafeAreaView,
   StyleSheet,
   ViewStyle,
   StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+type Edge = 'top' | 'bottom' | 'left' | 'right';
 
 type Props = {
   children: React.ReactNode;
   scroll?: boolean;
   style?: ViewStyle;
+  contentStyle?: ViewStyle;
+  edges?: Edge[];
+  /** Extra iOS offset for KeyboardAvoidingView when a header or sticky bar
+   *  sits above the scrolling content. Matches the existing hand-rolled
+   *  KAV pattern in chat and form screens. */
   keyboardVerticalOffset?: number;
 };
 
@@ -35,26 +52,33 @@ export function ScreenContainer({
   children,
   scroll = true,
   style,
+  contentStyle,
+  edges = ['top', 'bottom', 'left', 'right'],
   keyboardVerticalOffset,
 }: Props) {
-  const Content = scroll ? ScrollView : React.Fragment;
-  const contentProps = scroll
-    ? {
-        keyboardShouldPersistTaps: 'handled' as const,
-        contentContainerStyle: { flexGrow: 1, paddingBottom: 40 },
-        showsVerticalScrollIndicator: false,
-      }
-    : {};
-
   return (
-    <SafeAreaView style={[styles.safe, style]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" translucent={false} />
+    <SafeAreaView style={[styles.safe, style]} edges={edges}>
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="transparent"
+        translucent={false}
+      />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={keyboardVerticalOffset ?? 0}
+        keyboardVerticalOffset={keyboardVerticalOffset}
       >
-        <Content {...contentProps}>{children}</Content>
+        {scroll ? (
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[styles.scrollContent, contentStyle]}
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          children
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -63,4 +87,5 @@ export function ScreenContainer({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
   flex: { flex: 1 },
+  scrollContent: { flexGrow: 1, paddingBottom: 24 },
 });

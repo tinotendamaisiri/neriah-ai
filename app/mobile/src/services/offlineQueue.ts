@@ -111,6 +111,10 @@ export const clearQueue = async (): Promise<void> => {
   await AsyncStorage.removeItem(QUEUE_KEY);
 };
 
+export const clearDeadLetter = async (): Promise<void> => {
+  await AsyncStorage.removeItem(DEAD_LETTER_KEY);
+};
+
 // ── Dead letter ───────────────────────────────────────────────────────────────
 
 const _moveToDeadLetter = async (item: QueuedScan, reason: string): Promise<void> => {
