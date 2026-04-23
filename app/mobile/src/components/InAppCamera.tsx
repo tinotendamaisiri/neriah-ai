@@ -41,6 +41,17 @@ import { COLORS } from '../constants/colors';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
+// Generic timeout wrapper — rejects with an Error if the wrapped promise
+// doesn't settle within `ms`. Used to prevent the post-capture pipeline
+// (quality check, base64 read) from hanging the UI indefinitely on Android.
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
+    ),
+  ]);
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 // Shared between the frame-geometry math and the render styles, so the two
 // can't drift apart. If you change the shutter size/margins or the hint
@@ -125,18 +136,24 @@ export default function InAppCamera({
     setProcessing(true);
     try {
       // 1. Raw capture — no base64 here; we read it after enhancement.
-      //    Android's camera surface can fail on the first attempt even
-      //    after onCameraReady fires, so retry up to 3 times with a
-      //    500ms gap before giving up.
+      //    Android's camera surface can fail or hang on the first attempt
+      //    even after onCameraReady fires, so we:
+      //      - time out each takePictureAsync at 5s so a hung native call
+      //        doesn't freeze the UI forever,
+      //      - retry up to 3 times with a 500ms gap between attempts.
+      //    Outer catch surfaces the Alert only if all 3 attempts fail.
       let photo: Awaited<ReturnType<CameraView['takePictureAsync']>> | null = null;
       let attempts = 0;
       while (!photo && attempts < 3) {
         try {
-          photo = await cameraRef.current.takePictureAsync({
-            quality,
-            base64: false,
-            skipProcessing: true,
-          });
+          photo = await withTimeout(
+            cameraRef.current.takePictureAsync({
+              quality,
+              base64: false,
+              skipProcessing: true,
+            }),
+            5000,
+          );
         } catch (e) {
           attempts++;
           if (attempts >= 3) throw e;
@@ -176,10 +193,13 @@ export default function InAppCamera({
           );
 
           if (cropW > 0 && cropH > 0) {
-            const cropped = await ImageManipulator.manipulateAsync(
-              photo.uri,
-              [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }],
-              { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG },
+            const cropped = await withTimeout(
+              ImageManipulator.manipulateAsync(
+                photo.uri,
+                [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }],
+                { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG },
+              ),
+              10000,
             );
             workingUri = cropped.uri;
           }
@@ -188,20 +208,35 @@ export default function InAppCamera({
         console.warn('[InAppCamera] crop failed — using uncropped image:', cropErr);
       }
 
-      // 2. Enhance: resize to ≤2048px + EXIF normalise
-      const enhancedUri = await enhanceImage(workingUri);
+      // 2. Enhance: resize to ≤2048px + EXIF normalise. Falls back to the
+      //    uncropped/unenhanced image if enhanceImage throws or times out —
+      //    better to submit the original than to fail the whole capture.
+      let enhancedUri = workingUri;
+      try {
+        enhancedUri = await withTimeout(enhanceImage(workingUri), 10000);
+      } catch (enhErr) {
+        console.warn('[InAppCamera] enhanceImage failed, using original:', enhErr);
+      }
 
-      // 3. Quality heuristics on the enhanced URI
-      const qualityResult = await checkImageQuality(enhancedUri);
+      // 3. Quality heuristics on the enhanced URI — guarded with a 10s
+      //    timeout so a hung heuristic can't lock the shutter on Android.
+      const qualityResult = await withTimeout(checkImageQuality(enhancedUri), 10000);
 
-      // 4. Read enhanced file as base64 (FileSystem replaces the need for base64:true)
-      const base64 = await FileSystem.readAsStringAsync(enhancedUri, {
-        encoding: 'base64' as any,
-      });
+      // 4. Read enhanced file as base64 (FileSystem replaces the need for
+      //    base64:true). 15s timeout covers large multi-MB reads without
+      //    leaving the teacher staring at a silent processing screen.
+      const base64 = await withTimeout(
+        FileSystem.readAsStringAsync(enhancedUri, { encoding: 'base64' as any }),
+        15000,
+      );
 
       setPreview({ uri: enhancedUri, base64, warnings: qualityResult.warnings });
     } catch (err) {
       console.warn('[InAppCamera] capture/enhance error:', err);
+      Alert.alert(
+        'Could not process photo',
+        'Please try again. Make sure the page is well lit and flat.',
+      );
     } finally {
       setProcessing(false);
     }
