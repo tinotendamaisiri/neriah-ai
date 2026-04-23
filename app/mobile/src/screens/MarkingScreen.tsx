@@ -361,7 +361,11 @@ export default function MarkingScreen() {
   // is gated on `sessionHasProgress` so it doesn't appear on a cold load.
   // "Switch student" is offered while a result is on-screen so the teacher
   // can jump to any student in the class, not just the queue-next one.
-  const renderHeader = () => (
+  // When neither button applies, render nothing so the content sits flush
+  // under the navigation header's border (no empty 48 px bar + extra line).
+  const renderHeader = () => {
+    if (!showResult && !sessionHasProgress) return null;
+    return (
     <View style={styles.markHeader}>
       {showResult ? (
         <TouchableOpacity
@@ -387,17 +391,39 @@ export default function MarkingScreen() {
         <View />
       )}
     </View>
-  );
+    );
+  };
+
+  const handleBackPress = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Home');
+    }
+  };
 
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
     <View style={styles.container}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={handleBackPress}
+          style={styles.topBarBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
+          <Ionicons name="chevron-back" size={22} color={COLORS.text} />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle} numberOfLines={1}>Mark Books</Text>
+        <View style={styles.topBarSpacer} />
+      </View>
       {renderHeader()}
 
       {showResult ? (
         <MarkResultComponent
           result={result!}
-          student={selectedStudent!}
+          student={selectedStudent ?? undefined}
           onDone={handleResultDone}
         />
       ) : !classId ? (
@@ -605,6 +631,23 @@ function PickerModal({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
+  topBar: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 10,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  topBarBack: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.background,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  topBarTitle: {
+    flex: 1, textAlign: 'center',
+    fontSize: 17, fontWeight: '700', color: COLORS.text,
+  },
+  topBarSpacer: { width: 40, height: 40 },
   header: {
     paddingHorizontal: 20, paddingBottom: 16,
     borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: COLORS.white,
@@ -638,7 +681,6 @@ const styles = StyleSheet.create({
   markHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 54 : 20,
     paddingBottom: 8,
     backgroundColor: COLORS.white,
     borderBottomWidth: StyleSheet.hairlineWidth,

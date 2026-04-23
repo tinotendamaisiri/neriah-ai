@@ -27,7 +27,10 @@ import EditVerdictModal from './EditVerdictModal';
 
 interface MarkResultProps {
   result: MarkResult;
-  student: Student;
+  /** Optional — the display name comes from `result.student_name` first, so
+   *  this prop is only used as a fallback for legacy callers that already
+   *  have a loaded Student in hand. New callers can omit it. */
+  student?: Student;
   /** Called after Approve succeeds, Skip is tapped, or the submission is
    *  deleted. Parent uses it to advance the queue + update session counters.
    *  `deleted` is treated the same as skip (no approve-counter increment). */
@@ -50,7 +53,12 @@ const { width: SW } = Dimensions.get('window');
 const IMAGE_H = 420;
 
 export default function MarkResultComponent({ result, student, onDone }: MarkResultProps) {
-  const displayName = `${student.first_name} ${student.surname}`;
+  // Prefer the backend-supplied name; fall back to the optional Student prop
+  // for legacy callers; finally fall back to a generic label so nothing ever
+  // blows up on undefined.
+  const studentName =
+    result.student_name ||
+    (student ? `${student.first_name} ${student.surname}`.trim() : 'Student');
 
   // ── Editable state (batched; saved on Approve) ──────────────────────────────
   const initialVerdicts = useMemo<GradingVerdict[]>(() => result.verdicts ?? [], [result]);
@@ -147,7 +155,7 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
     const hwLabel = 'this homework';
     Alert.alert(
       'Delete submission?',
-      `This will permanently delete ${displayName}'s submission for ${hwLabel}. This cannot be undone.`,
+      `This will permanently delete ${studentName}'s submission for ${hwLabel}. This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -178,7 +186,7 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.studentName}>{displayName}</Text>
+        <Text style={styles.studentName}>{studentName}</Text>
 
         {/* Live score (reflects local edits) */}
         <View style={styles.scoreBadge}>

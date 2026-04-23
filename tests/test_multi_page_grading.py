@@ -236,6 +236,23 @@ class TestMarkMultiPageEndpoint:
         assert body["page_count"] == 5
         assert len(body["page_urls"]) == 5
 
+    def test_mark_response_includes_student_id_and_name(self, client, mark_mocks):
+        """Response body must include student_id + student_name so the mobile
+        approval UI (MarkResultComponent) can render without depending on
+        MarkingScreen's selectedStudent state being non-null at that moment."""
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=_fake_verdicts_from_gemma(1)):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes())],
+                {"page_count": "1", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        # _canonical_student() → first_name "A", surname "B"
+        assert body["student_id"] == STUDENT_ID
+        assert body["student_name"] == "A B"
+
     # ── Rejection paths ──────────────────────────────────────────────────────
 
     def test_mark_endpoint_rejects_page_count_zero(self, client, mark_mocks):

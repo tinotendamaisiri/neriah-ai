@@ -431,8 +431,13 @@ def mark():
             pass  # non-fatal
 
     # ── 7. Return result ──────────────────────────────────────────────────────
+    # student_id + student_name let MarkingScreen render the approval UI
+    # without depending on its own `selectedStudent` state being non-null at
+    # render time. student dict was already fetched above (line ~284).
     return jsonify({
         "mark_id": mark_doc.id,
+        "student_id": student_id,
+        "student_name": f"{student.get('first_name', '')} {student.get('surname', '')}".strip(),
         "score": score,
         "max_score": max_score,
         "percentage": percentage,

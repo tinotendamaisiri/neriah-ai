@@ -137,6 +137,7 @@ export interface Mark {
 export interface MarkResult {
   mark_id: string;
   student_id: string;
+  student_name: string;
   score: number;
   max_score: number;
   percentage: number;
