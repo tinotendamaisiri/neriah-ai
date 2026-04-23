@@ -98,7 +98,13 @@ export default function HomeworkListScreen() {
     <View style={s.container}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
+          style={s.backBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.teal500} />
         </TouchableOpacity>
         <View style={s.headerText}>

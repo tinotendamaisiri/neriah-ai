@@ -16,7 +16,6 @@ import {
   FlatList,
   Modal,
   ScrollView,
-  Platform,
 } from 'react-native';
 import { useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';

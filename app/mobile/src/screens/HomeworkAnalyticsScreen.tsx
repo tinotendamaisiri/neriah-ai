@@ -107,7 +107,13 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
       <ScreenContainer scroll={false}>
       <View style={styles.flex}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
+            style={styles.backBtn}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+          >
             <Ionicons name="chevron-back" size={20} color={COLORS.white} />
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
@@ -131,7 +137,13 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
     <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
+          style={styles.backBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Ionicons name="chevron-back" size={20} color={COLORS.white} />
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>

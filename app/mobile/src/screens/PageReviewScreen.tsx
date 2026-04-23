@@ -126,11 +126,15 @@ export default function PageReviewScreen() {
 
   // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
+    console.log('[PageReview] handleSubmit fired, pages:', pages.length, 'studentId:', studentId, 'answerKeyId:', answerKeyId);
     if (pages.length === 0 || submitting) return;
     setSubmitting(true);
     try {
       // Find education level / class info from route params (passed in from
       // MarkingScreen — PageReview doesn't have access to selectedAnswerKey).
+      console.log('[PageReview] calling submitTeacherScan...');
+      console.log('[PageReview] page URIs:', pages.map(p => p.uri));
+      console.log('[PageReview] awaiting submitTeacherScan...');
       const result = await submitTeacherScan({
         teacherId: '',  // server resolves from JWT; field unused server-side for auth
         studentId,
@@ -140,6 +144,7 @@ export default function PageReviewScreen() {
         pages: pages.map(p => ({ uri: p.uri })),
         replace: !!replace,
       });
+      console.log('[PageReview] submitTeacherScan returned:', JSON.stringify(result));
       // Navigate back to Marking with the result. MarkingScreen reads
       // route.params.markResult on focus and runs its existing post-scan logic.
       navigation.navigate('Mark', {
@@ -150,6 +155,8 @@ export default function PageReviewScreen() {
         markResult: result,
       });
     } catch (err: any) {
+      console.log('[PageReview] CAUGHT ERROR:', err?.message, err?.code, err?.response?.status, JSON.stringify(err?.response?.data));
+      console.log('[PageReview] submit error:', JSON.stringify(err));
       // Split network failures from typed server errors. The api.ts axios
       // interceptor tags "no response reached server" with isOffline=true +
       // error_code='NO_CONNECTION' — treat that as "enqueue for replay" so
@@ -260,7 +267,12 @@ export default function PageReviewScreen() {
     <ScreenContainer scroll={false}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Ionicons name="arrow-back" size={24} color={COLORS.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Review pages</Text>

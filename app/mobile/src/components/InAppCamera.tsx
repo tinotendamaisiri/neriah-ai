@@ -24,6 +24,7 @@ import {
   StyleSheet,
   Modal,
   ActivityIndicator,
+  Alert,
   Linking,
   Platform,
   Image,
@@ -40,16 +41,30 @@ import { COLORS } from '../constants/colors';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
-// ── Frame geometry ────────────────────────────────────────────────────────────
-// The visible overlay frame is 95% of the screen width (up from 84%). We keep
-// the A4-ish 1.35 portrait ratio because that's what an exercise-book page
-// looks like. The height is capped to 90% of screen height so the top/bottom
-// masks (and the shutter control row) still have room.
-const FRAME_W = SW * 0.95;
-const FRAME_H = Math.min(FRAME_W * 1.35, SH * 0.78);
-// Computed once so the renderer, the mask, and the crop step all use the same
-// numbers.
+// ── Layout constants ──────────────────────────────────────────────────────────
+// Shared between the frame-geometry math and the render styles, so the two
+// can't drift apart. If you change the shutter size/margins or the hint
+// height, FRAME_H and the captureBtn style both update in lockstep.
+const SHUTTER_SIZE = 80;
+const SHUTTER_MARGIN_TOP = 16;
+const SHUTTER_MARGIN_BOTTOM = 32;
+const HINT_TEXT_HEIGHT = 20;    // fontSize 13 + baseline budget
 const FRAME_TOP_MARGIN = SH * 0.06;
+const FRAME_BOTTOM_GAP = 10;    // gap between frame bottom edge and hint text
+
+// The bottomSection (flex:0) reserves this much vertical space below the
+// camera area. The frame height is computed to fill everything above it
+// minus a small breathing gap, so the teal corners sit just above the hint.
+const BOTTOM_SECTION_HEIGHT =
+  HINT_TEXT_HEIGHT + SHUTTER_MARGIN_TOP + SHUTTER_SIZE + SHUTTER_MARGIN_BOTTOM;
+
+// ── Frame geometry ────────────────────────────────────────────────────────────
+// The overlay frame is 95% of the screen width. The height extends all the
+// way down to just above the hint text — leaving only FRAME_BOTTOM_GAP px of
+// dim mask between the bottom corners and the hint.
+const FRAME_W = SW * 0.95;
+const FRAME_H =
+  SH - FRAME_TOP_MARGIN - BOTTOM_SECTION_HEIGHT - FRAME_BOTTOM_GAP;
 
 export interface InAppCameraProps {
   visible: boolean;
@@ -84,24 +99,51 @@ export default function InAppCamera({
   const [facing, setFacing]       = useState<CameraType>('back');
   const [flash, setFlash]         = useState<FlashMode>('off');
   const [processing, setProcessing] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
 
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
-  const cameraRef = useRef<CameraView>(null);
+  // MutableRefObject<CameraView | null> — the callback ref below writes to
+  // .current, which the default `useRef<T>(null)` overload forbids.
+  const cameraRef = useRef<CameraView | null>(null);
 
   // ── Capture + enhance + quality check ────────────────────────────────────────
 
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || processing) return;
+    if (processing) return;
+    // Two separate guards — both needed on Android. The ref can stay null
+    // even after onCameraReady fires if the Modal animation hasn't finished
+    // mounting the component tree; cameraReady alone is not enough.
+    if (!cameraRef.current) {
+      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
+      return;
+    }
+    if (!cameraReady) {
+      Alert.alert('Camera not ready', 'Please wait a moment and try again.');
+      return;
+    }
     setProcessing(true);
     try {
-      // 1. Raw capture — no base64 here; we read it after enhancement
-      const photo = await cameraRef.current.takePictureAsync({
-        quality,
-        base64: false,
-        skipProcessing: false,
-      });
-      if (!photo?.uri) return;
+      // 1. Raw capture — no base64 here; we read it after enhancement.
+      //    Android's camera surface can fail on the first attempt even
+      //    after onCameraReady fires, so retry up to 3 times with a
+      //    500ms gap before giving up.
+      let photo: Awaited<ReturnType<CameraView['takePictureAsync']>> | null = null;
+      let attempts = 0;
+      while (!photo && attempts < 3) {
+        try {
+          photo = await cameraRef.current.takePictureAsync({
+            quality,
+            base64: false,
+            skipProcessing: true,
+          });
+        } catch (e) {
+          attempts++;
+          if (attempts >= 3) throw e;
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+      if (!photo?.uri) throw new Error('Failed to capture after 3 attempts');
 
       // 1b. Crop to the on-screen overlay frame. The sensor image is much
       //     larger than the preview (typically 3024×4032 vs ~400×850 points),
@@ -163,7 +205,7 @@ export default function InAppCamera({
     } finally {
       setProcessing(false);
     }
-  }, [processing, quality]);
+  }, [processing, cameraReady, quality]);
 
   const handleUsePhoto = useCallback(() => {
     if (!preview) return;
@@ -177,6 +219,7 @@ export default function InAppCamera({
 
   const handleClose = useCallback(() => {
     setPreview(null);
+    setCameraReady(false);
     onClose();
   }, [onClose]);
 
@@ -281,50 +324,64 @@ export default function InAppCamera({
 
   const renderCamera = () => (
     <View style={styles.cameraContainer}>
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing={facing}
-        flash={flash}
-      />
+      {/* Camera + overlay + top controls fill the remaining height above the
+          bottom section (hint + shutter). Flex layout keeps the shutter
+          directly below the camera without hardcoded top/bottom offsets. */}
+      <View style={styles.cameraArea}>
+        <CameraView
+          ref={(instance) => { if (instance) cameraRef.current = instance; }}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+          flash={flash}
+          onCameraReady={() => {
+            // On Android, onCameraReady fires before the camera surface is
+            // fully stable. A 2 s buffer prevents takePictureAsync from
+            // racing the surface and returning null/throwing.
+            if (Platform.OS === 'android') {
+              setTimeout(() => setCameraReady(true), 2000);
+            } else {
+              setCameraReady(true);
+            }
+          }}
+        />
 
-      {/* ── Document frame overlay ─────────────────────────────────────────── */}
-      {/* Dim mask + teal corner brackets guide the teacher to align the page  */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        {/* Top mask */}
-        <View style={[styles.mask, { height: FRAME_TOP_MARGIN }]} />
-        {/* Middle row */}
-        <View style={styles.middleRow}>
-          <View style={[styles.mask, { flex: 1 }]} />
-          {/* Frame window — transparent so camera shows through */}
-          <View style={styles.frameWindow}>
-            {/* Corner brackets */}
-            <View style={[styles.corner, styles.cornerTL]} />
-            <View style={[styles.corner, styles.cornerTR]} />
-            <View style={[styles.corner, styles.cornerBL]} />
-            <View style={[styles.corner, styles.cornerBR]} />
+        {/* ── Document frame overlay ─────────────────────────────────────── */}
+        {/* Dim mask + teal corner brackets guide the teacher to align the page */}
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          {/* Top mask */}
+          <View style={[styles.mask, { height: FRAME_TOP_MARGIN }]} />
+          {/* Middle row */}
+          <View style={styles.middleRow}>
+            <View style={[styles.mask, { flex: 1 }]} />
+            {/* Frame window — transparent so camera shows through */}
+            <View style={styles.frameWindow}>
+              {/* Corner brackets */}
+              <View style={[styles.corner, styles.cornerTL]} />
+              <View style={[styles.corner, styles.cornerTR]} />
+              <View style={[styles.corner, styles.cornerBL]} />
+              <View style={[styles.corner, styles.cornerBR]} />
+            </View>
+            <View style={[styles.mask, { flex: 1 }]} />
           </View>
+          {/* Bottom mask — no hint text; hint moved to flex-positioned section below. */}
           <View style={[styles.mask, { flex: 1 }]} />
         </View>
-        {/* Bottom mask + hint */}
-        <View style={[styles.mask, { flex: 1 }]}>
-          <Text style={styles.frameHint}>Align the page within the frame</Text>
+
+        {/* ── Top controls ────────────────────────────────────────────────── */}
+        {/* Only a close button — teachers don't need flash/flip toggles on an
+            A4 exercise book; removing them simplifies the shooting UI. */}
+        <View style={styles.topControls}>
+          <TouchableOpacity style={styles.iconBtn} onPress={handleClose}>
+            <Ionicons name="close" size={20} color={COLORS.white} />
+          </TouchableOpacity>
+          <View />
+          <View />
         </View>
       </View>
 
-      {/* ── Top controls ──────────────────────────────────────────────────── */}
-      {/* Only a close button — teachers don't need flash/flip toggles on an
-          A4 exercise book; removing them simplifies the shooting UI. */}
-      <View style={styles.topControls}>
-        <TouchableOpacity style={styles.iconBtn} onPress={handleClose}>
-          <Ionicons name="close" size={20} color={COLORS.white} />
-        </TouchableOpacity>
-        <View />
-        <View />
-      </View>
-
-      {/* ── Capture button ─────────────────────────────────────────────────── */}
-      <View style={styles.captureRow}>
+      {/* ── Bottom section: hint + shutter ────────────────────────────────── */}
+      <View style={styles.bottomSection}>
+        <Text style={styles.frameHint}>Align the page within the frame</Text>
         <TouchableOpacity
           style={[styles.captureBtn, processing && styles.captureBtnDisabled]}
           onPress={handleCapture}
@@ -424,6 +481,18 @@ const styles = StyleSheet.create({
   cameraContainer: {
     flex: 1,
   },
+  // Flex:1 area that holds CameraView + overlay + top controls. Flex layout
+  // keeps the shutter (in bottomSection below) directly beneath this area
+  // without hardcoded top/bottom offsets.
+  cameraArea: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  // Flex:0 section below the camera — hint text then shutter button, both
+  // centered. No absolute positioning.
+  bottomSection: {
+    alignItems: 'center',
+  },
 
   // Frame overlay
   mask: {
@@ -471,7 +540,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.75)',
     fontSize: 13,
     textAlign: 'center',
-    marginTop: 14,
   },
 
   // Top controls
@@ -509,23 +577,20 @@ const styles = StyleSheet.create({
     gap: 10,
   },
 
-  // Capture button
-  captureRow: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 48 : 32,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
+  // Shutter button — lives in the bottomSection flex column now, so no
+  // absolute positioning. Size + margins are sourced from the shared layout
+  // constants so FRAME_H reserves the correct vertical budget.
   captureBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: SHUTTER_SIZE,
+    height: SHUTTER_SIZE,
+    borderRadius: SHUTTER_SIZE / 2,
     backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 5,
     borderColor: COLORS.teal300,
+    marginTop: SHUTTER_MARGIN_TOP,
+    marginBottom: SHUTTER_MARGIN_BOTTOM,
   },
   captureBtnDisabled: {
     opacity: 0.55,

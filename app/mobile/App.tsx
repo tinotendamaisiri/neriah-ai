@@ -243,7 +243,7 @@ function TeacherNavigator() {
       <TeacherStack.Screen
         name="Mark"
         component={MarkingScreen}
-        options={{ headerShown: true, title: 'Mark Books', headerBackTitleVisible: false }}
+        options={{ headerShown: false }}
       />
       <TeacherStack.Screen
         name="PageReview"

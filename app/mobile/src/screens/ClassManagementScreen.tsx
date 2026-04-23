@@ -29,7 +29,7 @@ type AvailableClass = {
 };
 
 export default function ClassManagementScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const { user, updateUser } = useAuth();
 
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -202,7 +202,13 @@ export default function ClassManagementScreen() {
     <ScreenContainer scroll={false}>
     <View style={s.container}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('StudentTabs')}
+          style={s.backBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Ionicons name="arrow-back" size={22} color={COLORS.white} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>My Classes</Text>

@@ -463,7 +463,9 @@ export const submitTeacherScan = async (payload: {
     } as any);
   }
   const res: AxiosResponse<MarkResult> = await client.post('/mark', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    // No explicit Content-Type — axios auto-sets `multipart/form-data;
+    // boundary=...` from the FormData. Setting it manually strips the
+    // boundary parameter and the backend's multipart parser returns 422.
     timeout: 90000, // multi-page grading can take ~60s
   });
   return res.data;

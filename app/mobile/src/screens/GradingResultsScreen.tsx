@@ -366,7 +366,12 @@ export default function GradingResultsScreen() {
     <View style={styles.flex}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Text style={styles.backText}>← {class_name}</Text>
         </TouchableOpacity>
         <Text style={styles.heading}>
