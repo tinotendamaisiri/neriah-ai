@@ -348,11 +348,11 @@ export default function InAppCamera({
           facing={facing}
           flash={flash}
           onCameraReady={() => {
-            // 800 ms buffer on Android — gives the camera hardware time
+            // 1500 ms buffer on Android — gives the camera hardware time
             // to fully initialize after onCameraReady fires. Without it,
             // takePictureAsync can race the surface and return null/throw.
             if (Platform.OS === 'android') {
-              setTimeout(() => setCameraReady(true), 800);
+              setTimeout(() => setCameraReady(true), 1500);
             } else {
               setCameraReady(true);
             }
