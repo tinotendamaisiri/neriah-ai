@@ -1,65 +1,132 @@
 // src/services/litert.ts
-// LiteRT on-device inference service.
+// LiteRT-LM on-device inference via `react-native-litert-lm` (Kaggle Gemma 4
+// hackathon prize track runtime; supersedes the deprecated
+// @subhajit-gorai/react-native-mediapipe-llm package).
 //
-// Wraps @subhajit-gorai/react-native-mediapipe-llm's NativeModules.MediapipeLlm
-// directly so it can be used from plain service code (not just React hooks).
+// Model lifecycle is fully managed by the library:
+//   - loadModel(variant) accepts a HuggingFace URL → library downloads (with
+//     progress callback), caches locally, then initialises the native model.
+//   - Repeat calls with the same URL hit cache and load instantly.
+//   - deleteCachedModel(variant) removes the cached file.
 //
-// Usage:
-//   import { loadModel, generateResponse, isModelAvailable } from './litert';
-//   await loadModel('e2b');
-//   const reply = await generateResponse(prompt);
+// Public TypeScript surface kept stable for the rest of the app:
+//   loadModel, generateResponse, isNativeModuleAvailable, getLiteRTState,
+//   subscribeToLiteRT, unloadModel, deleteCachedModel, ModelVariant,
+//   MODEL_URLS, OcrPageInput, OnDeviceUserContext, buildGradingPrompt,
+//   buildTutorPrompt, serializeUserContext.
+//
+// LiteRTState shape:
+//   { loadedModel, isLoading, progress, error }
+// where `progress` is 0–100 and is meaningful only while isLoading is true
+// (covers both the download and the subsequent initialise-into-memory
+// phases; the library only reports progress during download — the
+// initialise phase shows the same final progress value until the load
+// promise resolves).
+//
+// Expo Go: `require('react-native-litert-lm')` will fail to resolve the
+// Nitro native binding inside Expo Go. The lazy require below catches that
+// and sets _lib = null, which makes isNativeModuleAvailable() return false
+// and the router's 'on-device' branch fall through to 'unavailable'. Rest
+// of the app keeps working.
 
-// LiteRT on-device inference via @subhajit-gorai/react-native-mediapipe-llm.
-// This module is native — requires a dev-client build (`npx expo run:ios` /
-// `npx expo run:android`) and will be null when running inside Expo Go.
-// The router falls back to 'unavailable' in that case.
-import { NativeModules, Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 // ── Native module interface ───────────────────────────────────────────────────
+// Hand-typed minimal surface — matches the public API described in
+// react-native-litert-lm's README.
 
-interface MediapipeLlmModule {
-  initialize(opts: {
-    modelPath: string;
-    maxTokens?: number;
-    temperature?: number;
-    topK?: number;
-    topP?: number;
-  }): Promise<boolean>;
-  generateResponse(prompt: string): Promise<string>;
-  generateResponseWithCallback(
+interface LiteRTInstance {
+  loadModel(
+    urlOrPath: string,
+    opts?: {
+      backend?: 'cpu' | 'gpu' | 'npu';
+      systemPrompt?: string;
+      maxTokens?: number;
+      temperature?: number;
+      topK?: number;
+      topP?: number;
+    },
+    onDownloadProgress?: (progress: number) => void,
+  ): Promise<void>;
+  sendMessage(prompt: string): Promise<string>;
+  // Native spec returns void — the library's own hook wraps it in a
+  // promise, and we do the same inside generateResponse() below.
+  sendMessageAsync(
     prompt: string,
-    onToken: (partial: string, done: boolean) => void,
-    onError: (error: string) => void,
+    onToken: (token: string, done: boolean) => void,
   ): void;
+  deleteModel(fileName: string): Promise<void>;
+  close(): void;
 }
 
-const MediapipeLlm: MediapipeLlmModule | null =
-  (NativeModules.MediapipeLlm as MediapipeLlmModule | undefined) ?? null;
+interface LiteRTLibrary {
+  createLLM: () => LiteRTInstance;
+}
 
-// ── Model file paths ──────────────────────────────────────────────────────────
+// Lazy-load via require() so missing native binding (Expo Go) produces a
+// typed null instead of crashing at module load time.
+let _lib: LiteRTLibrary | null | undefined = undefined;
+
+function getLib(): LiteRTLibrary | null {
+  if (_lib !== undefined) return _lib;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+    const mod = require('react-native-litert-lm');
+    // The library exports createLLM from the top-level module. Handle both
+    // default-export and named-export shapes.
+    const lib: LiteRTLibrary | undefined =
+      (mod?.default?.createLLM ? (mod.default as LiteRTLibrary) : undefined) ??
+      (mod?.createLLM ? (mod as LiteRTLibrary) : undefined);
+    _lib = lib ?? null;
+  } catch {
+    _lib = null;
+  }
+  return _lib;
+}
+
+// ── Model URLs (hosted by Google's LiteRT community on HuggingFace) ──────────
 //
-// Models are NOT bundled — they live in the device's document directory.
-// Download them via modelManager.ts before loading.
+// These are the same URLs the library exports as GEMMA_4_E2B_IT /
+// GEMMA_4_E4B_IT constants. We inline them rather than import them so this
+// file doesn't eagerly import the lib (which would crash at module-load
+// time in Expo Go where the native binding doesn't resolve).
+//
+// On first call, the library downloads the .litertlm file under the
+// filename extracted from the URL (e.g. "gemma-4-E4B-it.litertlm"), caches
+// it in a per-OS directory (Android: app temp; iOS: Library/Caches/
+// litert_models/), and reuses it on subsequent calls.
 
-export const MODEL_PATHS = {
-  e2b: `${FileSystem.documentDirectory ?? ''}models/gemma-4-e2b-it.task`,
-  e4b: `${FileSystem.documentDirectory ?? ''}models/gemma-4-e4b-it.task`,
+export const MODEL_URLS = {
+  e2b: 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm',
+  e4b: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm',
 } as const;
 
-export type ModelVariant = keyof typeof MODEL_PATHS;
+export type ModelVariant = keyof typeof MODEL_URLS;
+
+/** Extract the cache filename the library uses for a variant — handy for
+ *  deleteModel calls, which want the filename, not the URL. */
+function cacheFileName(variant: ModelVariant): string {
+  const url = MODEL_URLS[variant];
+  return url.split('/').pop() ?? `${variant}.litertlm`;
+}
 
 // ── Singleton state ───────────────────────────────────────────────────────────
 
 export interface LiteRTState {
   loadedModel: ModelVariant | null;
   isLoading: boolean;
+  /** 0–100. Meaningful only while isLoading is true. Driven by the library's
+   *  download progress callback during the download phase; stays at 100
+   *  (or the last reported value) through the subsequent initialise phase,
+   *  which has no progress feedback. */
+  progress: number;
   error: string | null;
 }
 
 const _state: LiteRTState = {
   loadedModel: null,
   isLoading: false,
+  progress: 0,
   error: null,
 };
 
@@ -68,6 +135,11 @@ const _listeners = new Set<() => void>();
 function _notify() {
   _listeners.forEach(fn => fn());
 }
+
+// The single LLM instance currently loaded. LiteRT-LM is instance-based
+// (createLLM() returns a new one each call), so we keep one alive and close
+// it if we ever swap to a different variant.
+let _llm: LiteRTInstance | null = null;
 
 /** Subscribe to LiteRT state changes. Returns an unsubscribe function. */
 export function subscribeToLiteRT(listener: () => void): () => void {
@@ -82,56 +154,136 @@ export function getLiteRTState(): Readonly<LiteRTState> {
 
 // ── Capability checks ─────────────────────────────────────────────────────────
 
-/** Returns true if the native module was successfully linked in the iOS build. */
+/** Returns true if the native Nitro binding was successfully linked. */
 export function isNativeModuleAvailable(): boolean {
-  return MediapipeLlm !== null;
-}
-
-/** Returns true if the model .task file exists on the device filesystem. */
-export async function isModelAvailable(model: ModelVariant): Promise<boolean> {
-  try {
-    const info = await FileSystem.getInfoAsync(MODEL_PATHS[model]);
-    return info.exists && ((info as any).size ?? 0) > 1_000_000;
-  } catch {
-    return false;
-  }
+  return getLib() !== null;
 }
 
 // ── Model loading ─────────────────────────────────────────────────────────────
 
 /**
- * Load a model into memory. Safe to call multiple times — skips if already loaded.
- * On-device only: resolves immediately with a no-op on non-mobile platforms.
+ * Download + load a model into memory. Safe to call multiple times — skips
+ * the native work if the same variant is already loaded. On-device only:
+ * resolves immediately with a no-op on web.
+ *
+ * The URL for the variant is passed straight to the library's loadModel,
+ * which:
+ *   1. Extracts the filename from the URL
+ *   2. Checks its local cache — if present, skips download
+ *   3. Otherwise downloads the .litertlm file, reporting progress through
+ *      the onDownloadProgress callback (0–1 fractional)
+ *   4. Initialises the native session and resolves
+ *
+ * @param model       Which variant to load.
+ * @param onProgress  Optional external progress callback (0–100). The
+ *                    internal state's `progress` field is updated
+ *                    regardless; callers who care about real-time UI can
+ *                    subscribe via subscribeToLiteRT() instead of passing
+ *                    a callback here.
  */
-export async function loadModel(model: ModelVariant): Promise<void> {
+export async function loadModel(
+  model: ModelVariant,
+  onProgress?: (pct: number) => void,
+): Promise<void> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
-  if (!MediapipeLlm) throw new Error('MediaPipe LLM native module not linked. Rebuild the app after installing the package.');
-  if (_state.loadedModel === model) return;
+  const lib = getLib();
+  if (!lib) throw new Error('react-native-litert-lm native module not linked. Rebuild the app after installing the package.');
+  if (_state.loadedModel === model && _llm) return;
 
   _state.isLoading = true;
+  _state.progress = 0;
   _state.error = null;
   _notify();
 
   try {
-    // Native module expects a bare filesystem path (no file:// prefix)
-    const modelPath = MODEL_PATHS[model].replace(/^file:\/\//, '');
-    const ok = await MediapipeLlm.initialize({
-      modelPath,
-      maxTokens: 512,
-      temperature: 0.8,
-      topK: 40,
-      topP: 0.9,
-    });
-    if (!ok) throw new Error('Model initialization returned false — check that the .task file is valid');
+    // If a different variant is loaded, drop the old instance cleanly.
+    if (_llm && _state.loadedModel !== model) {
+      try { _llm.close(); } catch { /* best-effort */ }
+      _llm = null;
+      _state.loadedModel = null;
+    }
+
+    const instance = lib.createLLM();
+    await instance.loadModel(
+      MODEL_URLS[model],
+      {
+        // Default to CPU — most Android devices LiteRT-LM targets don't have
+        // reliable GPU support for Gemma 4. Teachers on flagship phones can
+        // flip this to 'gpu' later via a settings toggle if we surface one.
+        backend: 'cpu',
+      },
+      (progress: number) => {
+        // Library reports 0–1 fractional. Normalise to 0–100 for the rest
+        // of the app (existing ModelContext progress UI assumes 0–100).
+        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+        _state.progress = pct;
+        _notify();
+        if (onProgress) onProgress(pct);
+      },
+    );
+
+    // Library resolved — either cache hit, or download + init complete.
+    // Force progress to 100 so subscribers see a clean finish even if the
+    // final progress callback never fired (cache-hit path skips downloads).
+    _llm = instance;
     _state.loadedModel = model;
+    _state.progress = 100;
   } catch (err: any) {
     _state.error = err?.message ?? 'Unknown error loading model';
     _state.loadedModel = null;
+    _llm = null;
     throw err;
   } finally {
     _state.isLoading = false;
     _notify();
   }
+}
+
+/**
+ * Delete the library's cached .litertlm file for a variant, freeing the
+ * device storage it was occupying. Also unloads the model from memory if
+ * it was loaded, so the file isn't held open during the delete.
+ *
+ * No-op if the native module isn't linked.
+ */
+export async function deleteCachedModel(variant: ModelVariant): Promise<void> {
+  const lib = getLib();
+  if (!lib) return;
+
+  // Drop the in-memory instance first so it's not holding the file.
+  if (_state.loadedModel === variant && _llm) {
+    try { _llm.close(); } catch { /* best-effort */ }
+    _llm = null;
+    _state.loadedModel = null;
+    _notify();
+  }
+
+  // The native deleteModel API hangs off any LLM instance. Create a
+  // disposable one just for this call.
+  const temp = lib.createLLM();
+  try {
+    await temp.deleteModel(cacheFileName(variant));
+  } finally {
+    try { temp.close(); } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Release the currently-loaded model and any native resources it holds.
+ * Safe to call when nothing is loaded. Called implicitly by loadModel() when
+ * switching variants — exposed for explicit shutdown if needed (e.g. model
+ * delete from Settings).
+ */
+export function unloadModel(): void {
+  if (_llm) {
+    try { _llm.close(); } catch { /* best-effort */ }
+    _llm = null;
+  }
+  _state.loadedModel = null;
+  _state.isLoading = false;
+  _state.progress = 0;
+  _state.error = null;
+  _notify();
 }
 
 // ── Inference ─────────────────────────────────────────────────────────────────
@@ -140,31 +292,40 @@ export async function loadModel(model: ModelVariant): Promise<void> {
  * Generate a response from the currently loaded model.
  *
  * @param prompt   Full prompt text. Prepend system context inline —
- *                 LiteRT has no separate system-prompt parameter.
- * @param onToken  Optional streaming callback. Each call receives a token chunk.
+ *                 LiteRT-LM exposes a systemPrompt option on loadModel, but
+ *                 we don't use it here because each request can have
+ *                 different context (grading vs tutoring vs scheme gen).
+ * @param onToken  Optional streaming callback. Each call receives a token
+ *                 chunk. When omitted, the call blocks until the full
+ *                 response is ready.
  */
 export async function generateResponse(
   prompt: string,
   onToken?: (partial: string) => void,
 ): Promise<string> {
-  if (!MediapipeLlm) throw new Error('MediaPipe LLM native module not linked');
-  if (!_state.loadedModel) throw new Error('No model loaded. Call loadModel() first.');
+  if (!getLib()) throw new Error('react-native-litert-lm native module not linked');
+  if (!_llm || !_state.loadedModel) throw new Error('No model loaded. Call loadModel() first.');
 
   if (onToken) {
+    // Native sendMessageAsync returns void — accumulate tokens and resolve
+    // when done=true. Matches the React-hook wrapper the library ships.
     return new Promise<string>((resolve, reject) => {
       let full = '';
-      MediapipeLlm!.generateResponseWithCallback(
-        prompt,
-        (partial: string, done: boolean) => {
-          if (partial) { full += partial; onToken(partial); }
+      try {
+        _llm!.sendMessageAsync(prompt, (token, done) => {
+          if (token) {
+            full += token;
+            onToken(token);
+          }
           if (done) resolve(full);
-        },
-        (error: string) => reject(new Error(error)),
-      );
+        });
+      } catch (err) {
+        reject(err);
+      }
     });
   }
 
-  return MediapipeLlm.generateResponse(prompt);
+  return _llm.sendMessage(prompt);
 }
 
 // ── On-device user context ────────────────────────────────────────────────────
@@ -205,8 +366,8 @@ export function serializeUserContext(ctx: OnDeviceUserContext): string {
 
 /**
  * Build the Socratic tutor prompt for the E2B student model.
- * LiteRT has no system-prompt parameter, so we embed everything in the user turn.
- * User context is serialized and prepended because LiteRT cannot call Firestore.
+ * LiteRT-LM has a systemPrompt option on loadModel, but we don't use it
+ * here because each request can vary. We embed everything in the user turn.
  */
 export function buildTutorPrompt(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
@@ -278,10 +439,6 @@ export function buildGradingPrompt(
     .map(p => `--- PAGE ${p.page_index} ---\n${p.text || '(no text extracted)'}`)
     .join('\n\n');
 
-  // The verdict JSON schema below mirrors shared/models.py:GradingVerdict so
-  // the offline path can hand a MarkResult straight to the existing UI.
-  // fields kept optional in parse (question_x / question_y) can be absent —
-  // the annotator falls back to evenly-spaced positions.
   const schema =
     `[{"question_number":<int>,"page_index":<int>,` +
     `"student_answer":"<verbatim from OCR>",` +

@@ -1,51 +1,49 @@
 // src/services/modelManager.ts
-// On-device model download manager.
+// On-device model lifecycle manager.
 //
-// Downloads Gemma 4 task files from GCS into the device's document directory.
-// Supports pause / resume across app restarts via AsyncStorage savable state.
+// As of the LiteRT-LM migration, the heavy lifting — download + resume +
+// cache + load — is handled by `react-native-litert-lm` itself (see
+// services/litert.ts). This module is now a thin coordination layer:
 //
-// Models hosted at: gs://neriah-ai-models/models/ (Johannesburg region)
-//   Student (E2B): gemma-4-E2B-it-web.task  — 2.0 GB
-//   Teacher (E4B): gemma-4-E4B-it-web.task  — 2.96 GB
+//   - Translates ModelContext's public API (startDownload / pauseDownload /
+//     cancelDownload / deleteModelFile / isModelOnDisk) to the library's
+//     loadModel / deleteCachedModel calls.
+//   - Persists a "has been loaded at least once" flag in SecureStore so the
+//     app can answer "is this model available?" without querying the
+//     library's private cache directory.
+//   - Keeps display metadata (names, size labels, byte counts) that the
+//     Settings UI and Wi-Fi nudge banner read.
 //
-// Files are stored outside the app bundle so they survive app updates.
+// Breaking change vs the pre-LiteRT-LM implementation: pause / resume is
+// no longer supported. The library has no pause API — calling pauseDownload
+// is a no-op (logged for visibility). Cancel attempts to delete the cached
+// file, which works cleanly once the download has completed; mid-download
+// cancels are best-effort (see comment on cancelDownload below).
+//
+// Models served from Google's LiteRT community on HuggingFace:
+//   Student (E2B): ~2.0 GB
+//   Teacher (E4B): ~2.96 GB
 
-import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+import {
+  loadModel as litertLoadModel,
+  deleteCachedModel as litertDeleteCachedModel,
+  type ModelVariant,
+} from './litert';
 
-export type ModelVariant = 'e2b' | 'e4b';
+// Re-export for ModelContext + any other caller that used to import from here.
+export type { ModelVariant };
 
-// ── SecureStore / AsyncStorage keys ──────────────────────────────────────────
+// ── SecureStore keys (unchanged — ModelContext reads these directly) ─────────
 
 export const MODEL_DOWNLOADED_KEY       = 'model_downloaded';
 export const DOWNLOAD_PROMPTED_KEY      = 'model_download_prompted';
 export const WIFI_ONLY_KEY              = 'wifi_only_downloads';
 export const WIFI_NUDGE_LAST_DATE_KEY   = 'neriah_wifi_nudge_last_date';
 export const WIFI_NUDGE_NEVER_KEY       = 'neriah_wifi_nudge_never';
-/** Per-variant resumable snapshot key. */
-function resumableKey(variant: ModelVariant): string {
-  return `model_download_snapshot_${variant}`;
-}
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-// Model files hosted in GCS Johannesburg region for low-latency African downloads.
-
-const GCS_BASE = 'https://storage.googleapis.com/neriah-ai-models/models';
-
-export const MODEL_DIR = `${FileSystem.documentDirectory ?? ''}models/`;
-
-export const MODEL_PATHS: Record<ModelVariant, string> = {
-  e2b: `${MODEL_DIR}gemma-4-E2B-it-web.task`,
-  e4b: `${MODEL_DIR}gemma-4-E4B-it-web.task`,
-};
-
-const GCS_URLS: Record<ModelVariant, string> = {
-  e2b: `${GCS_BASE}/gemma-4-E2B-it-web.task`,
-  e4b: `${GCS_BASE}/gemma-4-E4B-it-web.task`,
-};
+// ── Display metadata (unchanged — drives the download prompt + Settings) ─────
 
 export const MODEL_SIZES_BYTES: Record<ModelVariant, number> = {
   e2b: 2_000_000_000,   // ~2.0 GB
@@ -62,45 +60,49 @@ export const MODEL_DISPLAY_NAME: Record<ModelVariant, string> = {
   e4b: 'Gemma 4 E4B — Teacher AI',
 };
 
-// ── Module-level singleton download instance ──────────────────────────────────
+// ── Active-load tracking ──────────────────────────────────────────────────────
+// The library doesn't expose a "cancel in-flight" API. We track whether a
+// load is in progress so cancelDownload can be best-effort without
+// crashing if nothing is actually running.
 
-let _active: FileSystem.DownloadResumable | null = null;
+let _activeVariant: ModelVariant | null = null;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-export async function ensureModelDir(): Promise<void> {
-  const info = await FileSystem.getInfoAsync(MODEL_DIR);
-  if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(MODEL_DIR, { intermediates: true });
-  }
-}
-
-/** True if the model file exists on disk and is larger than 1 MB (sanity check). */
-export async function isModelOnDisk(variant: ModelVariant): Promise<boolean> {
-  try {
-    const info = await FileSystem.getInfoAsync(MODEL_PATHS[variant]);
-    return info.exists && ((info as any).size ?? 0) > 1_000_000;
-  } catch {
-    return false;
-  }
-}
-
-/** True if the download is currently active (not paused or idle). */
 export function isDownloadActive(): boolean {
-  return _active !== null;
+  return _activeVariant !== null;
 }
 
-// ── Download ──────────────────────────────────────────────────────────────────
+// ── Cache presence check ──────────────────────────────────────────────────────
 
 /**
- * Start (or resume) downloading the model file.
+ * True if the model has been successfully loaded (and therefore cached) on
+ * this device at least once. Backed by a SecureStore flag that's set after
+ * startDownload completes and cleared on deleteModelFile.
  *
- * Checks AsyncStorage for a saved pause-state first — if found, the download
- * resumes from where it left off. Otherwise starts fresh from GCS.
+ * Caveat: iOS can evict files from Library/Caches under storage pressure.
+ * In that case the flag still reads true but the next loadModel call will
+ * transparently re-download (cache miss handled by the library). We accept
+ * this edge case — the library's own logic is robust to it.
+ */
+export async function isModelOnDisk(_variant: ModelVariant): Promise<boolean> {
+  const flag = await SecureStore.getItemAsync(MODEL_DOWNLOADED_KEY).catch(() => null);
+  return flag === 'true';
+}
+
+// ── Download / load ──────────────────────────────────────────────────────────
+
+/**
+ * Download + load a model. Signature preserved from the pre-LiteRT-LM
+ * implementation so ModelContext keeps working unchanged.
  *
- * @param variant    Which model to download ('e2b' or 'e4b').
- * @param onProgress Called with 0–100 as bytes are written.
- * @param onComplete Called with no args when the file is fully downloaded.
+ * The callback pattern (onProgress / onComplete / onError) is a thin wrap
+ * around litert.loadModel's progress callback + async return/throw. The
+ * library handles the actual HTTP download, filesystem cache, and native
+ * session init.
+ *
+ * @param variant    Which model to download.
+ * @param onProgress Called with 0–100 as the download advances.
+ * @param onComplete Called with no args when the file is cached AND the
+ *                   model is loaded into memory.
  * @param onError    Called with a message on unrecoverable failure.
  */
 export async function startDownload(
@@ -109,124 +111,68 @@ export async function startDownload(
   onComplete: () => void,
   onError: (msg: string) => void,
 ): Promise<void> {
-  await ensureModelDir();
-
-  const dest = MODEL_PATHS[variant];
-  const url  = GCS_URLS[variant];
-  const size = MODEL_SIZES_BYTES[variant];
-
-  const progressCallback = ({
-    totalBytesWritten,
-    totalBytesExpectedToWrite,
-  }: FileSystem.DownloadProgressData) => {
-    const total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : size;
-    onProgress(Math.min(99, Math.round((totalBytesWritten / total) * 100)));
-  };
-
-  // ── Resume if a savable exists ────────────────────────────────────────────
-  const savableRaw = await AsyncStorage.getItem(resumableKey(variant)).catch(() => null);
-  if (savableRaw) {
-    try {
-      const savable: FileSystem.DownloadPauseState = JSON.parse(savableRaw);
-      if (savable?.resumeData) {
-        _active = new FileSystem.DownloadResumable(
-          savable.url ?? url,
-          savable.fileUri ?? dest,
-          savable.options ?? {},
-          progressCallback,
-          savable.resumeData,
-        );
-        await _run(variant, onProgress, onComplete, onError);
-        return;
-      }
-    } catch {
-      // Corrupted savable — fall through to fresh download
-      await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
-    }
-  }
-
-  // ── Fresh download ────────────────────────────────────────────────────────
-  _active = FileSystem.createDownloadResumable(url, dest, {}, progressCallback);
-  await _run(variant, onProgress, onComplete, onError);
-}
-
-async function _run(
-  variant: ModelVariant,
-  onProgress: (pct: number) => void,
-  onComplete: () => void,
-  onError: (msg: string) => void,
-): Promise<void> {
-  if (!_active) return;
+  _activeVariant = variant;
   try {
-    const result = await _active.downloadAsync();
-    _active = null;
-    if (result?.uri) {
-      await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
-      await SecureStore.setItemAsync(MODEL_DOWNLOADED_KEY, 'true');
-      onProgress(100);
-      onComplete();
-    } else {
-      onError('Download finished but no file path was returned.');
-    }
+    await litertLoadModel(variant, (pct) => {
+      onProgress(pct);
+    });
+    await SecureStore.setItemAsync(MODEL_DOWNLOADED_KEY, 'true').catch(() => {});
+    onProgress(100);
+    onComplete();
   } catch (err: any) {
-    _active = null;
     const msg: string = err?.message ?? String(err);
-    // Pause/cancel throws — not a real error.
-    if (msg.includes('cancelled') || msg.includes('paused')) return;
     onError(msg);
+  } finally {
+    _activeVariant = null;
   }
 }
 
 // ── Pause ─────────────────────────────────────────────────────────────────────
+//
+// react-native-litert-lm has no public pause API. Exposed as a no-op so
+// the ModelContext's existing pause button doesn't blow up; teachers hitting
+// pause get no visible effect but also no error. A future library release
+// may add pause support — if/when it does, wire it through here.
 
-/**
- * Pause an active download. Saves the resume state to AsyncStorage so the
- * download can be resumed after the app is restarted.
- */
 export async function pauseDownload(): Promise<void> {
-  if (!_active) return;
-  try {
-    const savable = await _active.pauseAsync();
-    _active = null;
-    if (savable) {
-      await AsyncStorage.setItem(resumableKey(variant), JSON.stringify(savable)).catch(() => {});
-    }
-  } catch {
-    _active = null;
-  }
+  if (!_activeVariant) return;
+  console.warn('[modelManager] pauseDownload: not supported by react-native-litert-lm; no-op.');
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────────
 
-/** Cancel the download and delete any partial file. */
+/**
+ * Cancel an in-flight download. Like pause, this isn't a real operation on
+ * the library — we can't abort the HTTP transfer once it's in flight. What
+ * we *can* do is delete whatever was cached (completed downloads, or
+ * partials the library may or may not have persisted).
+ *
+ * The better UX path is "wait for completion, then delete via
+ * deleteModelFile". We keep this function around for interface compat but
+ * it'll rarely do anything useful mid-transfer.
+ */
 export async function cancelDownload(variant: ModelVariant): Promise<void> {
-  if (_active) {
-    try { await _active.pauseAsync(); } catch {}
-    _active = null;
-  }
-  await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
   try {
-    const info = await FileSystem.getInfoAsync(MODEL_PATHS[variant]);
-    if (info.exists) {
-      await FileSystem.deleteAsync(MODEL_PATHS[variant], { idempotent: true });
-    }
-  } catch {}
+    await litertDeleteCachedModel(variant);
+  } catch {
+    // Best-effort — the cache file may not exist yet, or the library may
+    // refuse to delete while the download is still open. Swallow.
+  }
+  await SecureStore.deleteItemAsync(MODEL_DOWNLOADED_KEY).catch(() => {});
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-/** Delete a downloaded model to free device storage. Clears the SecureStore flag. */
+/**
+ * Delete the cached model file to free device storage. Also drops the
+ * in-memory native session (via litert.deleteCachedModel → unloadModel
+ * internally) and clears the "has been downloaded" flag.
+ */
 export async function deleteModelFile(variant: ModelVariant): Promise<void> {
-  if (_active) {
-    try { await _active.pauseAsync(); } catch {}
-    _active = null;
-  }
-  await AsyncStorage.removeItem(resumableKey(variant)).catch(() => {});
   try {
-    const info = await FileSystem.getInfoAsync(MODEL_PATHS[variant]);
-    if (info.exists) {
-      await FileSystem.deleteAsync(MODEL_PATHS[variant], { idempotent: true });
-    }
-  } catch {}
+    await litertDeleteCachedModel(variant);
+  } catch {
+    // Best-effort — nothing there is fine.
+  }
   await SecureStore.deleteItemAsync(MODEL_DOWNLOADED_KEY).catch(() => {});
 }
