@@ -1,18 +1,24 @@
 // src/components/InAppCamera.tsx
 // Full-screen in-app camera using expo-camera CameraView.
-// Replaces every ImagePicker.launchCameraAsync call so the teacher never leaves the app.
+//
+// Render invariant: once permission is granted, CameraView stays mounted
+// for the entire lifetime of the modal. Processing spinner and preview
+// render as absolute-fill overlays on top — never as replacements for the
+// camera tree. Android-specific: unmounting CameraView while
+// takePictureAsync is in flight triggers OnViewDestroys → cleanupCamera
+// → scope.cancel(), which drops the resolve coroutine and leaves the JS
+// promise dangling forever.
 //
 // After capture:
-//   1. enhanceImage() — resize to ≤2048px + EXIF normalise
-//   2. checkImageQuality() — heuristic warnings (blur, dark, low-res)
-//   3. Shows warning banner on preview if issues found (never blocks "Use Photo")
-//   4. Reads enhanced URI as base64 and returns to parent
+//   1. enhanceImage() — resize to ≤2048px + EXIF normalise (best-effort;
+//      falls back to the raw URI on failure)
+//   2. Preview overlay with Retake / Use Photo
 //
 // Usage:
 //   const [cameraVisible, setCameraVisible] = useState(false);
 //   <InAppCamera
 //     visible={cameraVisible}
-//     onCapture={(base64, uri) => { setCameraVisible(false); /* use image */ }}
+//     onCapture={(uri) => { setCameraVisible(false); /* use image */ }}
 //     onClose={() => setCameraVisible(false)}
 //   />
 
@@ -331,14 +337,16 @@ export default function InAppCamera({
     </View>
   );
 
-  const resolveContent = () => {
+  // Permission gate: if we can't show the camera, short-circuit to the
+  // permission UI with no CameraView mounted.
+  const renderPermissionGate = () => {
     if (!permission) return renderPermissionPrompt();
     if (!permission.granted && !permission.canAskAgain) return renderPermissionDenied();
     if (!permission.granted) return renderPermissionPrompt();
-    if (processing) return renderProcessing();
-    if (preview) return renderPreview();
-    return renderCamera();
+    return null;
   };
+
+  const gate = renderPermissionGate();
 
   return (
     <Modal
@@ -349,7 +357,26 @@ export default function InAppCamera({
       onRequestClose={handleClose}
     >
       <View style={styles.root}>
-        {resolveContent()}
+        {gate ?? (
+          // Keep CameraView mounted for the entire lifetime of the modal
+          // (once permission is granted). Processing spinner and preview
+          // render as overlays on top — never as replacements.
+          //
+          // Why: on Android, expo-camera's OnViewDestroys handler calls
+          // cleanupCamera() → scope.cancel(). If CameraView unmounts while
+          // takePictureAsync is in flight, the coroutine that resolves the
+          // promise is cancelled before it runs, and the await hangs
+          // forever (the "Enhancing photo…" bug).
+          <>
+            {renderCamera()}
+            {preview && (
+              <View style={styles.overlayFill}>{renderPreview()}</View>
+            )}
+            {processing && (
+              <View style={styles.overlayFill}>{renderProcessing()}</View>
+            )}
+          </>
+        )}
       </View>
     </Modal>
   );
@@ -361,6 +388,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  overlayFill: {
+    ...StyleSheet.absoluteFillObject,
   },
 
   // ── Permission / processing ─────────────────────────────────────────────────
