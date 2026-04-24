@@ -6,7 +6,7 @@
 // Next Student", updateMark fires with the full edited verdict list; on
 // "Skip", nothing is persisted and the caller is just told to advance.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -19,7 +19,11 @@ import {
   Alert,
   Platform,
   Dimensions,
+  FlatList,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { MarkResult, Student, GradingVerdict, GradingVerdictEnum } from '../types';
 import { COLORS } from '../constants/colors';
 import { updateMark, deleteMark } from '../services/api';
@@ -65,8 +69,19 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
   const [verdicts, setVerdicts] = useState<GradingVerdict[]>(initialVerdicts);
   const [editedQuestions, setEditedQuestions] = useState<Set<number>>(new Set());
   const [overallFeedback, setOverallFeedback] = useState('');
+  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
+  const [questionsExpanded, setQuestionsExpanded] = useState(false);
   const [editingVerdict, setEditingVerdict] = useState<GradingVerdict | null>(null);
   const [approving, setApproving] = useState(false);
+
+  // Auto-expand the feedback section on mount if there's already text (e.g.
+  // if a future change hydrates overallFeedback from result.overall_feedback).
+  // Today overallFeedback starts empty so this is a no-op; kept as scaffolding
+  // so the behaviour is right the moment hydration lands.
+  useEffect(() => {
+    if (overallFeedback?.length > 0) setFeedbackExpanded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Live totals (recompute from local state each render) ────────────────────
   const totalAwarded = verdicts.reduce((s, v) => s + (v.awarded_marks ?? 0), 0);
@@ -75,13 +90,33 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
   const pctColour =
     percentage >= 75 ? COLORS.success : percentage >= 50 ? COLORS.warning : COLORS.error;
 
-  // ── Zoom (iOS: real pinch + pan via ScrollView. Android: buttons only.) ─────
+  // ── Pages ──────────────────────────────────────────────────────────────────
+  // The backend returns `annotated_urls: string[]` with every annotated page
+  // and keeps `marked_image_url` as a legacy alias for the first. Fall back
+  // through both so older responses still render.
+  const pages = useMemo<string[]>(() => {
+    if (result.annotated_urls && result.annotated_urls.length > 0) return result.annotated_urls;
+    if (result.marked_image_url) return [result.marked_image_url];
+    return [];
+  }, [result.annotated_urls, result.marked_image_url]);
+  const isMultiPage = pages.length > 1;
+
+  // ── Zoom ───────────────────────────────────────────────────────────────────
+  // Single-page: iOS ScrollView's native pinch + zoom buttons control the
+  // same ref (scrollResponderZoomTo) — unchanged from before.
+  // Multi-page: pinch is off (nested ScrollView breaks horizontal paging on
+  // Android), so the +/-/reset buttons apply a shared transform scale to
+  // every pager item instead.
   const imageScrollRef = useRef<ScrollView>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
 
   const setZoom = (next: number) => {
     const clamped = Math.max(1, Math.min(5, next));
     setZoomLevel(clamped);
+    if (isMultiPage) {
+      // Buttons-only zoom in multi-page mode; transform applied in render.
+      return;
+    }
     // iOS supports programmatic zoom via scrollResponderZoomTo. Android's
     // RN <ScrollView> ignores `maximumZoomScale`, so the buttons simply
     // scale the inner Image view on Android via transform (fallback).
@@ -97,6 +132,22 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
         height: h,
         animated: true,
       });
+    }
+  };
+
+  // ── Multi-page pager ──────────────────────────────────────────────────────
+  const pagerRef = useRef<FlatList<string>>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  // Paged item width — `imageCard` spans content-width (SW - padding*2 = SW - 32).
+  const PAGE_W = SW - 32;
+
+  const handlePagerMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / PAGE_W);
+    if (idx !== currentPage) {
+      setCurrentPage(idx);
+      // Reset zoom when the teacher swipes to a different page so each page
+      // starts at 1×, matching the single-page UX.
+      setZoomLevel(1);
     }
   };
 
@@ -186,40 +237,69 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.studentName}>{studentName}</Text>
-
-        {/* Live score (reflects local edits) */}
-        <View style={styles.scoreBadge}>
-          <Text style={styles.scoreNumber}>
-            {totalAwarded}/{totalMax}
+        {/* Student name + live score on one row, left/right. Raw score and
+            percentage are both carried here so the old scoreBadge row below
+            is no longer needed. `pctColour` follows the 75 / 50 / else
+            palette used throughout the app. */}
+        <View style={styles.headerRow}>
+          <Text style={styles.studentLabel}>
+            <Text style={styles.labelKey}>Student: </Text>
+            <Text style={styles.labelValue}>{studentName}</Text>
           </Text>
-          <Text style={[styles.scorePercent, { color: pctColour }]}>{percentage}%</Text>
-          {wasEdited && <Text style={styles.editedFlag}>· edited</Text>}
+          <Text style={styles.markLabel}>
+            <Text style={styles.labelKey}>Mark: </Text>
+            <Text style={styles.labelValue}>{totalAwarded}/{totalMax}</Text>
+            <Text style={styles.labelKey}> | </Text>
+            <Text style={[styles.labelValue, { color: pctColour }]}>{percentage}%</Text>
+            {wasEdited && <Text style={styles.labelKey}> · edited</Text>}
+          </Text>
         </View>
 
-        {/* Zoomable annotated image */}
+        {/* Zoomable annotated image(s) */}
         <View style={styles.imageCard}>
-          <ScrollView
-            ref={imageScrollRef}
-            style={styles.imageScroll}
-            contentContainerStyle={styles.imageScrollContent}
-            maximumZoomScale={5}
-            minimumZoomScale={1}
-            bouncesZoom
-            showsHorizontalScrollIndicator={false}
-            showsVerticalScrollIndicator={false}
-            centerContent
-            pinchGestureEnabled
-          >
-            <Image
-              source={{ uri: result.marked_image_url }}
-              style={[
-                styles.annotatedImage,
-                Platform.OS === 'android' && { transform: [{ scale: zoomLevel }] },
-              ]}
-              resizeMode="contain"
+          {isMultiPage ? (
+            <FlatList
+              ref={pagerRef}
+              data={pages}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(uri, i) => `${i}-${uri}`}
+              onMomentumScrollEnd={handlePagerMomentumEnd}
+              getItemLayout={(_, index) => ({ length: PAGE_W, offset: PAGE_W * index, index })}
+              renderItem={({ item }) => (
+                <View style={styles.pagerItem}>
+                  <Image
+                    source={{ uri: item }}
+                    style={[styles.annotatedImage, { transform: [{ scale: zoomLevel }] }]}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
             />
-          </ScrollView>
+          ) : (
+            <ScrollView
+              ref={imageScrollRef}
+              style={styles.imageScroll}
+              contentContainerStyle={styles.imageScrollContent}
+              maximumZoomScale={5}
+              minimumZoomScale={1}
+              bouncesZoom
+              showsHorizontalScrollIndicator={false}
+              showsVerticalScrollIndicator={false}
+              centerContent
+              pinchGestureEnabled
+            >
+              <Image
+                source={{ uri: pages[0] }}
+                style={[
+                  styles.annotatedImage,
+                  Platform.OS === 'android' && { transform: [{ scale: zoomLevel }] },
+                ]}
+                resizeMode="contain"
+              />
+            </ScrollView>
+          )}
 
           {/* Zoom controls, top-right over the image */}
           <View style={styles.zoomControls}>
@@ -233,14 +313,38 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
               <Text style={styles.zoomBtnText}>⊡</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Page indicator — only shown when there's more than one page. */}
+          {isMultiPage && (
+            <View style={styles.pageIndicator}>
+              <Text style={styles.pageIndicatorText}>
+                {currentPage + 1} / {pages.length}
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* Per-question verdict rows (tap to edit) */}
+        {/* Per-question comments — collapsible. Tap the header to toggle. */}
         {verdicts.length > 0 && (
           <>
-            <Text style={styles.breakdownHeading}>Question Breakdown</Text>
-            <Text style={styles.breakdownHint}>Tap a row to edit the verdict.</Text>
-            {verdicts.map((verdict) => {
+            <TouchableOpacity
+              onPress={() => setQuestionsExpanded((v) => !v)}
+              style={styles.sectionHeader}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={questionsExpanded ? 'Collapse per question comments' : 'Expand per question comments'}
+            >
+              <Text style={styles.sectionTitle}>Per Question Comments</Text>
+              <Ionicons
+                name={questionsExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={COLORS.gray500}
+              />
+            </TouchableOpacity>
+            {questionsExpanded && (
+              <>
+                <Text style={styles.breakdownHint}>Tap a row to edit the verdict.</Text>
+                {verdicts.map((verdict) => {
               const edited = editedQuestions.has(verdict.question_number);
               return (
                 <TouchableOpacity
@@ -270,20 +374,37 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
                 </TouchableOpacity>
               );
             })}
+              </>
+            )}
           </>
         )}
 
-        {/* Overall feedback */}
-        <Text style={styles.breakdownHeading}>Overall Feedback</Text>
-        <TextInput
-          style={styles.overallInput}
-          value={overallFeedback}
-          onChangeText={setOverallFeedback}
-          placeholder="Add overall feedback for this student..."
-          placeholderTextColor={COLORS.gray500}
-          multiline
-          textAlignVertical="top"
-        />
+        {/* Overall feedback — collapsible. Tap the header to toggle. */}
+        <TouchableOpacity
+          onPress={() => setFeedbackExpanded(v => !v)}
+          style={styles.sectionHeader}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={feedbackExpanded ? 'Collapse overall feedback' : 'Expand overall feedback'}
+        >
+          <Text style={styles.sectionTitle}>Overall Feedback</Text>
+          <Ionicons
+            name={feedbackExpanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={COLORS.gray500}
+          />
+        </TouchableOpacity>
+        {feedbackExpanded && (
+          <TextInput
+            style={styles.overallInput}
+            value={overallFeedback}
+            onChangeText={setOverallFeedback}
+            placeholder="Add overall feedback for this student..."
+            placeholderTextColor={COLORS.gray500}
+            multiline
+            textAlignVertical="top"
+          />
+        )}
 
         {/* Actions */}
         <TouchableOpacity
@@ -329,6 +450,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
   content: { padding: 16, paddingBottom: 40 },
   studentName: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  studentLabel: { fontSize: 15 },
+  markLabel: { fontSize: 15 },
+  labelKey: { color: COLORS.textLight, fontWeight: '400' },
+  labelValue: { color: COLORS.text, fontWeight: '700' },
 
   scoreBadge: {
     flexDirection: 'row', alignItems: 'baseline', gap: 10, marginBottom: 16,
@@ -344,6 +475,26 @@ const styles = StyleSheet.create({
   imageScroll: { flex: 1 },
   imageScrollContent: { flexGrow: 1, justifyContent: 'center' },
   annotatedImage: { width: '100%', height: IMAGE_H },
+  pagerItem: {
+    width: SW - 32,
+    height: IMAGE_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageIndicator: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  pageIndicatorText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   zoomControls: {
     position: 'absolute', top: 8, right: 8, flexDirection: 'column', gap: 6,
   },
@@ -354,9 +505,16 @@ const styles = StyleSheet.create({
   },
   zoomBtnText: { color: COLORS.white, fontSize: 20, fontWeight: '700' },
 
-  breakdownHeading: {
+  // Shared style for every collapsible section header (tappable row with
+  // title on the left and chevron on the right).
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  sectionTitle: {
     fontSize: 16, fontWeight: '600', color: COLORS.text,
-    marginTop: 12, marginBottom: 4,
   },
   breakdownHint: { fontSize: 12, color: COLORS.gray500, marginBottom: 8 },
 

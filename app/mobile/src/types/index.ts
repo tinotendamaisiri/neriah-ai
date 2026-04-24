@@ -111,6 +111,12 @@ export interface GradingVerdict {
   question_text?: string;
   student_answer?: string;
   expected_answer?: string;
+  /** Fractions of image dimensions (0.0-1.0) locating the question-number
+   *  label on the scanned page. Used by the backend annotator to place the
+   *  verdict symbol next to the actual question. Mobile does not currently
+   *  render these but forwards them on edit-mark writes. */
+  question_x?: number;
+  question_y?: number;
 }
 
 export interface Mark {
@@ -141,7 +147,13 @@ export interface MarkResult {
   score: number;
   max_score: number;
   percentage: number;
+  /** First annotated page — kept for legacy callers. Same as `annotated_urls[0]`. */
   marked_image_url: string;
+  /** All submitted pages (originals), in order. */
+  page_urls?: string[];
+  /** All annotated pages (teacher-visible output), in order. */
+  annotated_urls?: string[];
+  page_count?: number;
   verdicts: GradingVerdict[];
 }
 
