@@ -32,24 +32,10 @@ import {
   ScrollView,
 } from 'react-native';
 import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
-import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
-import { enhanceImage } from '../services/imageEnhance';
-import { checkImageQuality } from '../services/imageQuality';
 import { COLORS } from '../constants/colors';
 
 const { width: SW, height: SH } = Dimensions.get('window');
-
-// Generic timeout wrapper — rejects with an Error if the wrapped promise
-// doesn't settle within `ms`. Used to prevent the post-capture pipeline
-// (quality check, base64 read) from hanging the UI indefinitely on Android.
-const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
-  Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
-    ),
-  ]);
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 // Shared between the frame-geometry math and the render styles, so the two
@@ -135,87 +121,17 @@ export default function InAppCamera({
     }
     setProcessing(true);
     try {
-      // 1. Raw capture — single native call, no retry, no JS-level timeout.
-      //    Failures bubble to the outer catch which shows the "Could not
-      //    process photo" Alert.
       const photo = await cameraRef.current.takePictureAsync({
         quality,
         base64: false,
-        shutterSound: false,
         skipProcessing: true,
+        shutterSound: false,
       });
-      if (!photo?.uri) throw new Error('No photo URI returned');
-
-      // 1b. Crop to the on-screen overlay frame. The sensor image is much
-      //     larger than the preview (typically 3024×4032 vs ~400×850 points),
-      //     so we scale the overlay rect by capturedWidth / previewWidth and
-      //     apply the same factor in y. Falls back to the uncropped URI if
-      //     manipulateAsync throws or if the image dimensions look wrong.
-      let workingUri = photo.uri;
-      try {
-        const capturedW = photo.width;
-        const capturedH = photo.height;
-        if (capturedW && capturedH && capturedW > 0 && capturedH > 0) {
-          // The preview dimensions equal the screen width/height in points.
-          // The sensor is captured in landscape-native orientation even when
-          // the phone is held portrait — expo-camera rotates the bytes for us
-          // so `photo.width` is the final portrait width.
-          const scaleX = capturedW / SW;
-          const scaleY = capturedH / SH;
-          const frameLeftPreview = (SW - FRAME_W) / 2;
-          const frameTopPreview = FRAME_TOP_MARGIN;
-
-          const cropX = Math.max(0, Math.round(frameLeftPreview * scaleX));
-          const cropY = Math.max(0, Math.round(frameTopPreview  * scaleY));
-          const cropW = Math.min(
-            capturedW - cropX,
-            Math.round(FRAME_W * scaleX),
-          );
-          const cropH = Math.min(
-            capturedH - cropY,
-            Math.round(FRAME_H * scaleY),
-          );
-
-          if (cropW > 0 && cropH > 0) {
-            const cropped = await withTimeout(
-              ImageManipulator.manipulateAsync(
-                photo.uri,
-                [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }],
-                { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG },
-              ),
-              10000,
-            );
-            workingUri = cropped.uri;
-          }
-        }
-      } catch (cropErr) {
-        console.warn('[InAppCamera] crop failed — using uncropped image:', cropErr);
-      }
-
-      // 2. Enhance: resize to ≤2048px + EXIF normalise. Falls back to the
-      //    uncropped/unenhanced image if enhanceImage throws or times out —
-      //    better to submit the original than to fail the whole capture.
-      let enhancedUri = workingUri;
-      try {
-        enhancedUri = await withTimeout(enhanceImage(workingUri), 10000);
-      } catch (enhErr) {
-        console.warn('[InAppCamera] enhanceImage failed, using original:', enhErr);
-      }
-
-      // 3. Quality heuristics on the enhanced URI — guarded with a 10s
-      //    timeout so a hung heuristic can't lock the shutter on Android.
-      const qualityResult = await withTimeout(checkImageQuality(enhancedUri), 10000);
-
-      // No base64 read here — callers pull base64 themselves from the URI
-      // if they need it. Keeps the hot path free of a potentially slow
-      // readAsStringAsync on multi-MB images.
-      setPreview({ uri: enhancedUri, warnings: qualityResult.warnings });
-    } catch (err) {
-      console.warn('[InAppCamera] capture/enhance error:', err);
-      Alert.alert(
-        'Could not process photo',
-        'Please try again. Make sure the page is well lit and flat.',
-      );
+      if (!photo?.uri) throw new Error('No photo URI');
+      setPreview({ uri: photo.uri, warnings: [] });
+    } catch (err: any) {
+      console.warn('[InAppCamera] capture error:', err);
+      Alert.alert('Could not capture photo', 'Please try again.');
     } finally {
       setProcessing(false);
     }

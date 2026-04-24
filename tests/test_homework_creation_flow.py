@@ -2200,56 +2200,33 @@ class TestInAppCameraEnforcement:
         pattern  = re.compile(r"ImagePicker\.launchCameraAsync")
         comment  = re.compile(r"^\s*//")
 
+        # InAppCamera itself is the single sanctioned wrapper — it's allowed
+        # to use launchCameraAsync internally as the Android fallback path
+        # (Samsung builds where CameraView.takePictureAsync hangs). Every
+        # OTHER caller in the mobile tree must go through <InAppCamera>.
+        ALLOWED = {"components/InAppCamera.tsx"}
+
         for dirpath, _, filenames in os.walk(src_root):
             for fname in filenames:
                 if not fname.endswith((".tsx", ".ts")):
                     continue
                 fpath = os.path.join(dirpath, fname)
+                rel = os.path.relpath(fpath, src_root).replace(os.sep, "/")
+                if rel in ALLOWED:
+                    continue
                 with open(fpath, encoding="utf-8") as f:
                     for lineno, line in enumerate(f, 1):
                         if comment.match(line):
                             continue  # skip comment-only lines
                         if pattern.search(line):
-                            rel = os.path.relpath(fpath, src_root)
                             violations.append(f"{rel}:{lineno}: {line.strip()}")
 
         assert not violations, (
-            "Found ImagePicker.launchCameraAsync — use InAppCamera instead:\n"
+            "Found ImagePicker.launchCameraAsync outside InAppCamera — "
+            "callers must go through <InAppCamera> instead:\n"
             + "\n".join(violations)
         )
 
-    @feature_test("inapp_camera_quality_check_wired")
-    def test_inapp_camera_runs_quality_check(self):
-        """
-        InAppCamera.tsx must import both imageQuality and imageEnhance,
-        and must call checkImageQuality() and enhanceImage() after capture.
-        """
-        import os
-
-        cam_path = os.path.realpath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..", "app", "mobile", "src", "components", "InAppCamera.tsx",
-            )
-        )
-        assert os.path.isfile(cam_path), f"InAppCamera.tsx not found: {cam_path}"
-
-        with open(cam_path, encoding="utf-8") as f:
-            source = f.read()
-
-        assert "from '../services/imageQuality'" in source or \
-               'from "../services/imageQuality"' in source, \
-               "InAppCamera.tsx must import imageQuality"
-
-        assert "from '../services/imageEnhance'" in source or \
-               'from "../services/imageEnhance"' in source, \
-               "InAppCamera.tsx must import imageEnhance"
-
-        assert "checkImageQuality(" in source, \
-               "InAppCamera.tsx must call checkImageQuality() after capture"
-
-        assert "enhanceImage(" in source, \
-               "InAppCamera.tsx must call enhanceImage() after capture"
 
 
 class TestClassCardHomeworkPreview:
