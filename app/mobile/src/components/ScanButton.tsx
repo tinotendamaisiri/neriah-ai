@@ -12,6 +12,11 @@ interface ScanButtonProps {
   disabled?: boolean;
   label?: string;
   onDisabledPress?: () => void;
+  /** Override the default open-InAppCamera-modal behaviour. If provided,
+   *  `onPress` fires instead of opening the internal Modal. Used by
+   *  MarkingScreen on Android to navigate to TeacherCameraScreen (a native
+   *  camera screen) rather than mounting CameraView inside a Modal. */
+  onPress?: () => void;
 }
 
 export default function ScanButton({
@@ -19,10 +24,11 @@ export default function ScanButton({
   disabled = false,
   label = 'Capture Homework',
   onDisabledPress,
+  onPress,
 }: ScanButtonProps) {
   const [cameraVisible, setCameraVisible] = useState(false);
 
-  const handleCapture = (base64: string, uri: string) => {
+  const handleCapture = (uri: string) => {
     setCameraVisible(false);
     onCapture(uri);
   };
@@ -36,6 +42,10 @@ export default function ScanButton({
             onDisabledPress?.();
             return;
           }
+          if (onPress) {
+            onPress();
+            return;
+          }
           setCameraVisible(true);
         }}
         activeOpacity={0.7}
@@ -44,12 +54,16 @@ export default function ScanButton({
         <Text style={styles.btnText}>{label}</Text>
       </TouchableOpacity>
 
-      <InAppCamera
-        visible={cameraVisible}
-        onCapture={handleCapture}
-        onClose={() => setCameraVisible(false)}
-        quality={0.9}
-      />
+      {/* Only mount the internal InAppCamera Modal when the caller didn't
+          provide an onPress override. Avoids a dormant Modal on Android. */}
+      {!onPress && (
+        <InAppCamera
+          visible={cameraVisible}
+          onCapture={handleCapture}
+          onClose={() => setCameraVisible(false)}
+          quality={0.9}
+        />
+      )}
     </>
   );
 }

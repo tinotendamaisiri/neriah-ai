@@ -39,7 +39,7 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
     setCameraVisible(true);
   };
 
-  const handleCameraCapture = (_base64: string, uri: string) => {
+  const handleCameraCapture = (uri: string) => {
     setCameraVisible(false);
     setImages(prev => [...prev, uri]);
   };

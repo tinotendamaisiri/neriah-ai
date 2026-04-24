@@ -479,8 +479,16 @@ export default function AddHomeworkScreen() {
 
   // ── InAppCamera handler ────────────────────────────────────────────────────
 
-  const handleCameraCapture = (base64: string, uri: string) => {
-    // InAppCamera already ran enhanceImage internally — mark as enhanced
+  const handleCameraCapture = async (uri: string) => {
+    // InAppCamera already ran enhanceImage internally — mark as enhanced.
+    // Read base64 here since the backend upload flow expects it on the file
+    // object (InAppCamera no longer computes it).
+    let base64 = '';
+    try {
+      base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' as any });
+    } catch (e) {
+      console.warn('[AddHomework] failed to read base64 from camera URI:', e);
+    }
     if (cameraTarget === 'qp') {
       setQpFile({ uri, name: `homework_${Date.now()}.jpg`, mimeType: 'image/jpeg', label: 'Camera photo', base64, enhanced: true });
       setQpText('');

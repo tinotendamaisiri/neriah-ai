@@ -95,6 +95,11 @@ export default function MarkingScreen() {
       // that transition — resetting here would wipe selectedStudent before
       // the approval UI has a chance to render.
       if (route.params?.markResult || route.params?.markError) return;
+      // Also skip reset if a student is already selected — camera close
+      // re-focuses this screen but should not wipe the teacher's selection
+      // mid-marking session. Only the picker, advanceStudent, or a real
+      // class change should clear selectedStudent.
+      if (selectedStudent) return;
       setSelectedStudent(null);
       setSelectedAnswerKey(null);
       setResult(null);
@@ -102,7 +107,7 @@ export default function MarkingScreen() {
       setSkippedCount(0);
       setSessionDone(false);
       loadClassData(classId);
-    }, [classId, route.params?.markResult, route.params?.markError]),
+    }, [classId, route.params?.markResult, route.params?.markError, selectedStudent]),
   );
 
   const loadClassData = async (cid: string) => {
@@ -356,43 +361,6 @@ export default function MarkingScreen() {
 
   const showResult = !!result;
 
-  // Header: shared between the capture view and the result view. Done button
-  // is gated on `sessionHasProgress` so it doesn't appear on a cold load.
-  // "Switch student" is offered while a result is on-screen so the teacher
-  // can jump to any student in the class, not just the queue-next one.
-  // When neither button applies, render nothing so the content sits flush
-  // under the navigation header's border (no empty 48 px bar + extra line).
-  const renderHeader = () => {
-    if (!showResult && !sessionHasProgress) return null;
-    return (
-    <View style={styles.markHeader}>
-      {showResult ? (
-        <TouchableOpacity
-          style={styles.headerLinkBtn}
-          onPress={() => { setValidationError(''); setStudentPickerVisible(true); }}
-          accessibilityLabel="Switch student"
-        >
-          <Ionicons name="swap-horizontal" size={16} color={COLORS.teal500} />
-          <Text style={styles.headerLinkText}>Switch student</Text>
-        </TouchableOpacity>
-      ) : (
-        <View />
-      )}
-      {sessionHasProgress ? (
-        <TouchableOpacity
-          style={styles.headerDoneBtn}
-          onPress={handleExitSession}
-          accessibilityLabel="Done marking"
-        >
-          <Text style={styles.headerDoneText}>Done</Text>
-        </TouchableOpacity>
-      ) : (
-        <View />
-      )}
-    </View>
-    );
-  };
-
   const handleBackPress = () => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -415,9 +383,30 @@ export default function MarkingScreen() {
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <Text style={styles.topBarTitle} numberOfLines={1}>Mark Books</Text>
-        <View style={styles.topBarSpacer} />
+        {showResult ? (
+          <TouchableOpacity
+            onPress={() => { setValidationError(''); setStudentPickerVisible(true); }}
+            style={styles.topBarAction}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Switch student"
+            accessibilityRole="button"
+          >
+            <Text style={styles.switchStudent}>⇄ Switch student</Text>
+          </TouchableOpacity>
+        ) : sessionHasProgress ? (
+          <TouchableOpacity
+            onPress={handleExitSession}
+            style={styles.topBarAction}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Done marking"
+            accessibilityRole="button"
+          >
+            <Text style={styles.headerDoneText}>Done</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.topBarSpacer} />
+        )}
       </View>
-      {renderHeader()}
 
       {showResult ? (
         <MarkResultComponent
@@ -676,25 +665,16 @@ const styles = StyleSheet.create({
   },
   nextButtonText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 },
 
-  // ── Marking-flow header (Switch student / Done) ──────────────────────────
-  markHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
-    minHeight: 48,
+  // ── Top-bar right-slot actions (Switch student / Done) ───────────────────
+  // Replaces the old markHeader row that used to sit below the topBar; both
+  // actions now live in the topBar's right slot.
+  topBarAction: {
+    minWidth: 40,
+    paddingHorizontal: 8,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
-  headerLinkBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: 6, paddingHorizontal: 8,
-  },
-  headerLinkText: { fontSize: 14, fontWeight: '600', color: COLORS.teal500 },
-  headerDoneBtn: {
-    paddingVertical: 6, paddingHorizontal: 12,
-    borderRadius: 8, backgroundColor: COLORS.teal50,
-  },
+  switchStudent: { fontSize: 14, fontWeight: '600', color: COLORS.teal500 },
   headerDoneText: { fontSize: 14, fontWeight: '700', color: COLORS.teal500 },
 
   // ── Completion overlay ────────────────────────────────────────────────────

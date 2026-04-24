@@ -6,6 +6,8 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   Class,
   ClassJoinInfo,
@@ -446,6 +448,63 @@ export const submitTeacherScan = async (payload: {
   if (!payload.pages.length || payload.pages.length > 5) {
     throw new Error(`Invalid page count: ${payload.pages.length} (must be 1..5)`);
   }
+  // Android: RN's JS-level multipart file upload (via axios) hangs on some
+  // Samsung builds. Use expo-file-system's native uploadAsync instead, which
+  // goes through the OS's HTTP stack and bypasses the RN bridge. One-file
+  // limit per call, so multi-page isn't supported on Android via this path
+  // yet — guard early with a clear error rather than silently dropping
+  // pages 1-N.
+  if (Platform.OS === 'android') {
+    if (payload.pages.length > 1) {
+      throw new Error(
+        `Multi-page submissions not yet supported on Android (${payload.pages.length} pages). ` +
+        `FileSystem.uploadAsync is single-file only; iOS still handles 1-5 pages normally.`,
+      );
+    }
+    const token = await SecureStore.getItemAsync(JWT_STORAGE_KEY);
+    if (!token) throw new Error('Not authenticated');
+    const uploadResult = await FileSystem.uploadAsync(
+      `${BASE_URL}/mark`,
+      payload.pages[0].uri,
+      {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'page_0',
+        mimeType: 'image/jpeg',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        parameters: {
+          teacher_id: payload.teacherId,
+          student_id: payload.studentId,
+          class_id: payload.classId,
+          answer_key_id: payload.answerKeyId,
+          education_level: payload.educationLevel,
+          source: 'app',
+          page_count: String(payload.pages.length),
+          ...(payload.replace ? { replace: 'true' } : {}),
+        },
+      },
+    );
+    if (uploadResult.status === 200) {
+      return JSON.parse(uploadResult.body) as MarkResult;
+    }
+    // Non-200 — mirror the axios interceptor's error shape so downstream
+    // error-handling code (duplicate-submission dialog, quality-rejected
+    // Alert, etc.) reads the same fields.
+    let body: any = {};
+    try {
+      body = JSON.parse(uploadResult.body);
+    } catch {
+      /* non-JSON error body; keep empty */
+    }
+    const err: any = new Error(body.error || `Upload failed: HTTP ${uploadResult.status}`);
+    err.status = uploadResult.status;
+    err.error_code = body.error_code;
+    err.extra = body.extra;
+    throw err;
+  }
+
   const formData = new FormData();
   formData.append('teacher_id', payload.teacherId);
   formData.append('student_id', payload.studentId);

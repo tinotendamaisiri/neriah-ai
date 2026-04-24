@@ -21,3 +21,6 @@ node_modules/
 # AI model files (downloaded at runtime, not bundled)
 *.task
 app/mobile/assets/models/
+
+# EAS build artifacts pulled down for local install (not committed)
+app/mobile/build-*.apk

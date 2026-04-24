@@ -198,12 +198,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
+  // Skip button: same full-width geometry as the primary Set PIN button so
+  // it reads as an equivalent choice (not a tucked-away link). Kept outlined
+  // rather than teal-filled so it's still visually secondary — teal means
+  // "primary affirmative action" everywhere else in the app.
   skipLink: {
-    padding: 8,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.gray200,
+    padding: 16,
+    width: '100%',
+    alignItems: 'center',
+    marginTop: 12,
   },
   skipText: {
-    fontSize: 14,
     color: COLORS.textLight,
-    textDecorationLine: 'underline',
+    fontWeight: '600',
+    fontSize: 16,
   },
 });

@@ -84,7 +84,7 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
     setRetakeIndex(index);
   };
 
-  const handleRetakeCapture = async (_base64: string, uri: string) => {
+  const handleRetakeCapture = async (uri: string) => {
     const index = retakeIndex;
     setRetakeIndex(null);
     if (index === null) return;

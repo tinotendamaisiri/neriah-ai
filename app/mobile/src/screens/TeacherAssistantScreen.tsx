@@ -25,7 +25,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -804,9 +804,14 @@ export default function TeacherAssistantScreen() {
       {/* In-app camera */}
       <InAppCamera
         visible={showInAppCamera}
-        onCapture={(base64, uri) => {
-          setAttachment({ data: base64, type: 'image', name: 'Photo', uri });
+        onCapture={async (uri) => {
           setShowInAppCamera(false);
+          try {
+            const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' as any });
+            setAttachment({ data: base64, type: 'image', name: 'Photo', uri });
+          } catch (e) {
+            console.warn('[TeacherAssistant] failed to read base64 from camera URI:', e);
+          }
         }}
         onClose={() => setShowInAppCamera(false)}
       />

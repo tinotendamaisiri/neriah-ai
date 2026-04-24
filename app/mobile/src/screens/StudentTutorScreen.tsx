@@ -35,7 +35,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -403,9 +403,14 @@ export default function StudentTutorScreen() {
     }
   }, []);
 
-  const handleCapture = useCallback((base64: string, uri: string) => {
+  const handleCapture = useCallback(async (uri: string) => {
     setShowCamera(false);
-    setAttachment({ data: base64, type: 'image', name: `photo_${Date.now()}.jpg`, uri });
+    try {
+      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' as any });
+      setAttachment({ data: base64, type: 'image', name: `photo_${Date.now()}.jpg`, uri });
+    } catch (e) {
+      console.warn('[StudentTutor] failed to read base64 from camera URI:', e);
+    }
   }, []);
 
   // ── Render message ──────────────────────────────────────────────────────────

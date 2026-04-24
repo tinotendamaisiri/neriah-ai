@@ -162,7 +162,7 @@ export default function ClassSetupScreen() {
     setCameraVisible(true);
   }, []);
 
-  const handleCameraCapture = useCallback(async (_base64: string, uri: string) => {
+  const handleCameraCapture = useCallback(async (uri: string) => {
     setCameraVisible(false);
     setExtracting(true);
     try {

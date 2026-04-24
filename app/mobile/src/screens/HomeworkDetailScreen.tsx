@@ -177,7 +177,7 @@ export default function HomeworkDetailScreen() {
     });
   };
 
-  const handleCameraCapture = (base64: string, uri: string) => {
+  const handleCameraCapture = (uri: string) => {
     setCameraVisible(false);
     if (cameraResolve) {
       cameraResolve({ uri, name: `photo_${Date.now()}.jpg`, mimeType: 'image/jpeg', isImage: true });
