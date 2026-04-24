@@ -5,21 +5,18 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "prebuildCommand": "npx patch-package"
+      "distribution": "internal"
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "prebuildCommand": "npx patch-package"
+      }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
-      },
-      "prebuildCommand": "npx patch-package"
+      }
     }
   },
   "submit": {
