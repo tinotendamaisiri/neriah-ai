@@ -178,18 +178,35 @@ def mark():
     # Read every page up-front so we can enforce size limits before any
     # Vertex calls or GCS uploads happen.
     pages_bytes: list[bytes] = []
+    import base64 as _base64
     for i in range(page_count):
         field = f"page_{i}"
         file_obj = request.files.get(field)
-        if file_obj is None:
-            err = ImageQualityRejectedError(f"Missing page field: {field}")
-            err.user_message = (
-                f"The app said you submitted {page_count} page(s) but page "
-                f"{i + 1} was missing. Please retake and try again."
-            )
-            err.extra = {"missing_field": field, "page_count": page_count}
-            raise err
-        page_bytes = file_obj.read()
+        if file_obj is not None:
+            page_bytes = file_obj.read()
+        else:
+            # Android fallback: mobile clients that can't reliably multipart-
+            # upload a file URI (a known issue on some Samsung builds) send
+            # the image as a base64 form field instead. Keeps the endpoint
+            # contract unified — still a multipart POST, just a text part.
+            b64_data = request.form.get(f"{field}_base64", "")
+            if not b64_data:
+                err = ImageQualityRejectedError(f"Missing page field: {field}")
+                err.user_message = (
+                    f"The app said you submitted {page_count} page(s) but page "
+                    f"{i + 1} was missing. Please retake and try again."
+                )
+                err.extra = {"missing_field": field, "page_count": page_count}
+                raise err
+            try:
+                page_bytes = _base64.b64decode(b64_data, validate=False)
+            except Exception:
+                err = ImageQualityRejectedError(f"Invalid base64 for {field}")
+                err.user_message = (
+                    f"Page {i + 1} could not be decoded. Please retake and try again."
+                )
+                err.extra = {"bad_field": f"{field}_base64", "page_count": page_count}
+                raise err
         if len(page_bytes) > _MAX_IMAGE_BYTES:
             raise ImageTooLargeError(
                 f"page_{i} is {len(page_bytes)} bytes (max {_MAX_IMAGE_BYTES})"
@@ -299,15 +316,79 @@ def mark():
     )
     _latency_ms = int((time.time() - _t0) * 1000)
 
+    # ── Dedupe + clamp against the answer key ────────────────────────────────
+    # Two anti-abuse rules applied here, regardless of what Gemma emitted:
+    #   1. Each question_number is counted at most once, even if the same
+    #      answer appears on multiple pages (e.g. student photographs two
+    #      copies of the same page). When Gemma returns several verdicts for
+    #      the same question, we keep the one with the highest awarded_marks
+    #      (benefit-of-the-doubt: grade the student's best attempt).
+    #   2. Per-question awarded_marks is clamped to the answer key's
+    #      question marks, and the total score is clamped to the answer
+    #      key's total_marks. A hallucinating model can never inflate the
+    #      score above what the teacher set.
+    # Answer key questions may use "number" or "question_number" for the id.
+    max_per_q: dict[int, float] = {}
+    for q in answer_key.get("questions", []):
+        qn_raw = q.get("question_number") if q.get("question_number") is not None else q.get("number")
+        try:
+            qn = int(qn_raw) if qn_raw is not None else None
+        except (TypeError, ValueError):
+            qn = None
+        if qn is not None:
+            try:
+                max_per_q[qn] = float(q.get("marks", 0) or 0)
+            except (TypeError, ValueError):
+                max_per_q[qn] = 0.0
+    total_max = float(answer_key.get("total_marks") or sum(max_per_q.values()) or 1)
+
+    deduped: dict[int, dict] = {}
+    for v in raw_verdicts:
+        if not isinstance(v, dict):
+            continue
+        qn_raw = v.get("question_number")
+        try:
+            qn = int(qn_raw) if qn_raw is not None else None
+        except (TypeError, ValueError):
+            qn = None
+        if qn is None or qn not in max_per_q:
+            # Drop verdicts for questions the teacher didn't set — Gemma
+            # occasionally hallucinates extras, and we don't want them
+            # contributing to the score or cluttering the annotator.
+            continue
+        try:
+            awarded = float(v.get("awarded_marks", 0) or 0)
+        except (TypeError, ValueError):
+            awarded = 0.0
+        prev = deduped.get(qn)
+        if prev is None:
+            deduped[qn] = v
+            continue
+        try:
+            prev_awarded = float(prev.get("awarded_marks", 0) or 0)
+        except (TypeError, ValueError):
+            prev_awarded = 0.0
+        if awarded > prev_awarded:
+            deduped[qn] = v
+
+    # Clamp each kept verdict, then sort by question_number for stable output.
+    for qn, v in deduped.items():
+        cap = max_per_q[qn]
+        v["max_marks"] = cap
+        try:
+            a = float(v.get("awarded_marks", 0) or 0)
+        except (TypeError, ValueError):
+            a = 0.0
+        v["awarded_marks"] = max(0.0, min(a, cap))
+
+    raw_verdicts = sorted(deduped.values(), key=lambda v: int(v.get("question_number", 0)))
+
     # ── Output guardrails: validate grading JSON ──────────────────────────────
-    _max_marks = float(answer_key.get("total_marks") or sum(
-        q.get("marks", 0) for q in answer_key.get("questions", [])
-    ) or 1)
     _raw_json = json.dumps(raw_verdicts) if isinstance(raw_verdicts, list) else str(raw_verdicts)
     _total_awarded = sum(v.get("awarded_marks", 0) for v in raw_verdicts if isinstance(v, dict))
     _verdict_json = json.dumps({"score": _total_awarded})
     valid_out, _out_err = validate_output(
-        _verdict_json, role="grading", context={"max_marks": _max_marks}
+        _verdict_json, role="grading", context={"max_marks": total_max}
     )
     if not valid_out:
         log_ai_interaction(
@@ -317,8 +398,11 @@ def mark():
         return jsonify({"error": "Grading response failed validation. Please retry."}), 422
 
     verdicts = [GradingVerdict(**v) for v in raw_verdicts if isinstance(v, dict)]
-    score = sum(v.awarded_marks for v in verdicts)
-    max_score = sum(v.max_marks for v in verdicts) or float(answer_key.get("total_marks", 1))
+    # Score is the sum of clamped per-question awarded marks, then hard-capped
+    # at the answer key's total_marks (belt-and-braces: even if the per-
+    # question cap math somehow drifts, the total will never exceed the key).
+    score = min(sum(v.awarded_marks for v in verdicts), total_max)
+    max_score = total_max
     percentage = round(score / max_score * 100, 1) if max_score else 0.0
 
     # page_index is stashed on the raw_verdicts dicts but not on the Pydantic

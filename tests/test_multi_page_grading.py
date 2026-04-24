@@ -236,6 +236,49 @@ class TestMarkMultiPageEndpoint:
         assert body["page_count"] == 5
         assert len(body["page_urls"]) == 5
 
+    def test_mark_endpoint_accepts_base64_page(self, client, mark_mocks):
+        """Android clients can't reliably multipart-upload file URIs on some
+        Samsung builds, so they send pages as page_{i}_base64 text fields
+        instead. Endpoint must accept that shape identically."""
+        import base64 as _base64
+        from io import BytesIO
+        page_bytes = _tiny_jpeg_bytes()
+        page_b64 = _base64.b64encode(page_bytes).decode("ascii")
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=_fake_verdicts_from_gemma(1)):
+            resp = client.post(
+                "/api/mark",
+                data={
+                    "page_count": "1",
+                    "student_id": STUDENT_ID,
+                    "answer_key_id": ANSWER_KEY_ID,
+                    "page_0_base64": page_b64,  # text field, no file part
+                },
+                content_type="multipart/form-data",
+                headers=_teacher_headers(),
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["page_count"] == 1
+
+    def test_mark_endpoint_rejects_invalid_base64(self, client, mark_mocks):
+        """Garbled base64 in page_{i}_base64 should return 422 rather than
+        crash the handler."""
+        resp = client.post(
+            "/api/mark",
+            data={
+                "page_count": "1",
+                "student_id": STUDENT_ID,
+                "answer_key_id": ANSWER_KEY_ID,
+                "page_0_base64": "!!!not-valid-base64!!!",
+            },
+            content_type="multipart/form-data",
+            headers=_teacher_headers(),
+        )
+        # Malformed base64 is treated as a quality rejection; same error path
+        # as a missing page field.
+        assert resp.status_code == 422, resp.get_data(as_text=True)
+
     def test_mark_response_includes_student_id_and_name(self, client, mark_mocks):
         """Response body must include student_id + student_name so the mobile
         approval UI (MarkResultComponent) can render without depending on
@@ -317,6 +360,148 @@ class TestMarkDocSchema:
         mark_writes = [v for (c, _), v in mark_mocks.items() if c == "marks"]
         mark_doc = mark_writes[0]
         assert mark_doc["marked_image_url"] == mark_doc["annotated_urls"][0]
+
+
+# ─── Dedup + clamp anti-abuse rules ────────────────────────────────────────────
+
+
+class TestScoreClampAndDedupe:
+    """The /mark endpoint must:
+      1. Never return a score above the answer key's total_marks.
+      2. Deduplicate verdicts by question_number when Gemma emits the same
+         question on multiple pages (e.g. student photographs the same page
+         twice).
+      3. Drop verdicts for questions the teacher didn't set (hallucinations).
+    """
+
+    def test_duplicate_question_across_pages_counts_once(self, client, mark_mocks):
+        """Student captures the same page twice — Gemma returns Q1 on both
+        pages with a verdict each. Score must reflect Q1 + Q2 = 10, not
+        Q1 + Q1 + Q2 = 15."""
+        duplicated_q1 = [
+            # Same Q1 seen on page 0 — 5/5.
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            # Same Q1 seen on page 1 — also 5/5 (student copied page).
+            {"question_number": 1, "page_index": 1, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            # Q2 on page 1.
+            {"question_number": 2, "page_index": 1, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ]
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=duplicated_q1):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes()), ("page_1", _tiny_jpeg_bytes())],
+                {"page_count": "2", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] == 10
+        assert body["max_score"] == 10
+        assert body["percentage"] == 100.0
+        # Only two verdicts should survive — one per unique question_number.
+        assert len({v["question_number"] for v in body["verdicts"]}) == 2
+
+    def test_duplicate_question_keeps_highest_awarded(self, client, mark_mocks):
+        """When the same question is graded twice with different marks, keep
+        the higher one (benefit of the doubt — student's best attempt)."""
+        duplicated_q1_mixed = [
+            # First copy wrong, second copy right — student fixed it on page 2.
+            {"question_number": 1, "page_index": 0, "verdict": "incorrect",
+             "awarded_marks": 0, "max_marks": 5, "student_answer": "41", "expected_answer": "42"},
+            {"question_number": 1, "page_index": 1, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 1, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ]
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=duplicated_q1_mixed):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes()), ("page_1", _tiny_jpeg_bytes())],
+                {"page_count": "2", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        # Q1 kept the 5/5 verdict (higher), Q2 is 5/5 → total 10.
+        assert body["score"] == 10
+        q1 = next(v for v in body["verdicts"] if v["question_number"] == 1)
+        assert q1["awarded_marks"] == 5
+        assert q1["verdict"] == "correct"
+
+    def test_awarded_marks_clamped_to_question_cap(self, client, mark_mocks):
+        """Gemma hallucinates and awards 8/5 on Q1. The endpoint must clamp
+        to the answer key's 5 so the student can't exceed what the teacher
+        set."""
+        inflated = [
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 8, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ]
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=inflated):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes())],
+                {"page_count": "1", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] == 10  # 5 (clamped) + 5
+        q1 = next(v for v in body["verdicts"] if v["question_number"] == 1)
+        assert q1["awarded_marks"] == 5
+        assert q1["max_marks"] == 5
+
+    def test_total_score_never_exceeds_total_marks(self, client, mark_mocks):
+        """Even with multiple inflated per-question awards, the response
+        score must be clamped to the answer key's total_marks."""
+        inflated = [
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 100, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 100, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ]
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=inflated):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes())],
+                {"page_count": "1", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] <= 10
+        assert body["max_score"] == 10
+        assert body["percentage"] <= 100.0
+
+    def test_verdicts_for_unknown_questions_dropped(self, client, mark_mocks):
+        """Gemma hallucinates a Q3 that isn't in the answer key. It must be
+        filtered out of both the score and the verdicts array."""
+        with_extra = [
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+            # Hallucinated: the answer key only has Q1 + Q2.
+            {"question_number": 3, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "xx", "expected_answer": "xx"},
+        ]
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=with_extra):
+            resp = _post_mark(
+                client,
+                [("page_0", _tiny_jpeg_bytes())],
+                {"page_count": "1", "student_id": STUDENT_ID, "answer_key_id": ANSWER_KEY_ID},
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] == 10
+        qnums = {v["question_number"] for v in body["verdicts"]}
+        assert qnums == {1, 2}
+        assert 3 not in qnums
 
 
 # ─── Gemma multi-page call ────────────────────────────────────────────────────
@@ -447,3 +632,59 @@ class TestAnnotatePages:
 
         # Missing page_index defaults to 0 → Q1 on page 0, Q2 on page 1.
         assert calls == [[1], [2]]
+
+
+# ─── Annotator per-verdict positioning ────────────────────────────────────────
+
+
+class TestAnnotatorPositioning:
+    """Gemma now returns question_x / question_y per verdict so the symbol
+    lands near the actual question on the page. Missing/invalid values fall
+    back to evenly-spaced left margin."""
+
+    def test_annotator_uses_verdict_coordinates(self):
+        """Verdict with explicit question_x/question_y → symbol lands at
+        exactly (qx * width, qy * height)."""
+        from shared.annotator import _resolve_verdict_position
+        verdict = {
+            "question_number": 1,
+            "verdict": "correct",
+            "awarded_marks": 5, "max_marks": 5,
+            "question_x": 0.10, "question_y": 0.30,
+        }
+        cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
+        assert cx == 80   # 0.10 * 800
+        assert cy == 300  # 0.30 * 1000
+
+    def test_annotator_falls_back_when_no_coordinates(self):
+        """Verdict missing question_x/question_y → evenly-spaced fallback:
+        x = 0.05 * width, y = (index + 0.5) / total * height."""
+        from shared.annotator import _resolve_verdict_position
+        verdict = {
+            "question_number": 1,
+            "verdict": "correct",
+            "awarded_marks": 5, "max_marks": 5,
+        }
+        cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
+        assert cx == 40   # 0.05 * 800 (left margin default)
+        assert cy == 500  # (0 + 0.5) / 1 * 1000 (evenly-spaced single row)
+
+        # Second-of-two fallback position
+        cx2, cy2 = _resolve_verdict_position(verdict, index=1, total=2, width=800, height=1000)
+        assert cx2 == 40
+        assert cy2 == 750  # (1 + 0.5) / 2 * 1000
+
+    def test_annotator_clamps_out_of_range_coordinates(self):
+        """Any qx/qy outside [0.05, 0.95] is clamped, so the symbol never
+        bleeds off the page edge even if the model hallucinates."""
+        from shared.annotator import _resolve_verdict_position
+        verdict = {
+            "question_number": 1,
+            "verdict": "correct",
+            "awarded_marks": 5, "max_marks": 5,
+            "question_x": 1.5,      # > 0.95, clamps down
+            "question_y": -0.2,     # < 0.05, clamps up
+        }
+        cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
+        assert cx == 760  # 0.95 * 800
+        assert cy == 50   # 0.05 * 1000
