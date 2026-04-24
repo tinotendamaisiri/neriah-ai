@@ -1120,7 +1120,9 @@ Return ONE unified JSON array — one object per question, across ALL pages:
     "verdict": "correct" | "incorrect" | "partial",
     "awarded_marks": <number>,
     "max_marks": <number from answer key>,
-    "feedback": "<one constructive sentence, or null>"
+    "feedback": "<one constructive sentence, or null>",
+    "question_x": <float 0.0-1.0>,
+    "question_y": <float 0.0-1.0>
   }}
 ]
 
@@ -1132,6 +1134,12 @@ Rules:
   awarded_marks is 0, and page_index may be 0.
 - Partial credit only where the answer key marks allow fractional marks.
 - Never award more than max_marks for any question.
+- "question_x" and "question_y" locate where the question NUMBER LABEL
+  (e.g. "1.", "Q1", "1)") appears on its page, expressed as fractions of
+  image dimensions: x from left (0.0) to right (1.0), y from top (0.0) to
+  bottom (1.0). Typical margin labels sit around x=0.03-0.08. If you cannot
+  find the label on the page, estimate from the order of questions
+  (e.g. y = (index + 0.5) / total_questions_on_that_page).
 - Return raw JSON array only — no markdown fences, no commentary."""
 
     # Build multi-image chat-completions content: one text block, then one

@@ -1,20 +1,20 @@
 """
-Pillow annotation pipeline — draws ticks, crosses, and scores onto the original
-photo.
+Pillow annotation pipeline — draws per-question verdict symbols and a summary
+score bubble onto the original photo.
 
-Visual contract (updated 2026-04-21):
-  - Large verdict circles (80-120 px diameter, scaled to image size) so teachers
-    and students can read the mark at a glance on a phone screen.
-  - Thick glyph strokes (4-8 px) for the same reason.
-  - Positioned near the right margin of the page (roughly 50-80 px from the
-    edge) so the mark is visible without covering the student's handwriting.
-  - Score bubble at bottom-right, with ~2x the previous font size.
-  - Palette matches the mobile app:
-       correct  → green  #22C55E
-       partial  → amber  #F59E0B
-       incorrect → red   #EF4444
-    (Teal is intentionally NOT used for correctness — it's the brand colour
-     and would read as "approved" rather than "right answer".)
+Visual contract (updated 2026-04-23):
+  - Verdict mark is a plain Unicode symbol rendered large on the page (no
+    filled circle behind it any more — Gemma now returns per-question
+    coordinates, so the symbol lands near the actual question label rather
+    than parked in a right-margin column).
+       correct  → ✓ green   #22C55E
+       incorrect → ✗ red     #EF4444
+       partial  → ~ amber   #F59E0B
+  - Position comes from each verdict's `question_x` / `question_y` fields
+    (fractions of image dimensions, 0.0-1.0). Missing/invalid values fall
+    back to evenly-spaced left margin. All coords clamped to [0.05, 0.95]
+    so symbols never bleed off the page edge.
+  - Score bubble still lives bottom-right — unchanged.
 """
 
 from __future__ import annotations
@@ -35,11 +35,12 @@ _RED = (239, 68, 68)          # #EF4444 — incorrect
 _WHITE = (255, 255, 255)
 _BLACK = (0, 0, 0)
 
-# Verdict → (fill_colour, symbol)
+# Verdict → (colour, Unicode symbol). The symbol is drawn directly as text
+# (no circle background) at the coordinate Gemma returned.
 _VERDICT_STYLE: dict[str, tuple] = {
     "correct":   (_GREEN, "✓"),
     "incorrect": (_RED,   "✗"),
-    "partial":   (_AMBER, "−"),
+    "partial":   (_AMBER, "~"),
 }
 
 
@@ -50,48 +51,55 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         return ImageFont.load_default()
 
 
-def _circle_radius(image_height: int) -> int:
-    """Scale the verdict-circle radius to image size. Target diameter
-    80-120 px on a typical 3000-4000 px tall photo."""
-    r = int(image_height * 0.014)       # ~100 px diameter on a 3500 px image
-    return max(40, min(60, r))           # clamp to 80-120 px diameter
+def _resolve_verdict_position(
+    verdict: dict,
+    index: int,
+    total: int,
+    width: int,
+    height: int,
+) -> tuple[int, int]:
+    """Resolve (cx, cy) pixel coordinates for where a verdict symbol lands.
 
+    Prefers `question_x` / `question_y` from the verdict dict — both are
+    fractions of image dimensions (0.0-1.0). Missing, non-numeric, or
+    out-of-sensible-range values fall back to evenly-spaced left margin
+    (x = 0.05, y = (index + 0.5) / total).
 
-def _draw_glyph(draw: ImageDraw.ImageDraw, symbol: str, cx: int, cy: int, radius: int) -> None:
-    """Draw a thick tick/cross/dash inside an already-rendered circle.
-
-    Glyphs are drawn with lines rather than text because font glyphs look
-    thin and inconsistent at 100 px diameter across platforms.
+    Both coords are clamped to [0.05, 0.95] so symbols never bleed off the
+    page edge regardless of what the model returned.
     """
-    stroke = max(4, radius // 6)
-    arm = int(radius * 0.55)
+    n = max(total, 1)
 
-    if symbol == "✓":
-        p1 = (cx - arm,             cy + int(arm * 0.15))
-        p2 = (cx - int(arm * 0.2),  cy + int(arm * 0.75))
-        p3 = (cx + arm,             cy - int(arm * 0.8))
-        draw.line([p1, p2], fill=_WHITE, width=stroke)
-        draw.line([p2, p3], fill=_WHITE, width=stroke)
-    elif symbol == "✗":
-        draw.line([(cx - arm, cy - arm), (cx + arm, cy + arm)], fill=_WHITE, width=stroke)
-        draw.line([(cx + arm, cy - arm), (cx - arm, cy + arm)], fill=_WHITE, width=stroke)
-    else:
-        # Partial: horizontal dash.
-        draw.line([(cx - arm, cy), (cx + arm, cy)], fill=_WHITE, width=stroke)
+    qx_raw = verdict.get("question_x")
+    try:
+        qx = float(qx_raw) if qx_raw is not None else 0.05
+    except (TypeError, ValueError):
+        qx = 0.05
+
+    qy_raw = verdict.get("question_y")
+    try:
+        qy = float(qy_raw) if qy_raw is not None else (index + 0.5) / n
+    except (TypeError, ValueError):
+        qy = (index + 0.5) / n
+
+    qx = max(0.05, min(0.95, qx))
+    qy = max(0.05, min(0.95, qy))
+    return int(qx * width), int(qy * height)
 
 
 def annotate_image(
     image_bytes: bytes,
     verdicts: list[dict],
-    bounding_boxes: Optional[list[dict]] = None,
+    bounding_boxes: Optional[list[dict]] = None,  # retained for backward-compat; no longer consulted
 ) -> bytes:
     """
-    Opens the original JPEG with Pillow and draws a large, legible verdict
-    mark at the right margin of each question, plus a summary score bubble
-    at the bottom-right.
+    Opens the original JPEG with Pillow and draws a Unicode verdict symbol
+    at the coordinates Gemma returned for each question, plus a summary
+    score bubble at the bottom-right.
 
-    bounding_boxes: optional list from Document AI / OCR (word-level pixel coords).
-    When absent, marks are placed in an evenly-spaced right-hand column.
+    `bounding_boxes` is kept in the signature for backward compat with the
+    legacy OCR pipeline but is no longer read — positioning comes from each
+    verdict's `question_x` / `question_y` fields.
 
     Returns annotated JPEG bytes (never written to disk).
     """
@@ -100,23 +108,16 @@ def annotate_image(
         draw = ImageDraw.Draw(image, "RGBA")
         width, height = image.size
 
-        radius = _circle_radius(height)
-        # Right margin: centre sits 50-80 px from the page edge depending
-        # on image size.
-        margin_x = width - max(70, radius + 20)
-
-        font_qlabel = _load_font(max(20, int(radius * 0.55)))
-        # Score bubble fonts — roughly 2× the pre-2026-04 sizes.
+        # Symbol: ~4% of image height, floor of 40 px so it stays legible
+        # even on small preview renders.
+        symbol_size = max(40, int(height * 0.04))
+        font_symbol = _load_font(symbol_size)
+        font_qlabel = _load_font(max(20, int(symbol_size * 0.5)))
+        # Score bubble fonts — unchanged from the previous version.
         font_score_big = _load_font(max(54, int(height * 0.035)))
         font_score_sub = _load_font(max(28, int(height * 0.018)))
 
-        # ── Per-verdict marks at right margin ────────────────────────────────
-        row_step = radius * 2 + 24
-        first_y = radius + 24
-        available_h = max(0, height - first_y - radius - 40)
-        n = max(len(verdicts), 1)
-        if n * row_step > available_h:
-            row_step = max(radius * 2 + 6, available_h // n)
+        total = max(len(verdicts), 1)
 
         for i, verdict in enumerate(verdicts):
             v_type = verdict.get("verdict", "incorrect")
@@ -125,32 +126,39 @@ def annotate_image(
             max_m = float(verdict.get("max_marks", 1))
             q_num = verdict.get("question_number", i + 1)
 
-            # Prefer Document AI y-coord so the mark sits next to the student's
-            # actual answer. X is always right-margin so we never paint over
-            # handwriting.
-            cy: int
-            if bounding_boxes:
-                bb_y = _bounding_box_y(bounding_boxes, q_num, height)
-                cy = bb_y if bb_y is not None else first_y + i * row_step
-            else:
-                cy = first_y + i * row_step
-            cx = margin_x
+            cx, cy = _resolve_verdict_position(verdict, i, total, width, height)
 
-            # Circle
-            draw.ellipse(
-                [(cx - radius, cy - radius), (cx + radius, cy + radius)],
-                fill=(*colour, 235),
-                outline=_WHITE,
-                width=max(2, radius // 16),
+            # Centre the glyph at (cx, cy). textbbox returns (l, t, r, b) in
+            # font units; using it for centring handles glyphs with vertical
+            # offset (✓ sits higher than ✗ in some fonts).
+            try:
+                bbox = draw.textbbox((0, 0), symbol, font=font_symbol)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+            except Exception:
+                tw = th = symbol_size
+
+            draw.text(
+                (cx - tw // 2, cy - th // 2),
+                symbol,
+                font=font_symbol,
+                fill=colour,
             )
-            _draw_glyph(draw, symbol, cx, cy, radius)
 
-            # "Q1: 3/5" label below each circle
+            # "Q1: 3/5" label below the symbol
             label = f"Q{q_num}: {awarded:.0f}/{max_m:.0f}"
-            lw = draw.textlength(label, font=font_qlabel) if hasattr(draw, "textlength") else len(label) * 12
-            draw.text((cx - lw / 2, cy + radius + 4), label, font=font_qlabel, fill=colour)
+            try:
+                lw = draw.textlength(label, font=font_qlabel)
+            except AttributeError:
+                lw = len(label) * 12
+            draw.text(
+                (cx - lw / 2, cy + th // 2 + 4),
+                label,
+                font=font_qlabel,
+                fill=colour,
+            )
 
-        # ── Summary score bubble (bottom-right, ~2× previous size) ───────────
+        # ── Summary score bubble (bottom-right) ─────────────────────────────
         total_awarded = sum(float(v.get("awarded_marks", 0)) for v in verdicts)
         total_max = sum(float(v.get("max_marks", 1)) for v in verdicts)
         pct = (total_awarded / total_max * 100) if total_max else 0
@@ -200,28 +208,12 @@ def annotate_image(
         return image_bytes
 
 
-def _bounding_box_y(
-    bounding_boxes: list[dict],
-    question_number: int,
-    img_height: int,
-) -> Optional[int]:
-    """Return just the y-coord of the matching question marker. We always use
-    the right margin for x so verdict circles don't land on top of the
-    student's handwriting."""
-    for page in bounding_boxes:
-        for word in page.get("words", []):
-            if word.get("text", "").lower().strip("().:") == str(question_number):
-                y = word.get("y", 0) * img_height
-                return int(y)
-    return None
-
-
 def annotate_pages(pages: list[bytes], verdicts: list[dict]) -> list[bytes]:
     """Annotate each page with only the verdicts that apply to it.
 
     Multi-page sibling of annotate_image. Filters `verdicts` by `page_index`
-    and delegates to annotate_image per page, so the existing tick/cross/
-    score-bubble rendering is reused unchanged.
+    and delegates to annotate_image per page, so the same per-question
+    symbol + score-bubble rendering is reused unchanged.
 
     `page_index` defaults to 0 when missing on a verdict — that way a
     single-page submission works even if Gemma forgot to emit the field.
