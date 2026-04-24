@@ -43,10 +43,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { ScreenContainer } from '../components/ScreenContainer';
 import InAppCamera from '../components/InAppCamera';
 import { submitTeacherScan } from '../services/api';
-import { queueMarkingScan, resolveRoute } from '../services/router';
+import {
+  queueMarkingScan,
+  resolveRoute,
+  gradeScanOffline,
+  type OnDeviceUserContext,
+} from '../services/router';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
-import { CapturedPage, RootStackParamList } from '../types';
+import { CapturedPage, RootStackParamList, MarkResult as MarkResultType } from '../types';
 
 const { width: SW } = Dimensions.get('window');
 const MAX_PAGES = 5;
@@ -141,7 +146,10 @@ export default function PageReviewScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<Route>();
   const { user } = useAuth();
-  const { initialPages, studentId, answerKeyId, educationLevel, classId, className, replace } = route.params;
+  const {
+    initialPages, studentId, answerKeyId, educationLevel, classId, className, replace,
+    answerKey, studentName,
+  } = route.params;
 
   const [pages, setPages] = useState<CapturedPage[]>(initialPages);
   const [selectedId, setSelectedId] = useState<string>(initialPages[0]?.id ?? '');
@@ -310,17 +318,84 @@ export default function PageReviewScreen() {
       const route = await resolveRoute('grading');
 
       // ── On-device route ──────────────────────────────────────────────────
-      // Native MediaPipe LLM module re-linking + on-device OCR + local
-      // annotator land in Phase B/C/D. Until then, queue with a message
-      // that matches what the app is *capable* of, not the cloud wording.
+      // Run OCR on each page + grade via the loaded LiteRT E4B model. The
+      // resulting verdicts are the same shape the cloud would return, so
+      // the existing MarkResult UI handles everything downstream.
+      //
+      // If the answer key wasn't threaded through the route params (older
+      // call sites) we can't grade locally — fall back to queue-for-replay
+      // with the cloud-sync message.
       if (route === 'on-device') {
-        await queueForReplay();
-        Alert.alert(
-          "You're offline — grading on your device",
-          "Neriah AI is ready to grade this locally. We'll process it in the background and sync as soon as you reconnect.",
-          [{ text: 'OK', onPress: () => navigation.goBack() }],
-        );
-        return;
+        if (!answerKey) {
+          await queueForReplay();
+          Alert.alert(
+            "You're offline",
+            "We'll grade this submission when you're back online.",
+            [{ text: 'OK', onPress: () => navigation.goBack() }],
+          );
+          return;
+        }
+        try {
+          const userCtx: OnDeviceUserContext = {
+            education_level: educationLevel,
+            subject: answerKey.subject,
+          };
+          const graded = await gradeScanOffline({
+            pageUris: pages.map(p => p.uri),
+            answerKey: {
+              questions: answerKey.questions ?? [],
+              total_marks: answerKey.total_marks,
+            },
+            educationLevel,
+            userContext: userCtx,
+          });
+
+          // Build a MarkResult that mirrors the cloud response shape.
+          // marked_image_url / annotated_urls use the original page URIs
+          // as a fallback until Phase D renders local annotations.
+          const pageUris = pages.map(p => p.uri);
+          const offlineResult: MarkResultType = {
+            mark_id: `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+            student_id: studentId,
+            student_name: studentName ?? 'Student',
+            score: graded.score,
+            max_score: graded.max_score,
+            percentage: graded.percentage,
+            marked_image_url: pageUris[0] ?? '',
+            page_urls: pageUris,
+            annotated_urls: pageUris,
+            page_count: pageUris.length,
+            verdicts: graded.verdicts.map(v => ({
+              question_number: v.question_number,
+              student_answer: v.student_answer,
+              expected_answer: v.expected_answer,
+              verdict: v.verdict,
+              awarded_marks: v.awarded_marks,
+              max_marks: v.max_marks,
+              feedback: v.feedback,
+            })),
+          };
+
+          navigation.navigate('Mark', {
+            class_id: classId,
+            class_name: className,
+            education_level: educationLevel,
+            answer_key_id: answerKeyId,
+            markResult: offlineResult,
+          });
+          return;
+        } catch (err: any) {
+          // On-device path failed (OCR error, model not loaded, JSON parse,
+          // etc). Don't lose the scan — drop into queue-for-replay.
+          console.warn('[PageReview] offline grading failed:', err?.message ?? err);
+          await queueForReplay();
+          Alert.alert(
+            "Couldn't grade offline",
+            "We saved your submission and will grade it as soon as you reconnect.",
+            [{ text: 'OK', onPress: () => navigation.goBack() }],
+          );
+          return;
+        }
       }
 
       // ── Unavailable route ────────────────────────────────────────────────

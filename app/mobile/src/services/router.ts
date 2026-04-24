@@ -19,11 +19,13 @@ import {
   buildTutorPrompt,
   ModelVariant,
   type OnDeviceUserContext,
+  type OcrPageInput,
 } from './litert';
 
 export type { OnDeviceUserContext };
 import { enqueue } from './offlineQueue';
 import type { QueuedScan } from './offlineQueue';
+import { recognizePages } from './ocr';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,26 +125,184 @@ export async function queueMarkingScan(
 // ── On-device execution helpers ───────────────────────────────────────────────
 
 /**
- * Run grading via the on-device E4B LiteRT model (text-only — no image OCR).
+ * Run grading via the on-device E4B LiteRT model against already-OCR'd pages.
+ *
+ * Callers that have image URIs (not pre-extracted text) should use
+ * gradeScanOffline() instead — it runs OCR first, then calls this.
  *
  * User context is serialized and prepended to the prompt because LiteRT has
  * no access to Firestore or the vector DB. The caller is responsible for
  * passing whatever context is available (country, curriculum, subject, level).
  *
  * @param questions      Answer key questions (number, correct_answer, max_marks).
- * @param studentAnswers Raw text of the student's answers.
+ * @param pages          Per-page OCR text; order + page_index must match the
+ *                       original page order so annotations land on the right page.
  * @param educationLevel e.g. "Form 3" — calibrates grading intensity.
  * @param userContext    Profile-derived context (country, curriculum, weak areas…).
  * @returns              Raw JSON string from the model (parse with JSON.parse).
  */
 export async function gradeOnDevice(
   questions: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>,
-  studentAnswers: string,
+  pages: OcrPageInput[],
   educationLevel: string,
   userContext?: OnDeviceUserContext,
 ): Promise<string> {
-  const prompt = buildGradingPrompt(questions, studentAnswers, educationLevel, userContext);
+  const prompt = buildGradingPrompt(questions, pages, educationLevel, userContext);
   return generateResponse(prompt);
+}
+
+// ── Offline verdict shape ────────────────────────────────────────────────────
+
+/**
+ * Parsed verdict from the on-device grading call, matching
+ * shared/models.py:GradingVerdict + the optional page_index we tag in the
+ * prompt for the annotator.
+ */
+export interface OfflineVerdict {
+  question_number: number;
+  page_index: number;
+  student_answer: string;
+  expected_answer: string;
+  verdict: 'correct' | 'incorrect' | 'partial';
+  awarded_marks: number;
+  max_marks: number;
+  feedback?: string;
+}
+
+/**
+ * Apply the same dedup + clamp rules the backend enforces (see
+ * functions/mark.py) so an offline-graded mark can never produce a score
+ * above the answer key's total — even if the local model hallucinates.
+ */
+export function dedupeAndClampVerdicts(
+  raw: Array<Record<string, unknown>>,
+  answerKey: { questions: Array<{ number?: number; question_number?: number; marks?: number }>; total_marks?: number },
+): { verdicts: OfflineVerdict[]; score: number; max_score: number; percentage: number } {
+  // Build per-question max from the answer key.
+  const maxPerQ: Record<number, number> = {};
+  for (const q of answerKey.questions ?? []) {
+    const qn = q.question_number ?? q.number;
+    if (qn != null) maxPerQ[Number(qn)] = Number(q.marks ?? 0) || 0;
+  }
+  const totalMax = Number(answerKey.total_marks) || Object.values(maxPerQ).reduce((s, n) => s + n, 0) || 1;
+
+  // Dedupe by question_number, keeping highest awarded_marks.
+  const deduped: Record<number, OfflineVerdict> = {};
+  for (const v of raw) {
+    if (!v || typeof v !== 'object') continue;
+    const qnRaw = (v as Record<string, unknown>).question_number;
+    const qn = qnRaw == null ? null : Number(qnRaw);
+    if (qn == null || Number.isNaN(qn) || !(qn in maxPerQ)) continue;
+    const awarded = Number((v as Record<string, unknown>).awarded_marks ?? 0) || 0;
+    const prev = deduped[qn];
+    if (prev == null || awarded > prev.awarded_marks) {
+      deduped[qn] = {
+        question_number: qn,
+        page_index: Number((v as Record<string, unknown>).page_index ?? 0) || 0,
+        student_answer: String((v as Record<string, unknown>).student_answer ?? ''),
+        expected_answer: String((v as Record<string, unknown>).expected_answer ?? ''),
+        verdict: (['correct', 'incorrect', 'partial'] as const).includes(
+          (v as Record<string, unknown>).verdict as 'correct' | 'incorrect' | 'partial',
+        )
+          ? ((v as Record<string, unknown>).verdict as OfflineVerdict['verdict'])
+          : 'incorrect',
+        awarded_marks: awarded,
+        max_marks: maxPerQ[qn],
+        feedback:
+          typeof (v as Record<string, unknown>).feedback === 'string'
+            ? ((v as Record<string, unknown>).feedback as string)
+            : undefined,
+      };
+    }
+  }
+
+  // Clamp per question and sort.
+  const verdicts = Object.values(deduped)
+    .map((v) => ({
+      ...v,
+      awarded_marks: Math.max(0, Math.min(v.awarded_marks, v.max_marks)),
+    }))
+    .sort((a, b) => a.question_number - b.question_number);
+
+  const score = Math.min(
+    verdicts.reduce((s, v) => s + v.awarded_marks, 0),
+    totalMax,
+  );
+  const percentage = totalMax > 0 ? Math.round((score / totalMax) * 1000) / 10 : 0;
+
+  return { verdicts, score, max_score: totalMax, percentage };
+}
+
+/**
+ * Full offline grading pipeline: OCR each page, send the text to the local
+ * E4B model, parse + sanitise the JSON response, apply dedup + clamp rules.
+ *
+ * Returns the same shape the cloud would (minus image URLs — those are
+ * filled in by the local annotator in Phase D).
+ *
+ * Throws:
+ *   - OcrUnavailableError   if MLKit isn't linked
+ *   - Error('No model loaded') if the E4B model hasn't been loaded yet
+ *   - Error on JSON parse failure
+ */
+export async function gradeScanOffline(args: {
+  pageUris: string[];
+  answerKey: {
+    questions: Array<{ number?: number; question_number?: number; correct_answer?: string; marks?: number; marking_notes?: string }>;
+    total_marks?: number;
+  };
+  educationLevel: string;
+  userContext?: OnDeviceUserContext;
+}): Promise<{
+  verdicts: OfflineVerdict[];
+  score: number;
+  max_score: number;
+  percentage: number;
+  page_texts: string[];
+}> {
+  // 1. OCR every page in order.
+  const ocrPages = await recognizePages(args.pageUris);
+
+  // 2. Shape answer key for the prompt.
+  const promptQuestions = (args.answerKey.questions ?? []).map((q) => ({
+    number: Number(q.question_number ?? q.number ?? 0),
+    correct_answer: String(q.correct_answer ?? ''),
+    max_marks: Number(q.marks ?? 0) || 0,
+    marking_notes: q.marking_notes,
+  }));
+
+  // 3. Local LLM grading call.
+  const raw = await gradeOnDevice(
+    promptQuestions,
+    ocrPages.map((p) => ({ page_index: p.page_index, text: p.text })),
+    args.educationLevel,
+    args.userContext,
+  );
+
+  // 4. Parse JSON — Gemma sometimes wraps the array in ```json fences.
+  const stripped = raw
+    .trim()
+    .replace(/^```(?:json)?/i, '')
+    .replace(/```$/, '')
+    .trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripped);
+  } catch (err) {
+    throw new Error(`Local model returned non-JSON output: ${(err as Error).message}`);
+  }
+  const rawVerdicts = Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
+
+  // 5. Dedupe + clamp (same rules as functions/mark.py).
+  const { verdicts, score, max_score, percentage } = dedupeAndClampVerdicts(rawVerdicts, args.answerKey);
+
+  return {
+    verdicts,
+    score,
+    max_score,
+    percentage,
+    page_texts: ocrPages.map((p) => p.text),
+  };
 }
 
 /**

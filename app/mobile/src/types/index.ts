@@ -466,6 +466,12 @@ export type RootStackParamList = {
     classId: string;
     className: string;
     replace?: boolean;
+    /** Optional — passed through from MarkingScreen so the offline grading
+     *  path has the full answer key and student name without a network
+     *  fetch. Absent on legacy call sites; when absent, offline grading
+     *  falls back to the queue-for-replay path with a friendly message. */
+    answerKey?: AnswerKey;
+    studentName?: string;
   };
   TeacherClassAnalytics: { class_id: string; class_name: string };
   TeacherStudentAnalytics: { student_id: string; student_name: string; class_id: string; class_name: string };

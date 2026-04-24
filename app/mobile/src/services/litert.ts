@@ -235,16 +235,31 @@ export function buildTutorPrompt(
 }
 
 /**
+ * Per-page OCR text fed to the grading prompt. page_index is the 0-indexed
+ * position of the page in the submission; the model echoes it back on each
+ * verdict so the annotator knows which page to draw on.
+ */
+export interface OcrPageInput {
+  page_index: number;
+  text: string;
+}
+
+/**
  * Build the grading prompt for the E4B teacher model.
- * Asks Gemma to grade student answers against the answer key and return JSON.
- * User context is serialized and prepended because LiteRT cannot call Firestore.
+ * Asks Gemma to grade OCR'd student text against the answer key and return
+ * a JSON array of verdicts that mirrors the server-side GradingVerdict shape.
  *
- * TODO: Add multimodal image support when mediapipe-llm adds image input API.
- *       Currently text-only — requires student text answers to be available.
+ * Multi-page: the student's work is passed as a list of pages (each tagged
+ * with page_index). The model is asked to return page_index on each verdict
+ * so the offline annotator can draw ticks/crosses on the correct page.
+ *
+ * User context is serialized and prepended because LiteRT cannot call
+ * Firestore — anything the cloud's RAG layer would have injected has to be
+ * passed in directly.
  */
 export function buildGradingPrompt(
   questions: Array<{ number: number; correct_answer: string; max_marks: number; marking_notes?: string }>,
-  studentAnswers: string,
+  pages: OcrPageInput[],
   educationLevel?: string,
   userContext?: OnDeviceUserContext,
 ): string {
@@ -259,12 +274,29 @@ export function buildGradingPrompt(
     ? `Curriculum: ${userContext.curriculum}. Apply this curriculum's marking conventions.`
     : '';
 
+  const pagesBlock = pages
+    .map(p => `--- PAGE ${p.page_index} ---\n${p.text || '(no text extracted)'}`)
+    .join('\n\n');
+
+  // The verdict JSON schema below mirrors shared/models.py:GradingVerdict so
+  // the offline path can hand a MarkResult straight to the existing UI.
+  // fields kept optional in parse (question_x / question_y) can be absent —
+  // the annotator falls back to evenly-spaced positions.
+  const schema =
+    `[{"question_number":<int>,"page_index":<int>,` +
+    `"student_answer":"<verbatim from OCR>",` +
+    `"expected_answer":"<from answer key>",` +
+    `"verdict":"correct"|"incorrect"|"partial",` +
+    `"awarded_marks":<number>,"max_marks":<number>,` +
+    `"feedback":"<one short sentence or empty>"}]`;
+
   return [
     `${contextBlock}You are an expert ${level} teacher grading student work. Grade strictly but fairly.`,
     curriculumNote,
     `Answer key:\n${keyText}`,
-    `\nStudent answers:\n${studentAnswers}`,
-    `\nReturn ONLY valid JSON — no explanation, no markdown:`,
-    `{"score": number, "max_score": number, "verdicts": [{"question_number": number, "verdict": "correct"|"incorrect"|"partial", "awarded_marks": number, "max_marks": number}], "overall_feedback": "string"}`,
+    `\nStudent pages (OCR-extracted text, may contain errors):\n${pagesBlock}`,
+    `\nFor each question in the answer key, locate the student's answer in the pages above. Tag each verdict with the page_index it was found on. Set page_index to 0 if you cannot determine it.`,
+    `\nReturn ONLY a JSON array — no markdown fences, no commentary — matching this shape exactly:`,
+    schema,
   ].filter(Boolean).join('\n');
 }

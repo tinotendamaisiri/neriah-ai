@@ -166,6 +166,11 @@ export default function MarkingScreen() {
       classId,
       className,
       replace: false,
+      // Pass the full answer key + student name through so PageReview's
+      // offline-grading branch has everything it needs without a network
+      // fetch. Cloud-grading branch ignores these fields.
+      answerKey: selectedAnswerKey,
+      studentName: `${selectedStudent.first_name ?? ''} ${selectedStudent.surname ?? ''}`.trim(),
     });
   };
 

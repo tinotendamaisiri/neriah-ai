@@ -18,6 +18,7 @@
     "@react-navigation/native": "^6.1.17",
     "@react-navigation/native-stack": "^6.9.26",
     "@react-navigation/stack": "^6.3.29",
+    "@react-native-ml-kit/text-recognition": "^1.5.2",
     "@subhajit-gorai/react-native-mediapipe-llm": "^1.0.3",
     "axios": "^1.7.2",
     "expo": "~54.0.0",
