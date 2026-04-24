@@ -9,36 +9,33 @@
 //   await loadModel('e2b');
 //   const reply = await generateResponse(prompt);
 
-// LiteRT disabled for Expo Go — NativeModules.MediapipeLlm requires a custom
-// dev client build. All on-device inference paths fall back to cloud (Vertex AI).
-// Re-enable by restoring these imports and rebuilding with `npx expo run:ios`.
-import { Platform } from 'react-native';
+// LiteRT on-device inference via @subhajit-gorai/react-native-mediapipe-llm.
+// This module is native — requires a dev-client build (`npx expo run:ios` /
+// `npx expo run:android`) and will be null when running inside Expo Go.
+// The router falls back to 'unavailable' in that case.
+import { NativeModules, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 
 // ── Native module interface ───────────────────────────────────────────────────
-// (commented out — NativeModules not available in Expo Go)
-//
-// interface MediapipeLlmModule {
-//   initialize(opts: {
-//     modelPath: string;
-//     maxTokens?: number;
-//     temperature?: number;
-//     topK?: number;
-//     topP?: number;
-//   }): Promise<boolean>;
-//   generateResponse(prompt: string): Promise<string>;
-//   generateResponseWithCallback(
-//     prompt: string,
-//     onToken: (partial: string, done: boolean) => void,
-//     onError: (error: string) => void,
-//   ): void;
-// }
-//
-// const MediapipeLlm: MediapipeLlmModule | null =
-//   (NativeModules.MediapipeLlm as MediapipeLlmModule) ?? null;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const MediapipeLlm: any = null; // LiteRT stub — always null in Expo Go
+interface MediapipeLlmModule {
+  initialize(opts: {
+    modelPath: string;
+    maxTokens?: number;
+    temperature?: number;
+    topK?: number;
+    topP?: number;
+  }): Promise<boolean>;
+  generateResponse(prompt: string): Promise<string>;
+  generateResponseWithCallback(
+    prompt: string,
+    onToken: (partial: string, done: boolean) => void,
+    onError: (error: string) => void,
+  ): void;
+}
+
+const MediapipeLlm: MediapipeLlmModule | null =
+  (NativeModules.MediapipeLlm as MediapipeLlmModule | undefined) ?? null;
 
 // ── Model file paths ──────────────────────────────────────────────────────────
 //
