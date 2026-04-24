@@ -19,7 +19,6 @@ import {
   View,
   Text,
   Image,
-  ScrollView,
   TouchableOpacity,
   StyleSheet,
   FlatList,
@@ -27,9 +26,18 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  Animated,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
+import {
+  PinchGestureHandler,
+  TapGestureHandler,
+  State as GestureState,
+  PinchGestureHandlerGestureEvent,
+  PinchGestureHandlerStateChangeEvent,
+  TapGestureHandlerStateChangeEvent,
+} from 'react-native-gesture-handler';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenContainer } from '../components/ScreenContainer';
@@ -50,6 +58,85 @@ function _uid(): string {
   return `pg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ── ZoomableImage ────────────────────────────────────────────────────────────
+// Pinch-to-zoom image tile used inside the horizontal paginated pager.
+//
+// Implementation: react-native-gesture-handler's PinchGestureHandler (for
+// scale) + TapGestureHandler with numberOfTaps=2 (for reset). Animated
+// values from 'react-native' drive a transform — no reanimated needed.
+//
+// Reports zoom state via onZoomChange so the parent can disable outer
+// paging while the image is zoomed (so horizontal drags pan inside the
+// zoomed image instead of flipping pages — though pan itself isn't wired
+// yet; this is "zoom to inspect, pinch out to un-zoom", no drag-pan).
+interface ZoomableImageProps {
+  uri: string;
+  zoomed: boolean;
+  onZoomChange: (zoomed: boolean) => void;
+}
+
+const ZoomableImage = React.memo(function ZoomableImage({
+  uri,
+  onZoomChange,
+}: ZoomableImageProps) {
+  const baseScale = useRef(new Animated.Value(1)).current;
+  const pinchScale = useRef(new Animated.Value(1)).current;
+  const composedScale = useRef(Animated.multiply(baseScale, pinchScale)).current;
+  const lastScale = useRef(1);
+
+  const onPinchEvent = useRef(
+    Animated.event<PinchGestureHandlerGestureEvent['nativeEvent']>(
+      [{ nativeEvent: { scale: pinchScale } }],
+      { useNativeDriver: true },
+    ),
+  ).current;
+
+  const onPinchStateChange = useCallback(
+    (e: PinchGestureHandlerStateChangeEvent) => {
+      if (e.nativeEvent.oldState === GestureState.ACTIVE) {
+        const next = Math.max(1, Math.min(5, lastScale.current * e.nativeEvent.scale));
+        lastScale.current = next;
+        baseScale.setValue(next);
+        pinchScale.setValue(1);
+        onZoomChange(next > 1.01);
+      }
+    },
+    [baseScale, pinchScale, onZoomChange],
+  );
+
+  const resetZoom = useCallback(() => {
+    lastScale.current = 1;
+    Animated.parallel([
+      Animated.spring(baseScale, { toValue: 1, useNativeDriver: true, bounciness: 0 }),
+      Animated.spring(pinchScale, { toValue: 1, useNativeDriver: true, bounciness: 0 }),
+    ]).start();
+    onZoomChange(false);
+  }, [baseScale, pinchScale, onZoomChange]);
+
+  const onDoubleTap = useCallback(
+    (e: TapGestureHandlerStateChangeEvent) => {
+      if (e.nativeEvent.state === GestureState.ACTIVE) {
+        resetZoom();
+      }
+    },
+    [resetZoom],
+  );
+
+  return (
+    <PinchGestureHandler onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
+      <Animated.View style={styles.pagerItem}>
+        <TapGestureHandler numberOfTaps={2} onHandlerStateChange={onDoubleTap}>
+          <Animated.Image
+            source={{ uri }}
+            style={[styles.fullImage, { transform: [{ scale: composedScale }] }]}
+            resizeMode="contain"
+          />
+        </TapGestureHandler>
+      </Animated.View>
+    </PinchGestureHandler>
+  );
+});
+
 export default function PageReviewScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<Route>();
@@ -65,6 +152,12 @@ export default function PageReviewScreen() {
   // pager in sync when the teacher taps a thumbnail, adds a page, or deletes
   // the currently-visible page.
   const mainListRef = useRef<FlatList<CapturedPage>>(null);
+
+  // When any page image is pinch-zoomed, the outer pager must stop claiming
+  // horizontal drags — otherwise the zoomed page would slide out from under
+  // the fingers while pinching or inspecting. Re-enabled once the image is
+  // un-zoomed (via pinch-out or double-tap).
+  const [zoomedPageId, setZoomedPageId] = useState<string | null>(null);
 
   const selectedPage = pages.find(p => p.id === selectedId) ?? pages[0];
 
@@ -350,20 +443,19 @@ export default function PageReviewScreen() {
                 });
               });
             }}
+            scrollEnabled={zoomedPageId === null}
             renderItem={({ item }) => (
-              <ScrollView
-                style={styles.imageScroll}
-                contentContainerStyle={styles.imageScrollContent}
-                maximumZoomScale={5}
-                minimumZoomScale={1}
-                bouncesZoom
-                showsHorizontalScrollIndicator={false}
-                showsVerticalScrollIndicator={false}
-                centerContent
-                pinchGestureEnabled
-              >
-                <Image source={{ uri: item.uri }} style={styles.fullImage} resizeMode="contain" />
-              </ScrollView>
+              <ZoomableImage
+                uri={item.uri}
+                zoomed={zoomedPageId === item.id}
+                onZoomChange={(z) =>
+                  setZoomedPageId((prev) => {
+                    if (z) return item.id;
+                    // Only clear if we're the page that was holding the zoom lock.
+                    return prev === item.id ? null : prev;
+                  })
+                }
+              />
             )}
           />
         ) : (
@@ -441,8 +533,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     overflow: 'hidden',
   },
-  imageScroll: { width: SW, height: IMAGE_HEIGHT },
-  imageScrollContent: { flexGrow: 1, justifyContent: 'center' },
+  pagerItem: {
+    width: SW,
+    height: IMAGE_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fullImage: { width: SW, height: IMAGE_HEIGHT },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   emptyText: { color: COLORS.gray500, fontSize: 13 },
