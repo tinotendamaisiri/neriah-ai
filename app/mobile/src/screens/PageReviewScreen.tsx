@@ -374,6 +374,8 @@ export default function PageReviewScreen() {
               max_marks: v.max_marks,
               feedback: v.feedback,
             })),
+            locally_graded: true,
+            verdict_page_indices: graded.verdicts.map(v => v.page_index),
           };
 
           navigation.navigate('Mark', {

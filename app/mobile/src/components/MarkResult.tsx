@@ -28,6 +28,7 @@ import { MarkResult, Student, GradingVerdict, GradingVerdictEnum } from '../type
 import { COLORS } from '../constants/colors';
 import { updateMark, deleteMark } from '../services/api';
 import EditVerdictModal from './EditVerdictModal';
+import LocalAnnotationOverlay from './LocalAnnotationOverlay';
 
 interface MarkResultProps {
   result: MarkResult;
@@ -101,6 +102,34 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
   }, [result.annotated_urls, result.marked_image_url]);
   const isMultiPage = pages.length > 1;
 
+  // ── Local-annotation overlay (offline-graded marks) ───────────────────────
+  // When the mark came from on-device grading, annotated_urls point at the
+  // original unannotated pages. We draw verdict symbols + a score bubble
+  // on top in pure RN (no native dep, no Skia) so the teacher sees the
+  // grades without waiting to reconnect. The cloud replay will eventually
+  // produce a baked annotation; next time the teacher opens the student's
+  // mark, they'll see that one instead.
+  const isLocallyGraded = !!result.locally_graded;
+  // Map verdicts onto their original page_index (from the offline grading
+  // pipeline). Falls back to 0 — single-page-friendly default.
+  const pageIndexByVerdict = useMemo<number[]>(() => {
+    if (Array.isArray(result.verdict_page_indices)) return result.verdict_page_indices;
+    return verdicts.map(() => 0);
+  }, [result.verdict_page_indices, verdicts]);
+  // Verdicts grouped by page, preserving order. The summary bubble lives
+  // only on the last page so it doesn't duplicate across a multi-page
+  // submission.
+  const verdictsByPage = useMemo<GradingVerdict[][]>(() => {
+    if (!isLocallyGraded) return [];
+    const grouped: GradingVerdict[][] = pages.map(() => []);
+    verdicts.forEach((v, i) => {
+      const pi = pageIndexByVerdict[i] ?? 0;
+      const bucket = Math.max(0, Math.min(pages.length - 1, pi));
+      grouped[bucket].push(v);
+    });
+    return grouped;
+  }, [isLocallyGraded, verdicts, pageIndexByVerdict, pages.length]);
+
   // ── Zoom ───────────────────────────────────────────────────────────────────
   // Single-page: iOS ScrollView's native pinch + zoom buttons control the
   // same ref (scrollResponderZoomTo) — unchanged from before.
@@ -169,6 +198,19 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
   const handleApprove = async () => {
     if (!result.mark_id) {
       Alert.alert('Cannot approve', 'This mark has no server ID. Try submitting again.');
+      return;
+    }
+    // Local marks have no server-side mark_id — the Approve / PUT /marks
+    // flow would 404. The scan has already been queued for replay on
+    // reconnect (see PageReviewScreen.handleSubmit), so the right move
+    // here is to tell the teacher what will happen and treat the tap
+    // like Skip (advance the queue, don't bump the approved counter).
+    if (isLocallyGraded || result.mark_id.startsWith('local_')) {
+      Alert.alert(
+        'Grade saved offline',
+        "We'll re-grade this in the cloud and drop it in your review list the next time you're online. Moving on to the next student.",
+        [{ text: 'OK', onPress: () => onDone({ approved: false }) }],
+      );
       return;
     }
     setApproving(true);
@@ -267,13 +309,27 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
               keyExtractor={(uri, i) => `${i}-${uri}`}
               onMomentumScrollEnd={handlePagerMomentumEnd}
               getItemLayout={(_, index) => ({ length: PAGE_W, offset: PAGE_W * index, index })}
-              renderItem={({ item }) => (
+              renderItem={({ item, index }) => (
                 <View style={styles.pagerItem}>
                   <Image
                     source={{ uri: item }}
                     style={[styles.annotatedImage, { transform: [{ scale: zoomLevel }] }]}
                     resizeMode="contain"
                   />
+                  {isLocallyGraded && (
+                    <LocalAnnotationOverlay
+                      verdicts={verdictsByPage[index] ?? []}
+                      width={PAGE_W}
+                      height={IMAGE_H}
+                      // Score bubble only on the last page so multi-page
+                      // submissions don't duplicate it.
+                      summary={
+                        index === pages.length - 1
+                          ? { score: totalAwarded, max_score: totalMax, percentage }
+                          : undefined
+                      }
+                    />
+                  )}
                 </View>
               )}
             />
@@ -299,6 +355,14 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
                 resizeMode="contain"
               />
             </ScrollView>
+          )}
+          {isLocallyGraded && !isMultiPage && (
+            <LocalAnnotationOverlay
+              verdicts={verdicts}
+              width={SW - 32}
+              height={IMAGE_H}
+              summary={{ score: totalAwarded, max_score: totalMax, percentage }}
+            />
           )}
 
           {/* Zoom controls, top-right over the image */}

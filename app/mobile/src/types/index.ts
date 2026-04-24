@@ -155,6 +155,16 @@ export interface MarkResult {
   annotated_urls?: string[];
   page_count?: number;
   verdicts: GradingVerdict[];
+  /** True when this MarkResult came from on-device grading — annotated_urls
+   *  point at the original (unannotated) pages, so the UI must draw its own
+   *  verdict overlay on top of each image. Also disables the Approve button
+   *  because the server doesn't know about local-only marks. Undefined /
+   *  false for cloud-graded results. */
+  locally_graded?: boolean;
+  /** Per-verdict page index — present on offline grades so the overlay
+   *  knows which page to draw each symbol on. Optional for cloud grades
+   *  (the annotator has already baked them into the image). */
+  verdict_page_indices?: number[];
 }
 
 /** Response from POST /api/auth/login or /api/auth/register */
