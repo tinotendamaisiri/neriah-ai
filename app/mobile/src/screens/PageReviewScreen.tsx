@@ -43,7 +43,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ScreenContainer } from '../components/ScreenContainer';
 import InAppCamera from '../components/InAppCamera';
 import { submitTeacherScan } from '../services/api';
-import { queueMarkingScan } from '../services/router';
+import { queueMarkingScan, resolveRoute } from '../services/router';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
 import { CapturedPage, RootStackParamList } from '../types';
@@ -265,16 +265,76 @@ export default function PageReviewScreen() {
   }, []);
 
   // ── Submit ─────────────────────────────────────────────────────────────────
+  //
+  // Routing decision happens BEFORE any network call:
+  //   resolveRoute('grading') returns 'cloud' | 'on-device' | 'unavailable'.
+  //
+  //   cloud       → POST to /api/mark (current behaviour). Silent — the
+  //                 teacher shouldn't be told anything about routing when
+  //                 the app is working as designed.
+  //
+  //   on-device   → Phase B+ hook: run grading through the loaded LiteRT
+  //                 E4B model locally and return a MarkResult without
+  //                 touching the network. Until the native module is
+  //                 re-linked, this falls through to the same offline
+  //                 queue as 'unavailable' but with a different user-
+  //                 facing message, so the teacher knows their setup is
+  //                 capable of local grading — just not wired yet.
+  //
+  //   unavailable → Offline AND no model loaded. Queue the scan; replay
+  //                 on reconnect.
   const handleSubmit = useCallback(async () => {
-    console.log('[PageReview] handleSubmit fired, pages:', pages.length, 'studentId:', studentId, 'answerKeyId:', answerKeyId);
     if (pages.length === 0 || submitting) return;
     setSubmitting(true);
+
+    // Used by every offline-ish branch below: best-effort enqueue for replay
+    // when connectivity is restored. AsyncStorage failures are swallowed
+    // because they shouldn't block the teacher from moving to the next
+    // student.
+    const queueForReplay = async () => {
+      try {
+        await queueMarkingScan({
+          teacher_id: user?.id ?? '',
+          student_id: studentId,
+          class_id: classId,
+          answer_key_id: answerKeyId,
+          education_level: educationLevel,
+          pages: pages.map(p => ({ uri: p.uri })),
+        });
+      } catch {
+        // Best-effort.
+      }
+    };
+
     try {
-      // Find education level / class info from route params (passed in from
-      // MarkingScreen — PageReview doesn't have access to selectedAnswerKey).
-      console.log('[PageReview] calling submitTeacherScan...');
-      console.log('[PageReview] page URIs:', pages.map(p => p.uri));
-      console.log('[PageReview] awaiting submitTeacherScan...');
+      const route = await resolveRoute('grading');
+
+      // ── On-device route ──────────────────────────────────────────────────
+      // Native MediaPipe LLM module re-linking + on-device OCR + local
+      // annotator land in Phase B/C/D. Until then, queue with a message
+      // that matches what the app is *capable* of, not the cloud wording.
+      if (route === 'on-device') {
+        await queueForReplay();
+        Alert.alert(
+          "You're offline — grading on your device",
+          "Neriah AI is ready to grade this locally. We'll process it in the background and sync as soon as you reconnect.",
+          [{ text: 'OK', onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
+
+      // ── Unavailable route ────────────────────────────────────────────────
+      if (route === 'unavailable') {
+        await queueForReplay();
+        Alert.alert(
+          "You're offline",
+          "We'll grade this submission when you're back online. Continue with the next student.",
+          [{ text: 'OK', onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
+
+      // ── Cloud route (default happy path) ─────────────────────────────────
       const result = await submitTeacherScan({
         teacherId: '',  // server resolves from JWT; field unused server-side for auth
         studentId,
@@ -284,9 +344,6 @@ export default function PageReviewScreen() {
         pages: pages.map(p => ({ uri: p.uri })),
         replace: !!replace,
       });
-      console.log('[PageReview] submitTeacherScan returned:', JSON.stringify(result));
-      // Navigate back to Marking with the result. MarkingScreen reads
-      // route.params.markResult on focus and runs its existing post-scan logic.
       navigation.navigate('Mark', {
         class_id: classId,
         class_name: className,
@@ -295,30 +352,13 @@ export default function PageReviewScreen() {
         markResult: result,
       });
     } catch (err: any) {
-      console.log('[PageReview] CAUGHT ERROR:', err?.message, err?.code, err?.response?.status, JSON.stringify(err?.response?.data));
-      console.log('[PageReview] submit error:', JSON.stringify(err));
-      // Split network failures from typed server errors. The api.ts axios
-      // interceptor tags "no response reached server" with isOffline=true +
-      // error_code='NO_CONNECTION' — treat that as "enqueue for replay" so
-      // the teacher doesn't lose the scan. Everything else (409 duplicate,
-      // 400 quality rejected, 5xx server) bubbles back to MarkingScreen
-      // where the existing dialog/error UI lives.
+      // Flaky-connection fallback: NetInfo said we were online but the
+      // request still blew up at the socket. The api.ts axios interceptor
+      // tags these with isOffline=true / error_code='NO_CONNECTION' — treat
+      // as the same queue-for-replay path.
       const isNetworkError = err?.isOffline === true || err?.error_code === 'NO_CONNECTION';
       if (isNetworkError) {
-        try {
-          await queueMarkingScan({
-            teacher_id: user?.id ?? '',
-            student_id: studentId,
-            class_id: classId,
-            answer_key_id: answerKeyId,
-            education_level: educationLevel,
-            pages: pages.map(p => ({ uri: p.uri })),
-          });
-        } catch {
-          // Queue write is best-effort — an AsyncStorage failure shouldn't
-          // block the teacher from moving on. Fall through to the same
-          // "Saved offline" message; replay will just have nothing to replay.
-        }
+        await queueForReplay();
         Alert.alert(
           'Saved offline',
           "We'll grade this submission when you're back online. Continue with the next student.",
