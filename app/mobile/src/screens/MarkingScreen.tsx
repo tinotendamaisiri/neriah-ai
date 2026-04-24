@@ -36,6 +36,7 @@ import { useModel } from '../context/ModelContext';
 import { Student, AnswerKey, MarkResult, RootStackParamList, EducationLevel, CapturedPage } from '../types';
 import ScanButton from '../components/ScanButton';
 import MarkResultComponent from '../components/MarkResult';
+import OfflineGradingStatus from '../components/OfflineGradingStatus';
 import { COLORS } from '../constants/colors';
 
 type RouteParams = RootStackParamList['Mark'];
@@ -412,6 +413,11 @@ export default function MarkingScreen() {
           <View style={styles.topBarSpacer} />
         )}
       </View>
+
+      {/* Offline grading readiness pill — silent on cloud-only devices,
+          visible when the teacher's setup has something to say about
+          local inference (downloading, not yet downloaded, loading, ready). */}
+      <OfflineGradingStatus />
 
       {showResult ? (
         <MarkResultComponent

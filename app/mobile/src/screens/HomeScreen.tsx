@@ -24,6 +24,7 @@ import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useModel } from '../context/ModelContext';
 import { ScreenContainer } from '../components/ScreenContainer';
+import OfflineGradingStatus from '../components/OfflineGradingStatus';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
 
@@ -331,6 +332,11 @@ export default function HomeScreen() {
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
+
+      {/* Offline grading readiness pill — silent on cloud-only devices,
+          visible whenever the teacher's setup has something to say about
+          local inference (downloading, not yet downloaded, loading, ready). */}
+      <OfflineGradingStatus />
 
       {/* Wi-Fi nudge banner */}
       {showWifiNudge && (

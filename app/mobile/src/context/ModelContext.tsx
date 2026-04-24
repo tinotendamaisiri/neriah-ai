@@ -52,6 +52,11 @@ import {
   MODEL_SIZES_BYTES,
   type ModelVariant,
 } from '../services/modelManager';
+import {
+  isNativeModuleAvailable,
+  loadModel,
+  getLiteRTState,
+} from '../services/litert';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -182,6 +187,34 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
   // stale-closure issues.
   const variantRef = useRef<ModelVariant | null>(null);
   useEffect(() => { variantRef.current = variant; }, [variant]);
+
+  // ── Auto-load the downloaded model into memory ────────────────────────────
+  // Without this, the router's 'on-device' branch never fires even when the
+  // 2.96 GB .task file is on disk — router.ts checks getLiteRTState()
+  // .loadedModel, not disk presence. Fires once whenever (modelReady,
+  // variant) both flip true AND the native module is linked. A no-op in
+  // Expo Go (MediapipeLlm == null) so nothing breaks there.
+  const loadingRef = useRef(false);
+  useEffect(() => {
+    if (!modelReady || !variant) return;
+    if (!isNativeModuleAvailable()) return;
+    if (getLiteRTState().loadedModel === variant) return;
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    loadModel(variant)
+      .catch((err: unknown) => {
+        // Don't block anything — the router falls back to 'unavailable' if
+        // the load failed, and the teacher still gets the offline-queue
+        // path. We log and move on.
+        console.warn(
+          '[ModelContext] loadModel failed:',
+          err instanceof Error ? err.message : String(err),
+        );
+      })
+      .finally(() => {
+        loadingRef.current = false;
+      });
+  }, [modelReady, variant]);
 
   // ── Wi-Fi nudge refs ───────────────────────────────────────────────────────
   // These are refs (not state) because they govern show-guards, not render output.
