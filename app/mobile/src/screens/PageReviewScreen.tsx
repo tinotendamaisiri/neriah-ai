@@ -14,7 +14,7 @@
 // On 409 DUPLICATE_SUBMISSION, navigates back with markError so MarkingScreen's
 // "Replace existing?" dialog fires.
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,8 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,7 +61,37 @@ export default function PageReviewScreen() {
   const [showCamera, setShowCamera] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Ref for the horizontal paginated main-image FlatList. Used to keep the
+  // pager in sync when the teacher taps a thumbnail, adds a page, or deletes
+  // the currently-visible page.
+  const mainListRef = useRef<FlatList<CapturedPage>>(null);
+
   const selectedPage = pages.find(p => p.id === selectedId) ?? pages[0];
+
+  // ── Main pager ↔ thumbnail sync ────────────────────────────────────────────
+  // Swipe in the main pager → update selectedId so the thumbnail strip
+  // highlights the visible page.
+  const handleMainMomentumEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const idx = Math.round(e.nativeEvent.contentOffset.x / SW);
+      const page = pages[idx];
+      if (page && page.id !== selectedId) {
+        setSelectedId(page.id);
+      }
+    },
+    [pages, selectedId],
+  );
+
+  // Tap a thumbnail → scroll the main pager to that index (and update selection).
+  const selectPage = useCallback(
+    (pageId: string) => {
+      const idx = pages.findIndex(p => p.id === pageId);
+      if (idx < 0) return;
+      setSelectedId(pageId);
+      mainListRef.current?.scrollToIndex({ index: idx, animated: true });
+    },
+    [pages],
+  );
 
   // ── Camera handlers ────────────────────────────────────────────────────────
   const openCamera = useCallback(() => {
@@ -67,7 +99,7 @@ export default function PageReviewScreen() {
     setShowCamera(true);
   }, [pages.length]);
 
-  const handleCameraCapture = useCallback((_b64: string, uri: string) => {
+  const handleCameraCapture = useCallback((uri: string) => {
     // InAppCamera already cropped to the overlay frame and ran enhanceImage.
     // Width/height aren't surfaced by InAppCamera's onCapture signature today;
     // they're only used by the zoom view, where the Image component infers
@@ -80,7 +112,15 @@ export default function PageReviewScreen() {
       height: 0,
       capturedAt: Date.now(),
     };
-    setPages(prev => [...prev, newPage]);
+    setPages(prev => {
+      const next = [...prev, newPage];
+      // Scroll the main pager to the newly-appended page after the FlatList
+      // has re-rendered with the new item.
+      requestAnimationFrame(() => {
+        mainListRef.current?.scrollToIndex({ index: next.length - 1, animated: true });
+      });
+      return next;
+    });
     setSelectedId(newPage.id);
   }, []);
 
@@ -100,9 +140,16 @@ export default function PageReviewScreen() {
             setPages(prev => {
               const next = prev.filter(p => p.id !== pageId);
               // If we deleted the currently-selected page, fall back to the
-              // first remaining one (or empty selection if none left).
+              // first remaining one (or empty selection if none left), and
+              // snap the pager to that page.
               if (selectedId === pageId) {
-                setSelectedId(next[0]?.id ?? '');
+                const fallback = next[0];
+                setSelectedId(fallback?.id ?? '');
+                if (fallback) {
+                  requestAnimationFrame(() => {
+                    mainListRef.current?.scrollToIndex({ index: 0, animated: false });
+                  });
+                }
               }
               return next;
             });
@@ -214,7 +261,7 @@ export default function PageReviewScreen() {
     const isSelected = item.id === selectedId;
     return (
       <View style={[styles.thumbWrap, isSelected && styles.thumbWrapSelected]}>
-        <TouchableOpacity onPress={() => setSelectedId(item.id)} activeOpacity={0.8}>
+        <TouchableOpacity onPress={() => selectPage(item.id)} activeOpacity={0.8}>
           <Image source={{ uri: item.uri }} style={styles.thumb} />
           <View style={styles.pageBadge}>
             <Text style={styles.pageBadgeText}>{index + 1}</Text>
@@ -279,22 +326,46 @@ export default function PageReviewScreen() {
         <Text style={styles.counter}>{pages.length} / {MAX_PAGES}</Text>
       </View>
 
-      {/* Selected page — full-width with pinch-to-zoom (iOS) */}
+      {/* Main pager — swipe left/right between pages, pinch-to-zoom on each. */}
       <View style={styles.imageCard}>
-        {selectedPage ? (
-          <ScrollView
-            style={styles.imageScroll}
-            contentContainerStyle={styles.imageScrollContent}
-            maximumZoomScale={5}
-            minimumZoomScale={1}
-            bouncesZoom
+        {pages.length > 0 ? (
+          <FlatList
+            ref={mainListRef}
+            data={pages}
+            horizontal
+            pagingEnabled
             showsHorizontalScrollIndicator={false}
-            showsVerticalScrollIndicator={false}
-            centerContent
-            pinchGestureEnabled
-          >
-            <Image source={{ uri: selectedPage.uri }} style={styles.fullImage} resizeMode="contain" />
-          </ScrollView>
+            keyExtractor={p => p.id}
+            onMomentumScrollEnd={handleMainMomentumEnd}
+            getItemLayout={(_, index) => ({ length: SW, offset: SW * index, index })}
+            initialScrollIndex={Math.max(0, pages.findIndex(p => p.id === selectedId))}
+            // If an item's scroll target is outside the render window, fall
+            // back to offset scrolling. Avoids the "scrollToIndex out of
+            // range" warning when pages are added.
+            onScrollToIndexFailed={({ index }) => {
+              requestAnimationFrame(() => {
+                mainListRef.current?.scrollToOffset({
+                  offset: index * SW,
+                  animated: false,
+                });
+              });
+            }}
+            renderItem={({ item }) => (
+              <ScrollView
+                style={styles.imageScroll}
+                contentContainerStyle={styles.imageScrollContent}
+                maximumZoomScale={5}
+                minimumZoomScale={1}
+                bouncesZoom
+                showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+                centerContent
+                pinchGestureEnabled
+              >
+                <Image source={{ uri: item.uri }} style={styles.fullImage} resizeMode="contain" />
+              </ScrollView>
+            )}
+          />
         ) : (
           <View style={styles.emptyState}>
             <Ionicons name="document-outline" size={48} color={COLORS.gray200} />
@@ -370,7 +441,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     overflow: 'hidden',
   },
-  imageScroll: { flex: 1 },
+  imageScroll: { width: SW, height: IMAGE_HEIGHT },
   imageScrollContent: { flexGrow: 1, justifyContent: 'center' },
   fullImage: { width: SW, height: IMAGE_HEIGHT },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
