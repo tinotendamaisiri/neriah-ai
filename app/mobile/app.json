@@ -31,6 +31,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "package": "app.neriah.mobile",
       "versionCode": 6,
+      "minSdkVersion": 26,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES"
@@ -58,7 +59,8 @@
       "expo-mail-composer",
       "expo-secure-store",
       "expo-localization",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "react-native-litert-lm"
     ]
   }
 }
