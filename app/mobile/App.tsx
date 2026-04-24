@@ -32,6 +32,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -525,15 +526,21 @@ function AppShell() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <LanguageProvider>
-        <AuthProvider>
-          <ModelProvider>
-            <AppShell />
-          </ModelProvider>
-        </AuthProvider>
-      </LanguageProvider>
-      <StatusBar style="auto" />
-    </SafeAreaProvider>
+    // GestureHandlerRootView must wrap any screen that uses
+    // react-native-gesture-handler's PinchGestureHandler / TapGestureHandler
+    // (MarkResult + PageReviewScreen). React Navigation's internal wrap
+    // covers its own transitions but doesn't scope to custom handlers.
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <ModelProvider>
+              <AppShell />
+            </ModelProvider>
+          </AuthProvider>
+        </LanguageProvider>
+        <StatusBar style="auto" />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
