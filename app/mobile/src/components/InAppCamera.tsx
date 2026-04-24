@@ -34,6 +34,7 @@ import {
 import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import { enhanceImage } from '../services/imageEnhance';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -128,7 +129,13 @@ export default function InAppCamera({
         shutterSound: false,
       });
       if (!photo?.uri) throw new Error('No photo URI');
-      setPreview({ uri: photo.uri, warnings: [] });
+      let finalUri = photo.uri;
+      try {
+        finalUri = await enhanceImage(photo.uri);
+      } catch {
+        finalUri = photo.uri;
+      }
+      setPreview({ uri: finalUri, warnings: [] });
     } catch (err: any) {
       console.warn('[InAppCamera] capture error:', err);
       Alert.alert('Could not capture photo', 'Please try again.');
