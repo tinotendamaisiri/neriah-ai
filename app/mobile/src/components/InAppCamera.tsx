@@ -32,7 +32,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 import { enhanceImage } from '../services/imageEnhance';
@@ -79,8 +78,10 @@ const FRAME_H =
 
 export interface InAppCameraProps {
   visible: boolean;
-  /** Called with base64 string and local URI of the enhanced image. */
-  onCapture: (base64: string, uri: string) => void;
+  /** Called with the local URI of the enhanced image. Callers that need a
+   *  base64 payload (e.g. AI chat attachments) should read it from the URI
+   *  themselves at the point of use. */
+  onCapture: (uri: string) => void;
   /** Called when the user closes/cancels without capturing. */
   onClose: () => void;
   /** Camera capture quality 0–1. Defaults to 0.8. */
@@ -95,7 +96,6 @@ export interface InAppCameraProps {
 
 interface PreviewState {
   uri: string;       // enhanced URI
-  base64: string;    // base64 of enhanced image
   warnings: string[];
 }
 
@@ -135,32 +135,16 @@ export default function InAppCamera({
     }
     setProcessing(true);
     try {
-      // 1. Raw capture — no base64 here; we read it after enhancement.
-      //    Android's camera surface can fail or hang on the first attempt
-      //    even after onCameraReady fires, so we:
-      //      - time out each takePictureAsync at 5s so a hung native call
-      //        doesn't freeze the UI forever,
-      //      - retry up to 3 times with a 500ms gap between attempts.
-      //    Outer catch surfaces the Alert only if all 3 attempts fail.
-      let photo: Awaited<ReturnType<CameraView['takePictureAsync']>> | null = null;
-      let attempts = 0;
-      while (!photo && attempts < 3) {
-        try {
-          photo = await withTimeout(
-            cameraRef.current.takePictureAsync({
-              quality,
-              base64: false,
-              skipProcessing: true,
-            }),
-            5000,
-          );
-        } catch (e) {
-          attempts++;
-          if (attempts >= 3) throw e;
-          await new Promise(r => setTimeout(r, 500));
-        }
-      }
-      if (!photo?.uri) throw new Error('Failed to capture after 3 attempts');
+      // 1. Raw capture — single native call, no retry, no JS-level timeout.
+      //    Failures bubble to the outer catch which shows the "Could not
+      //    process photo" Alert.
+      const photo = await cameraRef.current.takePictureAsync({
+        quality,
+        base64: false,
+        shutterSound: false,
+        skipProcessing: true,
+      });
+      if (!photo?.uri) throw new Error('No photo URI returned');
 
       // 1b. Crop to the on-screen overlay frame. The sensor image is much
       //     larger than the preview (typically 3024×4032 vs ~400×850 points),
@@ -222,15 +206,10 @@ export default function InAppCamera({
       //    timeout so a hung heuristic can't lock the shutter on Android.
       const qualityResult = await withTimeout(checkImageQuality(enhancedUri), 10000);
 
-      // 4. Read enhanced file as base64 (FileSystem replaces the need for
-      //    base64:true). 15s timeout covers large multi-MB reads without
-      //    leaving the teacher staring at a silent processing screen.
-      const base64 = await withTimeout(
-        FileSystem.readAsStringAsync(enhancedUri, { encoding: 'base64' as any }),
-        15000,
-      );
-
-      setPreview({ uri: enhancedUri, base64, warnings: qualityResult.warnings });
+      // No base64 read here — callers pull base64 themselves from the URI
+      // if they need it. Keeps the hot path free of a potentially slow
+      // readAsStringAsync on multi-MB images.
+      setPreview({ uri: enhancedUri, warnings: qualityResult.warnings });
     } catch (err) {
       console.warn('[InAppCamera] capture/enhance error:', err);
       Alert.alert(
@@ -244,7 +223,7 @@ export default function InAppCamera({
 
   const handleUsePhoto = useCallback(() => {
     if (!preview) return;
-    onCapture(preview.base64, preview.uri);
+    onCapture(preview.uri);
     setPreview(null);
   }, [preview, onCapture]);
 
@@ -369,12 +348,11 @@ export default function InAppCamera({
           facing={facing}
           flash={flash}
           onCameraReady={() => {
-            // On Android, onCameraReady fires before the camera surface is
-            // fully stable. A 500 ms buffer is enough now that the Modal
-            // uses animationType="none" — no slide animation competing with
-            // the native surface init.
+            // 800 ms buffer on Android — gives the camera hardware time
+            // to fully initialize after onCameraReady fires. Without it,
+            // takePictureAsync can race the surface and return null/throw.
             if (Platform.OS === 'android') {
-              setTimeout(() => setCameraReady(true), 500);
+              setTimeout(() => setCameraReady(true), 800);
             } else {
               setCameraReady(true);
             }
