@@ -20,6 +20,8 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <cstdio>
+#include <unistd.h>
+#include <fcntl.h>
 
 #ifdef __APPLE__
 #include "IOSDownloadHelper.h"
@@ -307,23 +309,89 @@ void HybridLiteRTLM::loadModelInternal(
     }
   };
   
-  // tryCreateEngine takes nullable visionBackend AND audioBackend args.
-  // Passing nullptr skips that executor's creation entirely on the C engine
-  // side (engine_impl.cc:340/348 — vision/audio executors only created when
-  // settings.GetXExecutorSettings().has_value()). Our app never calls
-  // sendMessageWithImage / sendMessageWithAudio, so neither executor is
-  // needed at runtime — and skipping them sidesteps the "iOS XCFramework
-  // lacks vision/audio ops" failure that crashed Gemma 4 E2B engine init.
+  // Per-attempt diagnostics. Each tryCreateEngine call appends a labelled
+  // line: which backend combination, whether settings_create or engine_
+  // create returned null, and any ABSL_LOG output that landed on stderr
+  // during the call. Crucial for figuring out *why* the engine refuses
+  // to initialise — the upstream C library swallows error context and
+  // litert_lm_get_last_error() isn't exported in our XCFramework.
+  std::string attemptLog;
+
   auto tryCreateEngine = [&](const char* backend,
                              const char* visionBackend,
                              const char* audioBackend) -> bool {
+    // ── Begin stderr capture ───────────────────────────────────────────────
+    // Redirect stderr to a pipe so ABSL_LOG / fprintf calls inside the
+    // upstream C library can be drained back to our diagnostic string.
+    // We restore stderr unconditionally in cleanup() below so that even
+    // if the C call crashes/aborts mid-flight (it shouldn't but defense
+    // in depth), the process's stderr is back to normal afterwards.
+    int saved_stderr = dup(STDERR_FILENO);
+    int pipe_fds[2] = {-1, -1};
+    bool capture_active = false;
+    if (saved_stderr >= 0 && pipe(pipe_fds) == 0) {
+      // Make the read end non-blocking so we never hang draining.
+      int flags = fcntl(pipe_fds[0], F_GETFL, 0);
+      if (flags >= 0) fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
+      if (dup2(pipe_fds[1], STDERR_FILENO) >= 0) {
+        capture_active = true;
+      }
+    }
+
+    auto cleanup_stderr = [&]() -> std::string {
+      if (!capture_active) {
+        if (saved_stderr >= 0) close(saved_stderr);
+        if (pipe_fds[0] >= 0) close(pipe_fds[0]);
+        if (pipe_fds[1] >= 0) close(pipe_fds[1]);
+        return "";
+      }
+      // Make sure any buffered stderr writes are flushed to our pipe before
+      // we restore the real stderr.
+      fflush(stderr);
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
+      close(pipe_fds[1]);
+      // Drain. Bounded read because some absl logs are noisy and we don't
+      // want to dump kilobytes into the JS-facing error string.
+      std::string captured;
+      char buf[2048];
+      ssize_t n;
+      while ((n = read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        captured += buf;
+        if (captured.size() > 1500) {
+          captured.resize(1500);
+          captured += "…(truncated)";
+          break;
+        }
+      }
+      close(pipe_fds[0]);
+      // Strip trailing whitespace / newlines that pollute the JS string.
+      while (!captured.empty() &&
+             (captured.back() == '\n' || captured.back() == '\r' ||
+              captured.back() == ' ')) {
+        captured.pop_back();
+      }
+      return captured;
+    };
+
+    // Compose a label for this attempt, even before making any C calls,
+    // so the diag string clearly shows what was tried.
+    std::string label = std::string("backend=") + (backend ? backend : "null") +
+                        " vision=" + (visionBackend ? visionBackend : "null") +
+                        " audio=" + (audioBackend ? audioBackend : "null");
+
     auto* settings = litert_lm_engine_settings_create(
       modelPath.c_str(),
       backend,
       visionBackend,
       audioBackend
     );
+
     if (!settings) {
+      std::string captured = cleanup_stderr();
+      attemptLog += "\n[" + label + "] settings_create returned null";
+      if (!captured.empty()) attemptLog += " | stderr: " + captured;
       return false;
     }
 
@@ -337,22 +405,25 @@ void HybridLiteRTLM::loadModelInternal(
     engine_ = litert_lm_engine_create(settings);
     litert_lm_engine_settings_delete(settings);
 
-    return engine_ != nullptr;
+    std::string captured = cleanup_stderr();
+    if (engine_ == nullptr) {
+      attemptLog += "\n[" + label + "] engine_create returned null";
+      if (!captured.empty()) attemptLog += " | stderr: " + captured;
+      return false;
+    }
+    // Success — note any captured stderr (often informational, not errors)
+    // for later analysis if anyone is reading the log.
+    return true;
   };
 
-  // Text-only mode: always pass nullptr for vision and audio. This is the
-  // single configuration we actually need — the only inference call sites
-  // in the JS layer are sendMessage() / sendMessageAsync() (text in / text
-  // out). The previous fallback chain (GPU/GPU → CPU/GPU → CPU/CPU →
-  // CPU/null vision) all kept audio="cpu" hardcoded, which still tried to
-  // compile the audio executor at init time — and that compile failed
-  // because the Bazel-built iOS XCFramework lacks the audio ops. Killing
-  // both vision and audio at init is the actual fix.
+  // Text-only mode: pass nullptr for vision and audio. The only inference
+  // call sites in the JS layer are sendMessage() / sendMessageAsync()
+  // (text in, text out). Skipping multimodal executors avoids the
+  // "iOS XCFramework lacks vision/audio ops" failure path entirely on
+  // engines that still want to compile those executors eagerly at init
+  // (engine_impl.cc:340/348 only creates them when settings have value).
   const char* primaryBackend = backendStr(backend_);
   if (!tryCreateEngine(primaryBackend, nullptr, nullptr)) {
-    // If the requested backend (e.g. GPU) didn't work, try CPU-text-only
-    // as the single fallback. Multimodal executors are out of scope for
-    // this app build.
     if (backend_ != Backend::CPU && tryCreateEngine("cpu", nullptr, nullptr)) {
       backend_ = Backend::CPU;
     }
@@ -376,7 +447,12 @@ void HybridLiteRTLM::loadModelInternal(
       diag += ", Readable: NO (errno: " + std::to_string(errno) + ")";
     }
     
-    // litert_lm_get_last_error not available in this build
+    // litert_lm_get_last_error not available in this build — we capture
+    // ABSL_LOG output via stderr redirect inside tryCreateEngine instead,
+    // and append it here.
+    if (!attemptLog.empty()) {
+      diag += " | Attempts:" + attemptLog;
+    }
 
     throw std::runtime_error(
       "Failed to create LiteRT-LM engine. Tried backend '" +
