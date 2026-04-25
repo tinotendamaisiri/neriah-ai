@@ -42,16 +42,32 @@ fi
 
 mkdir -p "$DEST_DIR"
 
-# Skip the copy if the destination already has the same XCFramework.
-# Cheap check: just compare the Info.plist file's modification time
-# proxy via cmp.
+# Skip the XCFramework copy if the destination already has it (large
+# directory copy — only worth doing when there's a real change).
 if [ -d "$DEST_DIR/LiteRTLM.xcframework" ] && \
    cmp -s "$VENDORED/Info.plist" "$DEST_DIR/LiteRTLM.xcframework/Info.plist"; then
   echo "[litert-ios] XCFramework already in place, skipping copy."
-  exit 0
+else
+  echo "[litert-ios] Copying LiteRTLM.xcframework into node_modules..."
+  rm -rf "$DEST_DIR/LiteRTLM.xcframework"
+  cp -R "$VENDORED" "$DEST_DIR/LiteRTLM.xcframework"
 fi
 
-echo "[litert-ios] Copying LiteRTLM.xcframework into node_modules..."
-rm -rf "$DEST_DIR/LiteRTLM.xcframework"
-cp -R "$VENDORED" "$DEST_DIR/LiteRTLM.xcframework"
-echo "[litert-ios] ✅ XCFramework installed. Run \`npx pod-install ios\` next."
+# Vendored Hybrid wrapper patches:
+#   - tryCreateEngine accepts a third audioBackend arg and we call it with
+#     nullptr, nullptr for vision and audio. Skips multimodal executor
+#     init that crashes on iOS because the Bazel-built XCFramework lacks
+#     vision and audio ops. Text-only inference works after the patch.
+#   - Three calls to litert_lm_get_last_error() commented out (symbol not
+#     in our XCFramework export list).
+# We vendor the whole HybridLiteRTLM.cpp (small file, ~24 KB) instead of
+# carrying a patch, because patch-package failed to parse the diff for
+# this version of the package.
+PATCHED_CPP="$PROJECT_ROOT/vendor/litert-cpp/HybridLiteRTLM.cpp"
+DEST_CPP="$PROJECT_ROOT/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.cpp"
+if [ -f "$PATCHED_CPP" ] && [ -d "$(dirname "$DEST_CPP")" ]; then
+  cp "$PATCHED_CPP" "$DEST_CPP"
+  echo "[litert-ios] Replaced HybridLiteRTLM.cpp with vendored patched copy."
+fi
+
+echo "[litert-ios] ✅ XCFramework + wrapper installed. Run \`npx pod-install ios\` next."
