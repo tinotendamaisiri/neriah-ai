@@ -419,6 +419,17 @@ export default function PageReviewScreen() {
             verdict_page_indices: graded.verdicts.map(v => v.page_index),
           };
 
+          // Queue the same scan for cloud replay so the database eventually
+          // gets a canonical Mark for this submission. The local result we
+          // just built is a transient preview shown to the teacher right
+          // now; the cloud replay (fired when offlineQueue's network
+          // listener detects connectivity) creates the persistent Mark in
+          // Firestore. Without this enqueue, an offline-graded submission
+          // is purely client-side and never reaches the database — so a
+          // teacher's home / class views, the student's results screen,
+          // and analytics would all miss it.
+          await queueForReplay();
+
           navigation.navigate('Mark', {
             class_id: classId,
             class_name: className,
