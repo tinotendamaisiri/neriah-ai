@@ -47,7 +47,7 @@ const TONES: Record<PillKind, Tone> = {
 
 function labelFor(kind: PillKind, progress: number): string {
   switch (kind) {
-    case 'downloading':     return `Downloading AI model — ${Math.round(progress)}%`;
+    case 'downloading':     return `Downloading AI model: ${Math.round(progress)}%`;
     case 'installing':      return 'Installing AI model…';
     case 'need-download':   return 'Offline grading: tap to download model';
     case 'loading':         return 'Loading AI model…';

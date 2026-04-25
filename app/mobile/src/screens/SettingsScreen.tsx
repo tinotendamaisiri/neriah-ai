@@ -69,10 +69,10 @@ function DownloadProgress({ progress, paused }: { progress: number; paused: bool
   // an honest "Installing…" label instead of a stuck "Downloading 100%".
   const isInstalling = !isPaused && displayPct >= 100;
   const label = isPaused
-    ? `Paused — ${displayPct}% complete. Will resume when connected.`
+    ? `Paused: ${displayPct}% complete. Will resume when connected.`
     : isInstalling
-      ? 'Installing AI model — this can take a minute…'
-      : `Downloading — ${displayPct}% complete`;
+      ? 'Installing AI model: this can take a minute…'
+      : `Downloading: ${displayPct}% complete`;
 
   const widthInterp = animWidth.interpolate({
     inputRange: [0, 100],
