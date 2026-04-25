@@ -24,7 +24,7 @@ import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useModel } from '../context/ModelContext';
 import { ScreenContainer } from '../components/ScreenContainer';
-import OfflineGradingStatus from '../components/OfflineGradingStatus';
+import OfflineModelBanner from '../components/OfflineModelBanner';
 
 const CLASSES_CACHE_KEY = (teacherId: string) => `cache_classes_${teacherId}`;
 
@@ -174,7 +174,10 @@ export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const { t, language } = useLanguage();
-  const { showWifiNudge, checkWifiNudge, dismissWifiNudge, acceptDownload } = useModel();
+  // checkWifiNudge runs the gating logic that decides whether the
+  // OfflineModelBanner should show its "ready to download" state on focus.
+  // Banner reads showWifiNudge / acceptDownload / dismissWifiNudge itself.
+  const { checkWifiNudge } = useModel();
   console.log('[HomeScreen] render, language =', language, ', my_classes =', t('my_classes'));
   const [classes, setClasses] = useState<Class[]>([]);
   const [answerKeysByClass, setAnswerKeysByClass] = useState<Record<string, AnswerKey[]>>({});
@@ -333,38 +336,13 @@ export default function HomeScreen() {
 
       {error && <Text style={styles.error}>{error}</Text>}
 
-      {/* Offline grading readiness pill — silent on cloud-only devices,
-          visible whenever the teacher's setup has something to say about
-          local inference (downloading, not yet downloaded, loading, ready). */}
-      <OfflineGradingStatus />
-
-      {/* Wi-Fi nudge banner */}
-      {showWifiNudge && (
-        <View style={styles.wifiNudge}>
-          <View style={styles.wifiNudgeRow}>
-            <Ionicons name="wifi-outline" size={16} color={COLORS.teal500} />
-            <Text style={styles.wifiNudgeText}>
-              {' '}You're on Wi-Fi — download offline AI now?
-            </Text>
-          </View>
-          <View style={styles.wifiNudgeActions}>
-            <TouchableOpacity
-              style={styles.wifiNudgeDownloadBtn}
-              onPress={() => { acceptDownload(); dismissWifiNudge(); }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.wifiNudgeDownloadText}>Download</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.wifiNudgeLaterBtn}
-              onPress={dismissWifiNudge}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.wifiNudgeLaterText}>Later</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+      {/* Single unified offline-AI banner — handles every user-facing state:
+          downloading/installing/paused (with progress bar), Wi-Fi-nudge
+          download prompt (with Download/Later buttons), or hidden when
+          offline mode isn't applicable (cloud-only device, model already
+          ready). Replaces the previous OfflineGradingStatus pill + the
+          inline Wi-Fi nudge that used to stack on top of each other. */}
+      <OfflineModelBanner />
 
       {/* Pending submissions banner */}
       {pendingCount > 0 && (
