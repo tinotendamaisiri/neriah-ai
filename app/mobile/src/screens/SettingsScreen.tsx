@@ -100,7 +100,6 @@ export default function SettingsScreen() {
     status: modelStatus,
     progress: modelProgress,
     variant: modelVariant,
-    capability: modelCapability,
     wifiOnly,
     errorMessage: modelError,
     pauseDownload: modelPause,
@@ -335,45 +334,65 @@ export default function SettingsScreen() {
         <Text style={styles.sectionTitle}>Offline Mode</Text>
 
         <View style={styles.card}>
-          {/* Toggle row */}
-          <View style={[styles.settingsRow, { borderTopWidth: 0 }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingsRowLabel}>Enable offline mode</Text>
-              <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>
-                Faster grading without internet. Downloads over Wi-Fi only.
-              </Text>
+          {/* Toggle row.
+              When variant === null the user's role-required model can't run
+              on this device (e.g. teacher on a phone that doesn't pass the
+              E4B check). Disable the switch outright and surface the reason
+              instead of letting the user start a download that will crash. */}
+          {modelVariant === null ? (
+            <View style={[styles.settingsRow, { borderTopWidth: 0 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, styles.settingsRowLabelDisabled]}>
+                  Device not compatible
+                </Text>
+                <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>
+                  Your phone doesn’t have enough memory or storage to run Neriah's
+                  offline AI. Grading will continue to work over the internet.
+                </Text>
+              </View>
+              <Switch
+                value={false}
+                disabled
+                trackColor={{ true: COLORS.teal500, false: COLORS.border }}
+                thumbColor={COLORS.white}
+              />
             </View>
-            <Switch
-              value={modelStatus === 'done' || modelStatus === 'downloading' || modelStatus === 'paused'}
-              onValueChange={(on) => {
-                if (on && modelStatus !== 'done') {
-                  if (modelCapability === 'cloud-only') {
-                    Alert.alert('Not supported', 'This device does not have enough storage to run the offline model.');
-                    return;
+          ) : (
+            <View style={[styles.settingsRow, { borderTopWidth: 0 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingsRowLabel}>Enable offline mode</Text>
+                <Text style={{ fontSize: 12, color: COLORS.gray500, marginTop: 2 }}>
+                  Faster grading without internet. Downloads over Wi-Fi only.
+                </Text>
+              </View>
+              <Switch
+                value={modelStatus === 'done' || modelStatus === 'downloading' || modelStatus === 'paused'}
+                onValueChange={(on) => {
+                  if (on && modelStatus !== 'done') {
+                    Alert.alert(
+                      'Download offline model?',
+                      'This will download about 3 GB over Wi-Fi. You can pause and resume anytime.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Download', onPress: acceptDownload },
+                      ],
+                    );
+                  } else if (!on && modelStatus === 'done') {
+                    Alert.alert(
+                      'Remove offline model?',
+                      'You will need internet for grading until you re-download.',
+                      [
+                        { text: 'Keep', style: 'cancel' },
+                        { text: 'Remove', style: 'destructive', onPress: deleteModel },
+                      ],
+                    );
                   }
-                  Alert.alert(
-                    'Download offline model?',
-                    'This will download about 3 GB over Wi-Fi. You can pause and resume anytime.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Download', onPress: acceptDownload },
-                    ],
-                  );
-                } else if (!on && modelStatus === 'done') {
-                  Alert.alert(
-                    'Remove offline model?',
-                    'You will need internet for grading until you re-download.',
-                    [
-                      { text: 'Keep', style: 'cancel' },
-                      { text: 'Remove', style: 'destructive', onPress: deleteModel },
-                    ],
-                  );
-                }
-              }}
-              trackColor={{ true: COLORS.teal500, false: COLORS.border }}
-              thumbColor={COLORS.white}
-            />
-          </View>
+                }}
+                trackColor={{ true: COLORS.teal500, false: COLORS.border }}
+                thumbColor={COLORS.white}
+              />
+            </View>
+          )}
 
           {/* Progress — visible during download */}
           {(modelStatus === 'downloading' || modelStatus === 'paused') && (

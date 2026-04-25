@@ -32,8 +32,10 @@ import * as SecureStore from 'expo-secure-store';
 
 import {
   detectCapability,
+  canRunVariant,
   type DeviceCapability,
 } from '../services/deviceCapabilities';
+import { useAuth } from './AuthContext';
 
 export type { DeviceCapability };
 import {
@@ -127,10 +129,16 @@ export function useModel(): ModelContextValue {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function capabilityToVariant(cap: DeviceCapability): ModelVariant | null {
-  if (cap === 'e4b-capable') return 'e4b';
-  if (cap === 'e2b-capable') return 'e2b';
-  return null;
+/**
+ * Which variant a given role *requires*. There is no graceful downgrade:
+ * a teacher whose device can't run E4B is routed cloud-only, not given
+ * E2B as a fallback (E2B is the wrong model for grading and would
+ * silently produce worse results).
+ */
+function requiredVariantForRole(role: 'teacher' | 'student' | undefined): ModelVariant | null {
+  if (role === 'teacher') return 'e4b';
+  if (role === 'student') return 'e2b';
+  return null; // unknown role yet (auth still loading) — defer
 }
 
 async function isWifi(): Promise<boolean> {
@@ -173,6 +181,11 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
 }
 
 function ModelProviderNative({ children }: { children: React.ReactNode }) {
+  // Role is the source of truth for which variant we test against. ModelProvider
+  // is mounted inside AuthProvider in App.tsx so useAuth() is always callable.
+  const { user } = useAuth();
+  const role = user?.role;
+
   const [status, setStatus]             = useState<DownloadStatus>('idle');
   const [progress, setProgress]         = useState(0);
   const [showPrompt, setShowPrompt]     = useState(false);
@@ -224,27 +237,48 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
 
   const [showWifiNudge, setShowWifiNudge] = useState(false);
 
-  // ── Boot: read persisted state ──────────────────────────────────────────────
+  // ── Boot: read persisted state, run capability check for THIS user's role ──
+  // Re-runs whenever the role becomes known (auth load is async on cold
+  // start, and role can change if user logs out and back in as a different
+  // role on the same device).
 
   useEffect(() => {
     (async () => {
-      // Wi-Fi only preference
+      // Wi-Fi only preference (role-independent)
       const wifiPref = await SecureStore.getItemAsync(WIFI_ONLY_KEY).catch(() => null);
       if (wifiPref === 'true') setWifiOnlyState(true);
 
-      // Always re-detect capability (storage may have changed since last check)
+      // Refresh the descriptive tier label (used by Settings UI for info text)
+      // — independent of the role-aware variant decision below.
       const cap = await detectCapability();
-      if (!cap) return;
       setCapability(cap);
-      const v = capabilityToVariant(cap);
-      if (!v) return;
-      setVariant(v);
-      variantRef.current = v;
+
+      // Role unknown yet (AuthContext still loading) — leave variant=null
+      // until we know which check to run.
+      const required = requiredVariantForRole(role);
+      if (!required) {
+        setVariant(null);
+        variantRef.current = null;
+        return;
+      }
+
+      // Hard gate: device must pass the check for the role's required
+      // variant. No downgrades — a teacher whose phone can't run E4B is
+      // cloud-only, never silently moved to E2B.
+      const ok = await canRunVariant(required);
+      if (!ok) {
+        setVariant(null);
+        variantRef.current = null;
+        return;
+      }
+
+      setVariant(required);
+      variantRef.current = required;
 
       const downloaded = await SecureStore.getItemAsync(MODEL_DOWNLOADED_KEY).catch(() => null);
       if (downloaded === 'true') {
         // Sanity: confirm file actually exists
-        const onDisk = await isModelOnDisk(v);
+        const onDisk = await isModelOnDisk(required);
         if (onDisk) {
           setStatus('done');
           setModelReady(true);
@@ -254,7 +288,7 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
         }
       }
     })();
-  }, []);
+  }, [role]);
 
   // ── initPrompt ─────────────────────────────────────────────────────────────
 
@@ -262,20 +296,27 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     if (Platform.OS === 'web') return;
 
     const cap = await detectCapability();
-    if (!cap) return;
-
     setCapability(cap);
 
-    const v = capabilityToVariant(cap);
-    if (!v) return; // cloud-only device, nothing to download
+    // Role-aware: a teacher needs E4B, a student needs E2B. If the device
+    // can't run the variant their role requires, this is a cloud-only
+    // device — nothing to prompt for, nothing to download.
+    const required = requiredVariantForRole(role);
+    if (!required) return;
+    const ok = await canRunVariant(required);
+    if (!ok) {
+      setVariant(null);
+      variantRef.current = null;
+      return;
+    }
 
-    setVariant(v);
-    variantRef.current = v;
+    setVariant(required);
+    variantRef.current = required;
 
     // Already done?
     const downloaded = await SecureStore.getItemAsync(MODEL_DOWNLOADED_KEY).catch(() => null);
     if (downloaded === 'true') {
-      const onDisk = await isModelOnDisk(v);
+      const onDisk = await isModelOnDisk(required);
       if (onDisk) { setStatus('done'); setModelReady(true); return; }
       await SecureStore.deleteItemAsync(MODEL_DOWNLOADED_KEY).catch(() => {});
     }
@@ -288,7 +329,7 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     // Mark as prompted so the nudge gate (requires DOWNLOAD_PROMPTED_KEY='true'
     // at line ~384) opens on the next Wi-Fi connection.
     await SecureStore.setItemAsync(DOWNLOAD_PROMPTED_KEY, 'true').catch(() => {});
-  }, []);
+  }, [role]);
 
   // ── acceptDownload ─────────────────────────────────────────────────────────
 
@@ -416,15 +457,17 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     if (nudgeSuppressedRef.current) return;
 
     // Device must be on-device-capable
-    const cap = await detectCapability();
-    if (!cap || cap === 'cloud-only') return;
+    // Variant comes from the user's role — never from "best the device
+    // can do". If we don't yet know the role (auth still loading) or the
+    // device fails the role-required variant's check, skip the nudge.
+    const required = variantRef.current ?? requiredVariantForRole(role);
+    if (!required) return;
+    const ok = await canRunVariant(required);
+    if (!ok) return;
 
     // Model must not already be on disk
-    const v = variantRef.current ?? capabilityToVariant(cap);
-    if (v) {
-      const onDisk = await isModelOnDisk(v);
-      if (onDisk) return;
-    }
+    const onDisk = await isModelOnDisk(required);
+    if (onDisk) return;
 
     // User must have seen the one-time prompt (i.e. skipped it, not brand-new)
     const prompted = await SecureStore.getItemAsync(DOWNLOAD_PROMPTED_KEY).catch(() => null);
@@ -448,7 +491,7 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
     // All gates passed — show the nudge once this session
     nudgeShownThisSessionRef.current = true;
     setShowWifiNudge(true);
-  }, []);
+  }, [role]);
 
   // ── dismissWifiNudge ───────────────────────────────────────────────────────
   // "Later" — hides the banner and resets the 7-day clock.
