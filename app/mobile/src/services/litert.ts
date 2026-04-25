@@ -218,10 +218,21 @@ export async function loadModel(
       const nativePath = localPath.replace(/^file:\/\//, '');
       const instance = lib.createLLM();
       await instance.loadModel(nativePath, {
-        // Default to CPU — most Android devices LiteRT-LM targets don't
-        // have reliable GPU support for Gemma 4. Teachers on flagship
-        // phones can flip this to 'gpu' later via a Settings toggle.
-        backend: 'cpu',
+        // Default to GPU. Reason: Gemma 4's vision encoder is GPU-only
+        // ("Vision encoder is always set to GPU (required by Gemma models)"
+        // per the upstream README), and the iOS C++ wrapper's fallback
+        // chain (HybridLiteRTLM.cpp tryCreateEngine) only kicks in when
+        // the primary backend is non-CPU. With CPU primary, the wrapper
+        // makes one attempt at CPU/CPU vision and dies because no CPU
+        // implementation of the vision ops exists in the Bazel-built
+        // XCFramework. With GPU primary, the wrapper tries GPU/GPU →
+        // CPU/GPU vision → CPU/CPU vision in order, and Gemma E2B loads
+        // successfully on iOS Metal at the second step. On Android the
+        // library hardcodes visionBackend=GPU regardless of this setting,
+        // so 'gpu' here is a no-op for the main backend on devices
+        // without GPU compute (Mali-G72 etc.) — those devices already
+        // get filtered out by canRunVariant() upstream.
+        backend: 'gpu',
       });
 
       _llm = instance;
