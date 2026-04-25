@@ -30,6 +30,17 @@ export interface QueuedScan {
   education_level: string;
   queued_at: string;
   retry_count: number;
+  /**
+   * Pre-graded verdicts attached when the teacher graded this submission
+   * offline on E2B. When present, replay sends them to /api/mark as
+   * `pre_graded_verdicts` and the backend skips its own grading call —
+   * the teacher's local verdicts become the canonical Mark.
+   *
+   * Absent for the queue-then-cloud-grade path (e.g. math-gated
+   * submissions, OCR/grading failures, plain network errors during
+   * online flow). In those cases the cloud grades from scratch.
+   */
+  pre_graded_verdicts?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -160,6 +171,9 @@ export const replayQueue = async (): Promise<{ submitted: number; failed: number
         answerKeyId: item.answer_key_id,
         educationLevel: item.education_level,
         pages: item.pages,
+        // Forward pre-graded verdicts when the queued item carries them.
+        // Backend then skips its own grading call and persists ours.
+        preGradedVerdicts: item.pre_graded_verdicts,
       });
       submitted++;
       // Successfully submitted — do not add back to remaining

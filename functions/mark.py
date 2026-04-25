@@ -269,24 +269,53 @@ def mark():
                 except Exception:
                     logger.exception("[mark] Failed to delete old submission %s", sub_id)
 
-    # ── Route: all AI calls in this endpoint go to cloud ─────────────────────
-    route_ai_request(AIRequestType.GRADING)  # always AIRoute.CLOUD on the backend
+    # ── Pre-graded path (offline-graded mobile clients) ──────────────────────
+    # Mobile teachers running on E2B locally pass their verdicts in directly
+    # via `pre_graded_verdicts` (JSON-encoded array). When the field is
+    # present and valid we skip both the image-quality check and the cloud
+    # grading call — the teacher's already-rendered local verdicts become
+    # the canonical Mark, and we just need to run the dedupe/clamp guards,
+    # annotate, upload, and persist. Reasons:
+    #   1. The teacher already sees these verdicts on screen; re-grading in
+    #      cloud would create a divergent record.
+    #   2. Saves a Vertex call + bandwidth on the queue replay.
+    # If pre_graded_verdicts is absent or malformed, fall through to the
+    # normal cloud-grading pipeline.
+    pre_graded_raw = request.form.get("pre_graded_verdicts")
+    is_pre_graded = False
+    pre_graded_verdicts: list[dict] | None = None
+    if pre_graded_raw:
+        try:
+            parsed_verdicts = json.loads(pre_graded_raw)
+            if isinstance(parsed_verdicts, list):
+                pre_graded_verdicts = [v for v in parsed_verdicts if isinstance(v, dict)]
+                if pre_graded_verdicts:
+                    is_pre_graded = True
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pre_graded_verdicts = None
+            is_pre_graded = False
 
-    # ── 1. Image quality gate — page 0 only as a representative sample ────────
-    # Running the quality check against every page would triple-to-5x Vertex
-    # calls before we even start grading. Page 0 acts as a cheap preflight;
-    # Gemma's grading call later is tolerant of rough pages 2-N.
-    quality = check_image_quality_strict(pages_bytes[0])
-    if not quality.get("pass", True):
-        reason = (quality.get("reason") or "").lower()
-        suggestion = quality.get("suggestion") or "Retake the photo in better lighting."
-        user_msg = next(
-            (msg for key, msg in _QUALITY_REJECTION.items() if key in reason),
-            suggestion,
-        )
-        err = ImageQualityRejectedError(f"quality={reason}")
-        err.user_message = user_msg
-        raise err
+    # ── Route: cloud grading only fires when we don't already have verdicts ─
+    if not is_pre_graded:
+        route_ai_request(AIRequestType.GRADING)  # always AIRoute.CLOUD on the backend
+
+        # ── 1. Image quality gate — page 0 only as a representative sample ────
+        # Running the quality check against every page would triple-to-5x Vertex
+        # calls before we even start grading. Page 0 acts as a cheap preflight;
+        # Gemma's grading call later is tolerant of rough pages 2-N. Skipped
+        # entirely on the pre-graded path because the teacher already saw the
+        # local grade — re-rejecting on quality would orphan their submission.
+        quality = check_image_quality_strict(pages_bytes[0])
+        if not quality.get("pass", True):
+            reason = (quality.get("reason") or "").lower()
+            suggestion = quality.get("suggestion") or "Retake the photo in better lighting."
+            user_msg = next(
+                (msg for key, msg in _QUALITY_REJECTION.items() if key in reason),
+                suggestion,
+            )
+            err = ImageQualityRejectedError(f"quality={reason}")
+            err.user_message = user_msg
+            raise err
 
     # ── Fetch answer key and class info ───────────────────────────────────────
     answer_key = get_doc("answer_keys", answer_key_id)
@@ -307,14 +336,18 @@ def mark():
         class_doc.get("education_level") if class_doc else "Form 4"
     )
 
-    # ── 2. Grade across all pages in one Vertex call ──────────────────────────
-    class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
-    user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
-    _t0 = time.time()
-    raw_verdicts = grade_submission_strict_multi(
-        pages_bytes, answer_key, education_level, user_context=user_ctx,
-    )
-    _latency_ms = int((time.time() - _t0) * 1000)
+    # ── 2. Grade across all pages — skipped on the pre-graded path ────────────
+    if is_pre_graded:
+        raw_verdicts = pre_graded_verdicts or []
+        _latency_ms = 0
+    else:
+        class_id_for_ctx = answer_key.get("class_id") or (class_doc.get("id") if class_doc else None)
+        user_ctx = get_user_context(teacher_id, "teacher", class_id=class_id_for_ctx)
+        _t0 = time.time()
+        raw_verdicts = grade_submission_strict_multi(
+            pages_bytes, answer_key, education_level, user_context=user_ctx,
+        )
+        _latency_ms = int((time.time() - _t0) * 1000)
 
     # ── Dedupe + clamp against the answer key ────────────────────────────────
     # Two anti-abuse rules applied here, regardless of what Gemma emitted:
@@ -454,6 +487,7 @@ def mark():
     # doesn't until approval. Matches the AI-batch flow.
     # marked_image_url and page_urls[0]/annotated_urls[0] are kept as legacy
     # singular aliases for any UI screen still reading the old field names.
+    mark_source = "teacher_scan_offline" if is_pre_graded else "teacher_scan"
     mark_doc = Mark(
         id=mark_id,
         student_id=student_id,
@@ -465,7 +499,7 @@ def mark():
         percentage=percentage,
         verdicts=verdicts,
         marked_image_url=annotated_urls[0] if annotated_urls else None,
-        source="teacher_scan",
+        source=mark_source,
         approved=False,
         page_count=page_count,
         page_urls=page_urls,
@@ -483,7 +517,7 @@ def mark():
         "answer_key_id": answer_key_id,
         "teacher_id": teacher_id,
         "mark_id": mark_doc.id,
-        "source": "teacher_scan",
+        "source": mark_source,
         "status": "graded",
         "image_urls": list(annotated_urls),  # all annotated pages in order
         "submitted_at": now_iso,

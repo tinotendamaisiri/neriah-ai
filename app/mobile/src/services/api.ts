@@ -444,6 +444,10 @@ export const submitTeacherScan = async (payload: {
   /** When true, backend cascade-deletes any existing mark + submission for
    *  the same (student_id, answer_key_id) before creating this one. */
   replace?: boolean;
+  /** Pre-graded verdicts from offline E2B grading. When present, backend
+   *  skips its own grading call and persists these verdicts as the
+   *  canonical Mark (still applying dedupe + clamp guards server-side). */
+  preGradedVerdicts?: Array<Record<string, unknown>>;
 }): Promise<MarkResult> => {
   if (!payload.pages.length || payload.pages.length > 5) {
     throw new Error(`Invalid page count: ${payload.pages.length} (must be 1..5)`);
@@ -483,6 +487,11 @@ export const submitTeacherScan = async (payload: {
           source: 'app',
           page_count: String(payload.pages.length),
           ...(payload.replace ? { replace: 'true' } : {}),
+          // JSON-encoded so the backend can parse it from a single text
+          // field. Absent ⇒ cloud grades from scratch.
+          ...(payload.preGradedVerdicts && payload.preGradedVerdicts.length > 0
+            ? { pre_graded_verdicts: JSON.stringify(payload.preGradedVerdicts) }
+            : {}),
         },
       },
     );
@@ -514,6 +523,9 @@ export const submitTeacherScan = async (payload: {
   formData.append('source', 'app');
   formData.append('page_count', String(payload.pages.length));
   if (payload.replace) formData.append('replace', 'true');
+  if (payload.preGradedVerdicts && payload.preGradedVerdicts.length > 0) {
+    formData.append('pre_graded_verdicts', JSON.stringify(payload.preGradedVerdicts));
+  }
   for (let i = 0; i < payload.pages.length; i++) {
     formData.append(`page_${i}`, {
       uri: payload.pages[i].uri,

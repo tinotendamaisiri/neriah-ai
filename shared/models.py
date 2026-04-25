@@ -37,6 +37,12 @@ class EducationLevel(str, Enum):
 
 class MarkSource(str, Enum):
     TEACHER_SCAN = "teacher_scan"
+    # Set when /api/mark received pre_graded_verdicts from a mobile teacher
+    # who graded the submission offline on-device (LiteRT-LM E2B). Backend
+    # skips the cloud grading call entirely and persists the teacher's
+    # verdicts as the canonical record. Useful in analytics to distinguish
+    # accuracy-tier sources.
+    TEACHER_SCAN_OFFLINE = "teacher_scan_offline"
     STUDENT_SUBMISSION = "student_submission"
 
 

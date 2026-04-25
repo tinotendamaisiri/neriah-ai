@@ -688,3 +688,138 @@ class TestAnnotatorPositioning:
         cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
         assert cx == 760  # 0.95 * 800
         assert cy == 50   # 0.05 * 1000
+
+# ─── Pre-graded path (offline-graded mobile clients) ───────────────────────────
+
+
+class TestPreGradedPath:
+    """Mobile teachers grading offline on E2B post their verdicts directly
+    on /api/mark via the `pre_graded_verdicts` form field. Backend must:
+      1. Skip the cloud grading call entirely (no Vertex spend).
+      2. Skip the image-quality gate (teacher already saw the local grade —
+         re-rejecting on quality would orphan their submission).
+      3. Apply the same dedupe + clamp guards to the supplied verdicts as
+         it does for cloud-graded ones (defense against tampering /
+         model hallucination).
+      4. Tag the resulting Mark + student_submission with
+         source="teacher_scan_offline" so analytics can distinguish.
+    """
+
+    def test_pre_graded_skips_cloud_grading_call(self, client, mark_mocks):
+        """When pre_graded_verdicts is present, grade_submission_strict_multi
+        must not be invoked. We patch it to raise so the test fails loudly
+        if the backend forgets and falls through to cloud grading."""
+        from io import BytesIO
+        verdicts_json = json.dumps([
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ])
+        def must_not_be_called(*a, **kw):
+            raise AssertionError("Cloud grading was invoked despite pre_graded_verdicts being supplied.")
+        with patch("functions.mark.grade_submission_strict_multi", side_effect=must_not_be_called), \
+             patch("functions.mark.check_image_quality_strict",
+                   side_effect=must_not_be_called):
+            resp = client.post(
+                "/api/mark",
+                data={
+                    "page_count": "1",
+                    "student_id": STUDENT_ID,
+                    "answer_key_id": ANSWER_KEY_ID,
+                    "pre_graded_verdicts": verdicts_json,
+                    "page_0": (BytesIO(_tiny_jpeg_bytes()), "page_0.jpg"),
+                },
+                content_type="multipart/form-data",
+                headers=_teacher_headers(),
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] == 10
+        assert body["max_score"] == 10
+
+    def test_pre_graded_clamp_still_applied(self, client, mark_mocks):
+        """Even on the pre-graded path, awarded_marks > max_marks is clamped
+        — same anti-abuse rule as the cloud path. Teacher-supplied (or
+        E2B-hallucinated) verdicts can never inflate the score above what
+        the answer key allows."""
+        inflated_json = json.dumps([
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 99, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 99, "max_marks": 5, "student_answer": "100", "expected_answer": "100"},
+        ])
+        with patch("functions.mark.grade_submission_strict_multi") as cloud_grade:
+            from io import BytesIO
+            resp = client.post(
+                "/api/mark",
+                data={
+                    "page_count": "1",
+                    "student_id": STUDENT_ID,
+                    "answer_key_id": ANSWER_KEY_ID,
+                    "pre_graded_verdicts": inflated_json,
+                    "page_0": (BytesIO(_tiny_jpeg_bytes()), "page_0.jpg"),
+                },
+                content_type="multipart/form-data",
+                headers=_teacher_headers(),
+            )
+        cloud_grade.assert_not_called()
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_json()
+        assert body["score"] == 10
+        assert body["max_score"] == 10
+
+    def test_pre_graded_tags_mark_source_offline(self, client, mark_mocks):
+        """Mark + student_submission docs persisted with the pre-graded path
+        must use source=teacher_scan_offline so analytics can split offline
+        vs cloud accuracy tiers."""
+        verdicts_json = json.dumps([
+            {"question_number": 1, "page_index": 0, "verdict": "correct",
+             "awarded_marks": 5, "max_marks": 5, "student_answer": "42", "expected_answer": "42"},
+            {"question_number": 2, "page_index": 0, "verdict": "incorrect",
+             "awarded_marks": 0, "max_marks": 5, "student_answer": "wrong", "expected_answer": "100"},
+        ])
+        from io import BytesIO
+        resp = client.post(
+            "/api/mark",
+            data={
+                "page_count": "1",
+                "student_id": STUDENT_ID,
+                "answer_key_id": ANSWER_KEY_ID,
+                "pre_graded_verdicts": verdicts_json,
+                "page_0": (BytesIO(_tiny_jpeg_bytes()), "page_0.jpg"),
+            },
+            content_type="multipart/form-data",
+            headers=_teacher_headers(),
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        mark_writes = [v for (c, _), v in mark_mocks.items() if c == "marks"]
+        sub_writes = [v for (c, _), v in mark_mocks.items() if c == "student_submissions"]
+        assert len(mark_writes) == 1
+        assert mark_writes[0]["source"] == "teacher_scan_offline"
+        assert len(sub_writes) == 1
+        assert sub_writes[0]["source"] == "teacher_scan_offline"
+
+    def test_pre_graded_falls_back_to_cloud_when_verdicts_invalid(self, client, mark_mocks):
+        """Garbled JSON in pre_graded_verdicts → fall through to the normal
+        cloud grading flow rather than rejecting. Defensive so a buggy
+        client doesn't lose the submission entirely."""
+        from io import BytesIO
+        with patch("functions.mark.grade_submission_strict_multi",
+                   return_value=_fake_verdicts_from_gemma(1)):
+            resp = client.post(
+                "/api/mark",
+                data={
+                    "page_count": "1",
+                    "student_id": STUDENT_ID,
+                    "answer_key_id": ANSWER_KEY_ID,
+                    "pre_graded_verdicts": "{not valid json",
+                    "page_0": (BytesIO(_tiny_jpeg_bytes()), "page_0.jpg"),
+                },
+                content_type="multipart/form-data",
+                headers=_teacher_headers(),
+            )
+        assert resp.status_code == 200
+        mark_writes = [v for (c, _), v in mark_mocks.items() if c == "marks"]
+        assert mark_writes[0]["source"] == "teacher_scan"  # fell back
+

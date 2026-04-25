@@ -325,7 +325,9 @@ export default function PageReviewScreen() {
     // when connectivity is restored. AsyncStorage failures are swallowed
     // because they shouldn't block the teacher from moving to the next
     // student.
-    const queueForReplay = async () => {
+    const queueForReplay = async (
+      preGradedVerdicts?: Array<Record<string, unknown>>,
+    ) => {
       try {
         await queueMarkingScan({
           teacher_id: user?.id ?? '',
@@ -334,6 +336,9 @@ export default function PageReviewScreen() {
           answer_key_id: answerKeyId,
           education_level: educationLevel,
           pages: pages.map(p => ({ uri: p.uri })),
+          // When supplied, the cloud will skip its own grading call on
+          // replay and persist these verdicts as the canonical Mark.
+          pre_graded_verdicts: preGradedVerdicts,
         });
       } catch {
         // Best-effort.
@@ -419,16 +424,14 @@ export default function PageReviewScreen() {
             verdict_page_indices: graded.verdicts.map(v => v.page_index),
           };
 
-          // Queue the same scan for cloud replay so the database eventually
-          // gets a canonical Mark for this submission. The local result we
-          // just built is a transient preview shown to the teacher right
-          // now; the cloud replay (fired when offlineQueue's network
-          // listener detects connectivity) creates the persistent Mark in
-          // Firestore. Without this enqueue, an offline-graded submission
-          // is purely client-side and never reaches the database — so a
-          // teacher's home / class views, the student's results screen,
-          // and analytics would all miss it.
-          await queueForReplay();
+          // Queue the same scan PLUS the verdicts we just produced for
+          // cloud sync. When the network listener picks this up on
+          // reconnect, it posts pre_graded_verdicts to /api/mark and the
+          // backend skips its own grading call — our E2B verdicts become
+          // the canonical Mark in Firestore (still subject to the same
+          // dedupe + clamp guards server-side). No re-grading, no Vertex
+          // spend, and the screen the teacher saw matches the database.
+          await queueForReplay(graded.verdicts as unknown as Array<Record<string, unknown>>);
 
           navigation.navigate('Mark', {
             class_id: classId,
