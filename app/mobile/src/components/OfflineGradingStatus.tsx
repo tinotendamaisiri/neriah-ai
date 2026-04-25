@@ -27,7 +27,7 @@ import {
 import { isOcrAvailable } from '../services/ocr';
 import { COLORS } from '../constants/colors';
 
-type PillKind = 'ready' | 'downloading' | 'need-download' | 'loading' | 'rebuild';
+type PillKind = 'downloading' | 'installing' | 'need-download' | 'loading' | 'rebuild';
 
 interface Tone {
   bg: string;
@@ -36,8 +36,8 @@ interface Tone {
 }
 
 const TONES: Record<PillKind, Tone> = {
-  ready:          { bg: COLORS.teal50,   fg: COLORS.teal700, icon: 'checkmark-circle' },
   downloading:    { bg: COLORS.teal50,   fg: COLORS.teal700, icon: 'cloud-download' },
+  installing:     { bg: COLORS.teal50,   fg: COLORS.teal700, icon: 'cog' },
   'need-download':{ bg: COLORS.amber50,  fg: COLORS.amber500,icon: 'cloud-offline' },
   loading:        { bg: COLORS.teal50,   fg: COLORS.teal700, icon: 'sync' },
   // Rebuild-required intentionally uses a subtler grey so it reads as "dev
@@ -47,8 +47,8 @@ const TONES: Record<PillKind, Tone> = {
 
 function labelFor(kind: PillKind, progress: number): string {
   switch (kind) {
-    case 'ready':           return 'Offline grading ready';
     case 'downloading':     return `Downloading AI model — ${Math.round(progress)}%`;
+    case 'installing':      return 'Installing AI model…';
     case 'need-download':   return 'Offline grading: tap to download model';
     case 'loading':         return 'Loading AI model…';
     case 'rebuild':         return 'Offline grading: rebuild required';
@@ -78,6 +78,13 @@ export default function OfflineGradingStatus() {
   }
 
   if (status === 'downloading') {
+    // Once progress hits 100, the library's native init phase is running
+    // (no progress feedback for 20–30s on a 3 GB model). Flip the label
+    // to "Installing AI model…" so the teacher doesn't stare at a stuck
+    // "Downloading — 100%" — same fix as SettingsScreen's progress bar.
+    if (progress >= 99) {
+      return <Pill kind="installing" progress={progress} />;
+    }
     return <Pill kind="downloading" progress={progress} />;
   }
 
@@ -90,7 +97,12 @@ export default function OfflineGradingStatus() {
     return <Pill kind="loading" progress={0} />;
   }
 
-  return <Pill kind="ready" progress={0} />;
+  // Fully ready — model downloaded AND loaded into native memory. Hide the
+  // pill entirely. Teachers shouldn't see an "Offline grading ready" badge
+  // forever on every screen — the absence of the pill *is* the ready state.
+  // Settings still has its own "Offline mode ready ✓" indicator for users
+  // who want to verify.
+  return null;
 }
 
 interface PillProps {
