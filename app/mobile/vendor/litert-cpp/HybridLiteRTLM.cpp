@@ -326,37 +326,41 @@ void HybridLiteRTLM::loadModelInternal(
     // We restore stderr unconditionally in cleanup() below so that even
     // if the C call crashes/aborts mid-flight (it shouldn't but defense
     // in depth), the process's stderr is back to normal afterwards.
-    int saved_stderr = dup(STDERR_FILENO);
+    // Use ::-prefixed syscalls because some unqualified names (close, read)
+    // collide with C++ stream member functions imported into this scope by
+    // upstream headers — Xcode flags them as "too many arguments to
+    // function call, expected 0, have 1".
+    int saved_stderr = ::dup(STDERR_FILENO);
     int pipe_fds[2] = {-1, -1};
     bool capture_active = false;
-    if (saved_stderr >= 0 && pipe(pipe_fds) == 0) {
+    if (saved_stderr >= 0 && ::pipe(pipe_fds) == 0) {
       // Make the read end non-blocking so we never hang draining.
-      int flags = fcntl(pipe_fds[0], F_GETFL, 0);
-      if (flags >= 0) fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
-      if (dup2(pipe_fds[1], STDERR_FILENO) >= 0) {
+      int flags = ::fcntl(pipe_fds[0], F_GETFL, 0);
+      if (flags >= 0) ::fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
+      if (::dup2(pipe_fds[1], STDERR_FILENO) >= 0) {
         capture_active = true;
       }
     }
 
     auto cleanup_stderr = [&]() -> std::string {
       if (!capture_active) {
-        if (saved_stderr >= 0) close(saved_stderr);
-        if (pipe_fds[0] >= 0) close(pipe_fds[0]);
-        if (pipe_fds[1] >= 0) close(pipe_fds[1]);
+        if (saved_stderr >= 0) ::close(saved_stderr);
+        if (pipe_fds[0] >= 0) ::close(pipe_fds[0]);
+        if (pipe_fds[1] >= 0) ::close(pipe_fds[1]);
         return "";
       }
       // Make sure any buffered stderr writes are flushed to our pipe before
       // we restore the real stderr.
       fflush(stderr);
-      dup2(saved_stderr, STDERR_FILENO);
-      close(saved_stderr);
-      close(pipe_fds[1]);
+      ::dup2(saved_stderr, STDERR_FILENO);
+      ::close(saved_stderr);
+      ::close(pipe_fds[1]);
       // Drain. Bounded read because some absl logs are noisy and we don't
       // want to dump kilobytes into the JS-facing error string.
       std::string captured;
       char buf[2048];
       ssize_t n;
-      while ((n = read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
+      while ((n = ::read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
         buf[n] = '\0';
         captured += buf;
         if (captured.size() > 1500) {
@@ -365,7 +369,7 @@ void HybridLiteRTLM::loadModelInternal(
           break;
         }
       }
-      close(pipe_fds[0]);
+      ::close(pipe_fds[0]);
       // Strip trailing whitespace / newlines that pollute the JS string.
       while (!captured.empty() &&
              (captured.back() == '\n' || captured.back() == '\r' ||
