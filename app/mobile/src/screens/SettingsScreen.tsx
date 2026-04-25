@@ -407,10 +407,23 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* Error state */}
+          {/* Error state — show the real message so we can diagnose what
+              actually failed (missing native symbol, OOM, corrupt file,
+              network reset on the last byte, etc.) instead of a useless
+              generic "Download failed". */}
           {modelStatus === 'error' && (
-            <TouchableOpacity onPress={acceptDownload} style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-              <Text style={{ fontSize: 13, color: COLORS.error }}>Download failed — tap to retry</Text>
+            <TouchableOpacity
+              onPress={acceptDownload}
+              style={{ paddingHorizontal: 14, paddingBottom: 12 }}
+            >
+              <Text style={{ fontSize: 13, color: COLORS.error, fontWeight: '600' }}>
+                Download failed — tap to retry
+              </Text>
+              {modelError ? (
+                <Text style={{ fontSize: 11, color: COLORS.error, marginTop: 4 }} selectable>
+                  {modelError}
+                </Text>
+              ) : null}
             </TouchableOpacity>
           )}
         </View>

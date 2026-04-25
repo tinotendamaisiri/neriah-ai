@@ -39,6 +39,7 @@ export default function OfflineModelBanner() {
     progress,
     modelReady,
     variant,
+    errorMessage,
     showWifiNudge,
     acceptDownload,
     dismissWifiNudge,
@@ -56,6 +57,34 @@ export default function OfflineModelBanner() {
 
   // Fully ready — silent. Absence of banner = success.
   if (modelReady && status === 'done') return null;
+
+  // ── Error state ─────────────────────────────────────────────────────────
+  // Surface the real error message instead of a generic "Download failed".
+  // If the underlying problem is a missing native symbol, an OOM during
+  // engine init, or a corrupt downloaded file, the message will say so —
+  // and the teacher can paste it back to us instead of just saying
+  // "didn't work". Tap to retry restarts loadModel from scratch.
+  if (status === 'error') {
+    return (
+      <View style={[styles.banner, styles.bannerError]}>
+        <View style={styles.row}>
+          <Ionicons name="alert-circle-outline" size={16} color={COLORS.error} />
+          <Text style={[styles.text, styles.textError]} numberOfLines={5}>
+            {' '}Offline AI download failed{errorMessage ? `: ${errorMessage}` : ''}
+          </Text>
+        </View>
+        <View style={styles.actions}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => { void acceptDownload(); }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.primaryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   // ── Active download / install / paused ────────────────────────────────────
   if (status === 'downloading' || status === 'paused') {
@@ -144,6 +173,15 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: COLORS.teal100,
+  },
+  // Error variant — same shape, red-tinted so it doesn't blend with the
+  // "everything's fine" teal of the normal banner states.
+  bannerError: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+  },
+  textError: {
+    color: COLORS.error,
   },
   row: {
     flexDirection: 'row',
