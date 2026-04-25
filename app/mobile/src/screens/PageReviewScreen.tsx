@@ -63,6 +63,32 @@ function _uid(): string {
   return `pg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * True when an answer key's subject string looks like math.
+ * Used to gate offline grading — E2B (the on-device model both roles
+ * share) can't reliably grade multi-step math, and MLKit OCR mangles
+ * handwritten math notation before the LLM sees it. We block the
+ * offline path for math-flavoured subjects and queue the scan for
+ * cloud replay instead.
+ *
+ * Kept permissive — substring matches catch "Mathematics", "Maths Paper 2",
+ * "Algebra 1", etc. Physics / Chemistry / Biology stay offline-eligible
+ * because their grading is closer to text recall + concept matching, where
+ * E2B handles itself well; only pure math / its sub-disciplines are gated.
+ */
+function isMathSubject(subject?: string | null): boolean {
+  if (!subject) return false;
+  const s = subject.toLowerCase();
+  return (
+    s.includes('math') ||
+    s.includes('algebra') ||
+    s.includes('geometry') ||
+    s.includes('calculus') ||
+    s.includes('trigonometry') ||
+    s.includes('arithmetic')
+  );
+}
+
 // ── ZoomableImage ────────────────────────────────────────────────────────────
 // Pinch-to-zoom image tile used inside the horizontal paginated pager.
 //
@@ -318,14 +344,29 @@ export default function PageReviewScreen() {
       const route = await resolveRoute('grading');
 
       // ── On-device route ──────────────────────────────────────────────────
-      // Run OCR on each page + grade via the loaded LiteRT E4B model. The
+      // Run OCR on each page + grade via the loaded LiteRT E2B model. The
       // resulting verdicts are the same shape the cloud would return, so
       // the existing MarkResult UI handles everything downstream.
+      //
+      // Math gate: E2B can't reliably grade multi-step math (and MLKit
+      // mangles handwritten math notation before any LLM sees it). For
+      // any homework where the answer key's subject is math-flavoured,
+      // we skip offline grading entirely — queue for cloud replay and
+      // tell the teacher this one needs internet.
       //
       // If the answer key wasn't threaded through the route params (older
       // call sites) we can't grade locally — fall back to queue-for-replay
       // with the cloud-sync message.
       if (route === 'on-device') {
+        if (isMathSubject(answerKey?.subject)) {
+          await queueForReplay();
+          Alert.alert(
+            'Math grading needs internet',
+            "Maths takes a stronger AI than your phone can run offline. We've saved this submission and will grade it as soon as you reconnect.",
+            [{ text: 'OK', onPress: () => navigation.goBack() }],
+          );
+          return;
+        }
         if (!answerKey) {
           await queueForReplay();
           Alert.alert(

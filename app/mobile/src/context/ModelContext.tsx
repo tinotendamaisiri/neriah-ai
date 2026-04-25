@@ -130,15 +130,22 @@ export function useModel(): ModelContextValue {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Which variant a given role *requires*. There is no graceful downgrade:
- * a teacher whose device can't run E4B is routed cloud-only, not given
- * E2B as a fallback (E2B is the wrong model for grading and would
- * silently produce worse results).
+ * Which variant a logged-in user gets. Both roles now share E2B:
+ *
+ *   - Most African teacher phones can't run E4B (need 8+ GB RAM); leaving
+ *     them on cloud-only for everything excludes the majority of the
+ *     market from offline grading entirely.
+ *   - E2B handles short-answer text grading well; the gap to E4B/cloud
+ *     is biggest on math, where we now block offline grading explicitly
+ *     in PageReviewScreen and require the teacher to submit online for
+ *     math homeworks.
+ *
+ * Returns null until auth has loaded so the boot effect waits for role
+ * before running the device-capability check.
  */
 function requiredVariantForRole(role: 'teacher' | 'student' | undefined): ModelVariant | null {
-  if (role === 'teacher') return 'e4b';
-  if (role === 'student') return 'e2b';
-  return null; // unknown role yet (auth still loading) — defer
+  if (role === 'teacher' || role === 'student') return 'e2b';
+  return null;
 }
 
 async function isWifi(): Promise<boolean> {

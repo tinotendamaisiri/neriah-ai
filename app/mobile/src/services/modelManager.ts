@@ -77,9 +77,12 @@ export const MODEL_SIZE_LABEL: Record<ModelVariant, string> = {
   e4b: '3 GB',
 };
 
+// Both roles share E2B as of the E4B-removal pass — neutral label so the
+// Settings copy reads cleanly for teachers and students alike. E4B's entry
+// is kept for type completeness; nothing in the live code path reads it.
 export const MODEL_DISPLAY_NAME: Record<ModelVariant, string> = {
-  e2b: 'Gemma 4 E2B — Student AI',
-  e4b: 'Gemma 4 E4B — Teacher AI',
+  e2b: 'Neriah Offline AI (Gemma 4 E2B)',
+  e4b: 'Neriah Offline AI (Gemma 4 E4B)',
 };
 
 // ── Active download tracking ──────────────────────────────────────────────────

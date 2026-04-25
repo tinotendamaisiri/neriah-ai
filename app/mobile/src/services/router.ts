@@ -61,11 +61,19 @@ export function routeRequest(isOnline: boolean, modelLoaded: boolean): AIRoute {
 
 /**
  * Returns the LiteRT model variant needed for a given request type.
- * Teacher operations (grading, scheme) need the larger E4B model;
- * student tutoring uses the lighter E2B model.
+ *
+ * As of the E4B-removal pass, both teacher and student paths use E2B
+ * regardless of request type. Math grading is gated separately in
+ * PageReviewScreen — when offline + math, the submission is queued for
+ * cloud replay rather than fed to E2B (which can't reliably grade
+ * multi-step math).
+ *
+ * Kept as a function (not a const) so callers can be retrofitted later
+ * if we re-introduce per-task model selection.
  */
-export function modelVariantForRequest(requestType: AIRequestType): ModelVariant {
-  return requestType === 'tutoring' ? 'e2b' : 'e4b';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function modelVariantForRequest(_requestType: AIRequestType): ModelVariant {
+  return 'e2b';
 }
 
 // ── Async route resolution ────────────────────────────────────────────────────
