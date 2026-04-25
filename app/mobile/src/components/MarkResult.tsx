@@ -29,6 +29,7 @@ import { COLORS } from '../constants/colors';
 import { updateMark, deleteMark } from '../services/api';
 import EditVerdictModal from './EditVerdictModal';
 import LocalAnnotationOverlay from './LocalAnnotationOverlay';
+import OfflineGradedToast from './OfflineGradedToast';
 
 interface MarkResultProps {
   result: MarkResult;
@@ -274,6 +275,9 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
 
   return (
     <View style={styles.flex}>
+      {/* Transient "Graded on-device" badge — shows for 5 s after a local
+          grade completes, silent for cloud grades. */}
+      <OfflineGradedToast visible={isLocallyGraded} />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
