@@ -12,7 +12,7 @@
 // Public TypeScript surface kept stable for the rest of the app:
 //   loadModel, generateResponse, isNativeModuleAvailable, getLiteRTState,
 //   subscribeToLiteRT, unloadModel, deleteCachedModel, ModelVariant,
-//   MODEL_URLS, OcrPageInput, OnDeviceUserContext, buildGradingPrompt,
+//   OcrPageInput, OnDeviceUserContext, buildGradingPrompt,
 //   buildTutorPrompt, serializeUserContext.
 //
 // LiteRTState shape:
@@ -30,6 +30,7 @@
 // of the app keeps working.
 
 import { Platform } from 'react-native';
+import { ensureModelDownloaded, type ModelVariant as _ModelVariant } from './modelManager';
 
 // ── Native module interface ───────────────────────────────────────────────────
 // Hand-typed minimal surface — matches the public API described in
@@ -84,31 +85,12 @@ function getLib(): LiteRTLibrary | null {
   return _lib;
 }
 
-// ── Model URLs (hosted by Google's LiteRT community on HuggingFace) ──────────
-//
-// These are the same URLs the library exports as GEMMA_4_E2B_IT /
-// GEMMA_4_E4B_IT constants. We inline them rather than import them so this
-// file doesn't eagerly import the lib (which would crash at module-load
-// time in Expo Go where the native binding doesn't resolve).
-//
-// On first call, the library downloads the .litertlm file under the
-// filename extracted from the URL (e.g. "gemma-4-E4B-it.litertlm"), caches
-// it in a per-OS directory (Android: app temp; iOS: Library/Caches/
-// litert_models/), and reuses it on subsequent calls.
+// ── Model variant ────────────────────────────────────────────────────────────
+// The download URLs + local cache paths live in modelManager.ts (which owns
+// the resumable download state machine). This file only deals with the
+// native init phase.
 
-export const MODEL_URLS = {
-  e2b: 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm',
-  e4b: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm',
-} as const;
-
-export type ModelVariant = keyof typeof MODEL_URLS;
-
-/** Extract the cache filename the library uses for a variant — handy for
- *  deleteModel calls, which want the filename, not the URL. */
-function cacheFileName(variant: ModelVariant): string {
-  const url = MODEL_URLS[variant];
-  return url.split('/').pop() ?? `${variant}.litertlm`;
-}
+export type ModelVariant = _ModelVariant;
 
 // ── Singleton state ───────────────────────────────────────────────────────────
 
@@ -220,28 +202,28 @@ export async function loadModel(
         _state.loadedModel = null;
       }
 
-      const instance = lib.createLLM();
-      await instance.loadModel(
-        MODEL_URLS[model],
-        {
-          // Default to CPU — most Android devices LiteRT-LM targets don't have
-          // reliable GPU support for Gemma 4. Teachers on flagship phones can
-          // flip this to 'gpu' later via a settings toggle if we surface one.
-          backend: 'cpu',
-        },
-        (progress: number) => {
-          // Library reports 0–1 fractional. Normalise to 0–100 for the rest
-          // of the app (existing ModelContext progress UI assumes 0–100).
-          const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-          _state.progress = pct;
-          _notify();
-          if (onProgress) onProgress(pct);
-        },
-      );
+      // 1. Download (with resume) via modelManager. Progress 0–99 during
+      //    download; bumps to 100 when the file is on disk.
+      const localPath = await ensureModelDownloaded(model, (pct) => {
+        _state.progress = pct;
+        _notify();
+        if (onProgress) onProgress(pct);
+      });
 
-      // Library resolved — either cache hit, or download + init complete.
-      // Force progress to 100 so subscribers see a clean finish even if the
-      // final progress callback never fired (cache-hit path skips downloads).
+      // 2. Native init. No progress signal during this phase — progress
+      //    stays at 100, and the Settings UI shows "Installing AI model"
+      //    once >= 99% (see SettingsScreen.DownloadProgress).
+      //    We strip any "file://" prefix because the native loader expects
+      //    a bare filesystem path.
+      const nativePath = localPath.replace(/^file:\/\//, '');
+      const instance = lib.createLLM();
+      await instance.loadModel(nativePath, {
+        // Default to CPU — most Android devices LiteRT-LM targets don't
+        // have reliable GPU support for Gemma 4. Teachers on flagship
+        // phones can flip this to 'gpu' later via a Settings toggle.
+        backend: 'cpu',
+      });
+
       _llm = instance;
       _state.loadedModel = model;
       _state.progress = 100;
@@ -265,31 +247,17 @@ export async function loadModel(
 }
 
 /**
- * Delete the library's cached .litertlm file for a variant, freeing the
- * device storage it was occupying. Also unloads the model from memory if
- * it was loaded, so the file isn't held open during the delete.
+ * Unload the current native model instance (if any) for the given variant.
+ * Callers that want to fully delete the cached file should also call
+ * modelManager.deleteModelFile(variant) — this function only releases the
+ * native session, it does NOT touch the filesystem.
  *
- * No-op if the native module isn't linked.
+ * Kept as a named export under the previous name for backward compat with
+ * call sites that used to rely on the library's built-in cache deletion.
  */
 export async function deleteCachedModel(variant: ModelVariant): Promise<void> {
-  const lib = getLib();
-  if (!lib) return;
-
-  // Drop the in-memory instance first so it's not holding the file.
-  if (_state.loadedModel === variant && _llm) {
-    try { _llm.close(); } catch { /* best-effort */ }
-    _llm = null;
-    _state.loadedModel = null;
-    _notify();
-  }
-
-  // The native deleteModel API hangs off any LLM instance. Create a
-  // disposable one just for this call.
-  const temp = lib.createLLM();
-  try {
-    await temp.deleteModel(cacheFileName(variant));
-  } finally {
-    try { temp.close(); } catch { /* best-effort */ }
+  if (_state.loadedModel === variant) {
+    unloadModel();
   }
 }
 

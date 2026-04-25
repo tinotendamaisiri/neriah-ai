@@ -37,7 +37,6 @@ import {
 
 export type { DeviceCapability };
 import {
-  startDownload,
   pauseDownload as pauseMgr,
   cancelDownload as cancelMgr,
   deleteModelFile,
@@ -293,6 +292,32 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
 
   // ── acceptDownload ─────────────────────────────────────────────────────────
 
+  // Shared download/load runner — used by acceptDownload, resumeDownload,
+  // and the Wi-Fi auto-download handler. Wraps litert.loadModel (which
+  // internally delegates to modelManager.ensureModelDownloaded for the
+  // resumable download + the library for native init) and translates
+  // success/pause/cancel/error into ModelContext state.
+  const runDownload = useCallback(async (v: ModelVariant) => {
+    setStatus('downloading');
+    setErrorMessage(null);
+    try {
+      await loadModel(v, (pct) => setProgress(pct));
+      await SecureStore.setItemAsync(MODEL_DOWNLOADED_KEY, 'true').catch(() => {});
+      setStatus('done');
+      setModelReady(true);
+      setProgress(100);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // pauseAsync() throws with "paused" (or "cancelled") — not a real
+      // error. Status is already set by the pause handler for the Wi-Fi
+      // branch; for user-initiated pauses we shouldn't overwrite it with
+      // 'error' either. Just return silently.
+      if (msg.includes('paused') || msg.includes('cancelled')) return;
+      setStatus('error');
+      setErrorMessage(msg);
+    }
+  }, []);
+
   const acceptDownload = useCallback(async () => {
     setShowPrompt(false);
     await SecureStore.setItemAsync(DOWNLOAD_PROMPTED_KEY, 'true').catch(() => {});
@@ -311,17 +336,9 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setStatus('downloading');
     setProgress(0);
-    setErrorMessage(null);
-
-    await startDownload(
-      v,
-      (pct) => setProgress(pct),
-      () => { setStatus('done'); setModelReady(true); setProgress(100); },
-      (msg) => { setStatus('error'); setErrorMessage(msg); },
-    );
-  }, []);
+    await runDownload(v);
+  }, [runDownload]);
 
   // ── skipDownload ───────────────────────────────────────────────────────────
 
@@ -351,16 +368,10 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setStatus('downloading');
-    setErrorMessage(null);
-
-    await startDownload(
-      v,
-      (pct) => setProgress(pct),
-      () => { setStatus('done'); setModelReady(true); setProgress(100); },
-      (msg) => { setStatus('error'); setErrorMessage(msg); },
-    );
-  }, []);
+    // ensureModelDownloaded picks up the saved DownloadPauseState and
+    // resumes from the last committed byte — no fresh restart.
+    await runDownload(v);
+  }, [runDownload]);
 
   // ── cancelDownload ─────────────────────────────────────────────────────────
 
@@ -503,25 +514,24 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
           );
         }
 
-        setStatus('downloading');
-        setProgress(0);
-        setErrorMessage(null);
-
-        await startDownload(
-          v,
-          (pct) => setProgress(pct),
-          () => { setStatus('done'); setModelReady(true); setProgress(100); },
-          (msg) => { setStatus('error'); setErrorMessage(msg); autoDownloadStartedRef.current = false; },
-        );
+        // If there's saved savable state, runDownload resumes from it
+        // automatically (ensureModelDownloaded handles that). Otherwise
+        // it starts fresh. Don't reset progress when resuming so the UI
+        // doesn't bounce visually.
+        await runDownload(v);
+        if (status === 'error') {
+          autoDownloadStartedRef.current = false;
+        }
+      } else if (!onWifi && status === 'downloading') {
+        // Wi-Fi dropped mid-download. modelManager.pauseDownload actually
+        // pauses now (we own the DownloadResumable) and persists savable
+        // state, so the next Wi-Fi reconnect resumes from the last
+        // committed byte instead of starting over.
+        console.log('[ModelProvider] Wi-Fi lost — pausing download');
+        await pauseMgr();
+        setStatus('paused');
+        autoDownloadStartedRef.current = false; // allow auto-resume on reconnect
       }
-      // Wi-Fi-drop pause branch removed: react-native-litert-lm has no pause
-      // API, so pauseMgr() was a no-op. The old branch still flipped status
-      // to 'paused' and reset autoDownloadStartedRef, which on the next
-      // Wi-Fi reconnect kicked off a *second* startDownload for the same
-      // variant mid-init — resulting in the progress bar bouncing back to
-      // 0% and counting to 100% a second time. The library keeps the
-      // download running across network flickers internally, so the safer
-      // thing is to do nothing here and let the in-flight loadModel finish.
     });
 
     return unsubscribe;
