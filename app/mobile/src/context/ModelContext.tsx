@@ -513,13 +513,15 @@ function ModelProviderNative({ children }: { children: React.ReactNode }) {
           () => { setStatus('done'); setModelReady(true); setProgress(100); },
           (msg) => { setStatus('error'); setErrorMessage(msg); autoDownloadStartedRef.current = false; },
         );
-      } else if (!onWifi && status === 'downloading') {
-        // Wi-Fi dropped mid-download — pause
-        console.log('[ModelProvider] Wi-Fi lost — pausing download');
-        await pauseMgr();
-        setStatus('paused');
-        autoDownloadStartedRef.current = false; // allow resume on next Wi-Fi connect
       }
+      // Wi-Fi-drop pause branch removed: react-native-litert-lm has no pause
+      // API, so pauseMgr() was a no-op. The old branch still flipped status
+      // to 'paused' and reset autoDownloadStartedRef, which on the next
+      // Wi-Fi reconnect kicked off a *second* startDownload for the same
+      // variant mid-init — resulting in the progress bar bouncing back to
+      // 0% and counting to 100% a second time. The library keeps the
+      // download running across network flickers internally, so the safer
+      // thing is to do nothing here and let the in-flight loadModel finish.
     });
 
     return unsubscribe;

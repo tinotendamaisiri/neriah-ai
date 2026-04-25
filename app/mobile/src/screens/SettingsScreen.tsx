@@ -63,9 +63,16 @@ function DownloadProgress({ progress, paused }: { progress: number; paused: bool
 
   const isPaused = paused || stalled;
   const barColor = isPaused ? '#F59E0B' : COLORS.teal500;
+  // Once progress hits 100, the library has finished downloading but may
+  // still be initialising the native session (takes 20–30s on a 3 GB
+  // model). We don't get a progress signal during that phase, so surface
+  // an honest "Installing…" label instead of a stuck "Downloading 100%".
+  const isInstalling = !isPaused && displayPct >= 100;
   const label = isPaused
     ? `Paused — ${displayPct}% complete. Will resume when connected.`
-    : `Downloading — ${displayPct}% complete`;
+    : isInstalling
+      ? 'Installing AI model — this can take a minute…'
+      : `Downloading — ${displayPct}% complete`;
 
   const widthInterp = animWidth.interpolate({
     inputRange: [0, 100],

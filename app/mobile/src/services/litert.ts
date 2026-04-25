@@ -141,6 +141,15 @@ function _notify() {
 // it if we ever swap to a different variant.
 let _llm: LiteRTInstance | null = null;
 
+// Concurrent-load dedup. Without this, a Wi-Fi flicker during the native
+// init phase (which can take 20–30s after the download reports 100%)
+// triggers ModelContext's auto-download branch to start a *second*
+// loadModel call on the same variant, which resets the progress bar to
+// 0% and re-runs the whole pipeline. The in-flight promise is shared —
+// subsequent callers await the original work instead of kicking off a
+// parallel one.
+const _inFlight: Map<ModelVariant, Promise<void>> = new Map();
+
 /** Subscribe to LiteRT state changes. Returns an unsubscribe function. */
 export function subscribeToLiteRT(listener: () => void): () => void {
   _listeners.add(listener);
@@ -190,52 +199,68 @@ export async function loadModel(
   if (!lib) throw new Error('react-native-litert-lm native module not linked. Rebuild the app after installing the package.');
   if (_state.loadedModel === model && _llm) return;
 
-  _state.isLoading = true;
-  _state.progress = 0;
-  _state.error = null;
-  _notify();
+  // Join an in-flight load for the same variant instead of starting a
+  // parallel one. onProgress only fires on the original caller; secondary
+  // callers can watch state changes via subscribeToLiteRT() if they need
+  // realtime feedback — they will at least wait for the same completion.
+  const existing = _inFlight.get(model);
+  if (existing) return existing;
 
-  try {
-    // If a different variant is loaded, drop the old instance cleanly.
-    if (_llm && _state.loadedModel !== model) {
-      try { _llm.close(); } catch { /* best-effort */ }
-      _llm = null;
-      _state.loadedModel = null;
-    }
-
-    const instance = lib.createLLM();
-    await instance.loadModel(
-      MODEL_URLS[model],
-      {
-        // Default to CPU — most Android devices LiteRT-LM targets don't have
-        // reliable GPU support for Gemma 4. Teachers on flagship phones can
-        // flip this to 'gpu' later via a settings toggle if we surface one.
-        backend: 'cpu',
-      },
-      (progress: number) => {
-        // Library reports 0–1 fractional. Normalise to 0–100 for the rest
-        // of the app (existing ModelContext progress UI assumes 0–100).
-        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-        _state.progress = pct;
-        _notify();
-        if (onProgress) onProgress(pct);
-      },
-    );
-
-    // Library resolved — either cache hit, or download + init complete.
-    // Force progress to 100 so subscribers see a clean finish even if the
-    // final progress callback never fired (cache-hit path skips downloads).
-    _llm = instance;
-    _state.loadedModel = model;
-    _state.progress = 100;
-  } catch (err: any) {
-    _state.error = err?.message ?? 'Unknown error loading model';
-    _state.loadedModel = null;
-    _llm = null;
-    throw err;
-  } finally {
-    _state.isLoading = false;
+  const task = (async () => {
+    _state.isLoading = true;
+    _state.progress = 0;
+    _state.error = null;
     _notify();
+
+    try {
+      // If a different variant is loaded, drop the old instance cleanly.
+      if (_llm && _state.loadedModel !== model) {
+        try { _llm.close(); } catch { /* best-effort */ }
+        _llm = null;
+        _state.loadedModel = null;
+      }
+
+      const instance = lib.createLLM();
+      await instance.loadModel(
+        MODEL_URLS[model],
+        {
+          // Default to CPU — most Android devices LiteRT-LM targets don't have
+          // reliable GPU support for Gemma 4. Teachers on flagship phones can
+          // flip this to 'gpu' later via a settings toggle if we surface one.
+          backend: 'cpu',
+        },
+        (progress: number) => {
+          // Library reports 0–1 fractional. Normalise to 0–100 for the rest
+          // of the app (existing ModelContext progress UI assumes 0–100).
+          const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+          _state.progress = pct;
+          _notify();
+          if (onProgress) onProgress(pct);
+        },
+      );
+
+      // Library resolved — either cache hit, or download + init complete.
+      // Force progress to 100 so subscribers see a clean finish even if the
+      // final progress callback never fired (cache-hit path skips downloads).
+      _llm = instance;
+      _state.loadedModel = model;
+      _state.progress = 100;
+    } catch (err: any) {
+      _state.error = err?.message ?? 'Unknown error loading model';
+      _state.loadedModel = null;
+      _llm = null;
+      throw err;
+    } finally {
+      _state.isLoading = false;
+      _notify();
+    }
+  })();
+
+  _inFlight.set(model, task);
+  try {
+    await task;
+  } finally {
+    _inFlight.delete(model);
   }
 }
 
