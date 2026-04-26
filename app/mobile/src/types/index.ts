@@ -98,6 +98,12 @@ export interface AnswerKey {
   created_at: string;
   due_date?: string;
   status?: string | null; // "pending_setup" = unlabeled auto-created, null/undefined = normal
+  /** Short code printed on the slip students copy into their email
+   *  subject line ("Code: HW7K2P") so the inbound poller can resolve
+   *  the homework directly without fuzzy school/class matching.
+   *  Optional because legacy AnswerKey docs from before this field
+   *  was added won't have one. */
+  submission_code?: string;
 }
 
 export interface GradingVerdict {

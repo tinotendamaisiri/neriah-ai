@@ -203,6 +203,16 @@ function HomeworkRow({ hw, onPress }: { hw: HomeworkItem; onPress: () => void })
         {hw.education_level ? (
           <Text style={card.metaChip}>{hw.education_level}</Text>
         ) : null}
+        {hw.submission_code ? (
+          <Text
+            style={card.codeChip}
+            // Long-press to select; the system selection menu lets the
+            // teacher Copy. No extra native dep needed.
+            selectable
+          >
+            Code: {hw.submission_code}
+          </Text>
+        ) : null}
       </View>
 
       {hw.due_date ? (
@@ -313,6 +323,15 @@ const card = StyleSheet.create({
   metaChip: {
     fontSize: 11, color: COLORS.teal500, fontWeight: '600',
     backgroundColor: COLORS.teal50, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
+  },
+  // Visually distinct from metaChip so the code stands out — it's the
+  // one piece of metadata teachers will be sharing with students.
+  // Mono-ish font + amber background so it looks like a stamp.
+  codeChip: {
+    fontSize: 11, color: COLORS.amber500, fontWeight: '700',
+    backgroundColor: COLORS.amber50, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
+    fontFamily: 'Menlo',
+    letterSpacing: 0.5,
   },
   due: { fontSize: 12, color: COLORS.textLight, marginBottom: 4 },
   dueOverdue: { color: COLORS.error, fontWeight: '600' },

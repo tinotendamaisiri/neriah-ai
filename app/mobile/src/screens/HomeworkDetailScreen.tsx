@@ -15,6 +15,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Share,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
@@ -433,7 +434,38 @@ export default function HomeworkDetailScreen() {
             <InfoRow label="Total marks" value={String(answerKey.total_marks)} />
           )}
           <InfoRow label="AI generated" value={answerKey.generated ? 'Yes' : 'No'} />
+          {answerKey.submission_code && (
+            <InfoRow label="Submission code" value={answerKey.submission_code} />
+          )}
         </View>
+
+        {/* Share-with-students card. Only shown when the homework has
+            a submission code — older homework without one falls back to
+            the fuzzy email path and doesn't need this surface. The share
+            sheet pre-fills the exact subject line students need to copy
+            so a single tap-and-paste in their mail app gets the format
+            right. */}
+        {answerKey.submission_code && (
+          <TouchableOpacity
+            style={styles.shareCard}
+            activeOpacity={0.85}
+            onPress={() => {
+              const code = answerKey.submission_code;
+              const message =
+                `Submit your homework "${answerKey.title || 'Homework'}" by emailing ` +
+                `mark@neriah.ai with this exact subject:\n\n` +
+                `Name: Your Full Name | Code: ${code}\n\n` +
+                `Attach a clear photo or PDF of your answers.`;
+              Share.share({
+                message,
+                title: 'Submit homework to Neriah',
+              }).catch(() => {/* user cancelled */});
+            }}
+          >
+            <Ionicons name="share-outline" size={18} color={COLORS.white} style={{ marginRight: 8 }} />
+            <Text style={styles.shareCardText}>Share with students</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Setup section — shown when no questions yet */}
         {!hasQuestions && (
@@ -793,6 +825,22 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: COLORS.background },
   content: { paddingBottom: 20 },
+  shareCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.teal500,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  shareCardText: {
+    color: COLORS.white,
+    fontWeight: '700',
+    fontSize: 15,
+  },
   centre: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
   notFound: { fontSize: 16, color: COLORS.gray500, marginBottom: 12 },
   backLink: { fontSize: 16, color: COLORS.teal500 },
