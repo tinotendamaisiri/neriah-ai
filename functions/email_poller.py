@@ -184,13 +184,20 @@ def _process_message(parsed: ParsedEmail) -> str:
         send_format_error(student_email=sender, reason=reason)
         return FAILED_FOLDER
 
-    # Resolve the student. parse_subject pulls Name/Class/School from the
-    # subject line (or first 500 chars of body fallback).
+    # Resolve the student. parse_subject accepts either:
+    #   - "Name: Alice | Code: HW7K2P"           (preferred — exact)
+    #   - "Name: Alice | Class: Form 4A | School: St Marys" (fuzzy fallback)
+    # See shared/student_matcher.py for the full grammar.
     fields = parse_subject(parsed.subject, parsed.body_text)
     if fields is None:
         send_format_error(
             student_email=sender,
-            reason="We couldn't read your name, class, and school from the subject line.",
+            reason=(
+                "We couldn't read your details from the subject line. "
+                "Use either: 'Name: Your Name | Code: ABC123' (the code is "
+                "on your homework slip) or 'Name: Your Name | Class: Form 4A | "
+                "School: Your School'."
+            ),
         )
         return FAILED_FOLDER
 
@@ -200,6 +207,7 @@ def _process_message(parsed: ParsedEmail) -> str:
         MatchStatus.NOT_FOUND_CLASS,
         MatchStatus.AMBIGUOUS_SCHOOL,
         MatchStatus.AMBIGUOUS_CLASS,
+        MatchStatus.NOT_FOUND_CODE,
     ):
         send_format_error(student_email=sender, reason=match.reason)
         return FAILED_FOLDER
@@ -208,26 +216,29 @@ def _process_message(parsed: ParsedEmail) -> str:
     student = match.student or {}
     class_doc = match.class_doc or {}
 
-    # Find an answer key for this class. v1 picks the most recently
-    # created one (teachers typically have one current homework live);
-    # the matcher could later read a homework code from the subject for
-    # disambiguation, but that's beyond v1 scope.
-    answer_keys = query("answer_keys", [("class_id", "==", class_doc["id"])]) or []
-    if not answer_keys:
-        send_format_error(
-            student_email=sender,
-            reason=(
-                f"Your class ({class_doc.get('name','')}) at "
-                f"{(match.school or {}).get('name','')} doesn't have an active "
-                "homework to grade. Please ask your teacher."
-            ),
-        )
-        return FAILED_FOLDER
-    answer_key = sorted(
-        answer_keys,
-        key=lambda a: a.get("created_at", ""),
-        reverse=True,
-    )[0]
+    # Pick the answer key. The code path resolves it directly via
+    # match.answer_key; the fuzzy path falls back to "most recent
+    # answer_key in this class" since there's no other disambiguator.
+    if match.answer_key is not None:
+        answer_key = match.answer_key
+    else:
+        answer_keys = query("answer_keys", [("class_id", "==", class_doc["id"])]) or []
+        if not answer_keys:
+            send_format_error(
+                student_email=sender,
+                reason=(
+                    f"Your class ({class_doc.get('name','')}) at "
+                    f"{(match.school or {}).get('name','')} doesn't have an active "
+                    "homework to grade. Please ask your teacher for the homework code "
+                    "and resend with 'Code: ABC123' in the subject."
+                ),
+            )
+            return FAILED_FOLDER
+        answer_key = sorted(
+            answer_keys,
+            key=lambda a: a.get("created_at", ""),
+            reverse=True,
+        )[0]
 
     # Render attachments → per-page JPEG bytes (PDFs explode into pages,
     # images pass through). Grader expects the same shape mark.py uses.

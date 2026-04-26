@@ -67,31 +67,82 @@ _PIPE_RE = re.compile(
 _HYPHEN_RE = re.compile(
     r"^\s*(?P<name>[^\-,–—]+?)\s*[\-,–—]\s*(?P<class_name>[^\-,–—]+?)\s*[\-,–—]\s*(?P<school>.+?)\s*$",
 )
+# Standalone homework code — pulled from the subject independently of
+# the school/class fields so a student can use the minimal "Name: X |
+# Code: HW7K2P" form. Codes are 6 chars from the typo-resistant alphabet
+# defined in shared.submission_codes; we accept lowercase here (and
+# uppercase below) because students typing on a phone often forget caps.
+_CODE_RE = re.compile(
+    r"code\s*[:\-]\s*(?P<code>[A-Z0-9]{6})\b",
+    re.IGNORECASE,
+)
+# Minimal "Name: Alice | Code: HW7K2P" form. School/class fields not
+# required when a code is present — the code resolves the answer key
+# directly which gives us class + school for free.
+_NAME_CODE_RE = re.compile(
+    r"name\s*[:\-]\s*(?P<name>[^|]+?)\s*\|\s*"
+    r"code\s*[:\-]\s*(?P<code>[A-Z0-9]{6})\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
 class SubjectFields:
     student_name: str
-    class_name: str
-    school_name: str
+    # class_name + school_name are optional — populated from the legacy
+    # three-field subject. When the student uses the code-based form
+    # they're empty, and the matcher resolves school + class from the
+    # code's answer_key instead.
+    class_name: str = ""
+    school_name: str = ""
+    submission_code: str = ""
+
+    @property
+    def has_code(self) -> bool:
+        return bool(self.submission_code)
+
+
+def _extract_code(text: str) -> str:
+    m = _CODE_RE.search(text)
+    return m.group("code").upper() if m else ""
 
 
 def parse_subject(subject: str, body_fallback: str = "") -> Optional[SubjectFields]:
-    """Try the subject first; if no fields parsed, sweep the first ~500
-    chars of the body. Returns None when neither yields all three fields."""
+    """Parse the subject (or first 500 chars of body) into matcher fields.
+
+    Two valid shapes:
+      A. Code-based:  "Name: Alice | Code: HW7K2P"
+         Minimal form. Code resolves class + school via the answer_key.
+      B. Three-field: "Name: Alice | Class: Form 4A | School: St Marys"
+         Legacy fuzzy path.
+
+    Returns None when neither yields enough to route on.
+    """
     for source in (subject, body_fallback[:500]):
         if not source:
             continue
+
+        # Try code-based form first — it's the cheaper match path.
+        m = _NAME_CODE_RE.search(source)
+        if m:
+            return SubjectFields(
+                student_name=m.group("name").strip(),
+                submission_code=m.group("code").upper(),
+            )
+
+        # Fall through to the three-field form. Pull a code opportunistically
+        # if one happens to be present so a student who copies the full
+        # slip ("Name | Class | School | Code") still gets the fast path.
         m = _PIPE_RE.search(source)
         if not m:
             m = _HYPHEN_RE.match(source)
-        if not m:
-            continue
-        return SubjectFields(
-            student_name=m.group("name").strip(),
-            class_name=m.group("class_name").strip(),
-            school_name=m.group("school").strip().rstrip(".,;"),
-        )
+        if m:
+            return SubjectFields(
+                student_name=m.group("name").strip(),
+                class_name=m.group("class_name").strip(),
+                school_name=m.group("school").strip().rstrip(".,;"),
+                submission_code=_extract_code(source),
+            )
     return None
 
 
@@ -104,6 +155,8 @@ class MatchStatus(str, Enum):
     AMBIGUOUS_CLASS = "ambiguous_class"
     NOT_FOUND_SCHOOL = "not_found_school"
     NOT_FOUND_CLASS = "not_found_class"
+    # Code-path failures: the student typed a code we don't recognise.
+    NOT_FOUND_CODE = "not_found_code"
 
 
 @dataclass
@@ -112,6 +165,10 @@ class MatchResult:
     student: Optional[dict] = None
     class_doc: Optional[dict] = None
     school: Optional[dict] = None
+    # Set when the match took the code path so the poller can grade
+    # against this exact answer_key and skip the "most recent in class"
+    # heuristic. None on the legacy fuzzy path.
+    answer_key: Optional[dict] = None
     # Human-readable detail for format-error reply emails (e.g. "no
     # school named 'St Marys' was found; closest matches: …").
     reason: str = ""
@@ -150,10 +207,20 @@ def _fuzzy_pick(needle: str, haystack: list[dict], key: str, cutoff: float) -> l
 def match_student(fields: SubjectFields, sender_email: str) -> MatchResult:
     """Resolve a SubjectFields + sender to a (student, class, school).
 
-    Performs auto-enrolment when school + class match but no student
-    name matches in the class roster.
+    Two paths:
+      - Code-based (when fields.has_code): exact answer_key lookup,
+        class + school derived from it, student matched/auto-enrolled
+        in that class. No fuzzy matching — fastest and least
+        ambiguous, this is the path students using the printed slip
+        should hit.
+      - Fuzzy (legacy): school name → class name → student name, with
+        difflib at each step. Falls through when there's no code.
     """
     sender_email_norm = (sender_email or "").strip().lower()
+
+    # 0. Code path — resolve from the homework code.
+    if fields.has_code:
+        return _match_by_code(fields, sender_email_norm)
 
     # 1. Email shortcut. If we've seen this address before, the matched
     #    Student is canonical — skip everything else. The caller still
@@ -246,6 +313,92 @@ def match_student(fields: SubjectFields, sender_email: str) -> MatchResult:
         student=new_student,
         class_doc=class_doc,
         school=school,
+    )
+
+
+def _match_by_code(fields: SubjectFields, sender_email_norm: str) -> MatchResult:
+    """Code path: subject contained "Code: HW7K2P". One Firestore lookup
+    (answer_keys by submission_code) gives us the answer_key, which
+    chains to class → school. Student is then matched within the class
+    roster, or auto-enrolled if missing — same policy as the fuzzy path.
+    """
+    code = fields.submission_code
+    answer_key = query_single("answer_keys", [("submission_code", "==", code)])
+    if not answer_key:
+        return MatchResult(
+            status=MatchStatus.NOT_FOUND_CODE,
+            reason=(
+                f"We couldn't find a homework with code '{code}'. "
+                "Please check the code your teacher gave you and try again."
+            ),
+        )
+
+    class_doc = get_doc("classes", answer_key.get("class_id", ""))
+    if not class_doc:
+        # Code is valid but the class went missing — almost certainly a
+        # data-integrity bug, not a student-fixable problem. Treat it as
+        # a transient route failure and surface a generic reply.
+        logger.error(
+            "_match_by_code: answer_key %s has missing class_id %s",
+            answer_key.get("id"), answer_key.get("class_id"),
+        )
+        return MatchResult(
+            status=MatchStatus.NOT_FOUND_CLASS,
+            answer_key=answer_key,
+            reason="That homework's class record couldn't be loaded. Please ask your teacher to check.",
+        )
+
+    school = None
+    if class_doc.get("school_id"):
+        school = get_doc("schools", class_doc["school_id"])
+
+    # Email shortcut still applies on the code path so a student who's
+    # already enrolled doesn't get auto-enrolled a second time when they
+    # email a new homework code from the same address.
+    if sender_email_norm:
+        existing = query_single("students", [("email", "==", sender_email_norm)])
+        if existing and class_doc["id"] in (
+            existing.get("class_ids") or [existing.get("class_id")]
+        ):
+            return MatchResult(
+                status=MatchStatus.MATCHED,
+                student=existing,
+                class_doc=class_doc,
+                school=school,
+                answer_key=answer_key,
+            )
+
+    # Match by name within the class roster.
+    students = query("students", [("class_id", "==", class_doc["id"])]) or []
+    name_haystack = [
+        {**s, "_full": f"{s.get('first_name','')} {s.get('surname','')}".strip()}
+        for s in students
+    ]
+    student_matches = _fuzzy_pick(fields.student_name, name_haystack, "_full", _STUDENT_FUZZY_CUTOFF)
+    if len(student_matches) == 1:
+        student = {k: v for k, v in student_matches[0].items() if k != "_full"}
+        if sender_email_norm and not student.get("email"):
+            student["email"] = sender_email_norm
+            upsert("students", student["id"], student)
+        return MatchResult(
+            status=MatchStatus.MATCHED,
+            student=student,
+            class_doc=class_doc,
+            school=school,
+            answer_key=answer_key,
+        )
+
+    # Zero or multiple matches → auto-enrol. The product policy is
+    # "submitting to a class adds you to it", and the same applies on
+    # the code path — if a teacher hands the slip to a new student,
+    # their first email is the enrolment.
+    student = _auto_enrol(fields.student_name, sender_email_norm, class_doc)
+    return MatchResult(
+        status=MatchStatus.AUTO_ENROLLED,
+        student=student,
+        class_doc=class_doc,
+        school=school,
+        answer_key=answer_key,
     )
 
 

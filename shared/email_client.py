@@ -159,11 +159,14 @@ def send_format_error(*, student_email: str, reason: str) -> bool:
     <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
       <h2 style="margin:0 0 4px 0">We couldn't grade your submission</h2>
       <p style="margin:0 0 12px 0">{reason}</p>
-      <p style="margin:0 0 12px 0;color:#555">Please send a new email with:</p>
+      <p style="margin:0 0 8px 0;color:#555">Please send a new email with one of these subject lines:</p>
       <ul style="margin:0 0 12px 18px;color:#555">
-        <li>Subject line in the format: <code>Name: Your Name | Class: Form 4A | School: St Mary's</code></li>
-        <li>A photo or PDF of your homework attached</li>
+        <li>Preferred (use the code your teacher gave you):
+          <br><code>Name: Your Name | Code: ABC123</code></li>
+        <li>Or, if you don't have a code:
+          <br><code>Name: Your Name | Class: Form 4A | School: Your School</code></li>
       </ul>
+      <p style="margin:0 0 12px 0;color:#555">…and attach a photo or PDF of your homework.</p>
       <p style="margin:12px 0 0 0;color:#888;font-size:12px">If you keep seeing this, ask your teacher for help.</p>
     </div>
     """
