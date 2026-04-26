@@ -256,24 +256,139 @@ def approve_submission(sub_id: str):
     # Update student weakness/strength profile (fire and forget — never blocks)
     update_student_weaknesses(sub.get("student_id", ""), approved_sub)
 
-    # Notify student that their grade is ready
+    # Notify student that their grade is ready. Dispatched by source so
+    # each channel gets the right reply: app push (always), WhatsApp
+    # image (STUDENT_WHATSAPP), Resend email (EMAIL_SUBMISSION). The
+    # WhatsApp/email paths used to fire inline at submission time, before
+    # the teacher had even seen the grade — moved here so all channels
+    # honour the "teacher approves first" policy uniformly.
     student_id = sub.get("student_id", "")
     if student_id:
-        try:
-            from functions.push import send_student_notification
-            hw_title = hw.get("title") or hw.get("subject") or "Homework"
-            score = sub.get("score", 0)
-            max_score = sub.get("max_score", 0)
-            send_student_notification(
-                student_id,
-                "Grade Ready",
-                f"Your {hw_title} has been graded: {score}/{max_score}",
-                {"screen": "StudentResults", "mark_id": mark_id},
-            )
-        except Exception:
-            logger.warning("Student grade notification failed (non-fatal)")
+        _dispatch_student_reply(
+            student_id=student_id,
+            mark_id=mark_id,
+            hw=hw,
+            sub=sub,
+        )
 
     return jsonify({"message": "approved", "submission_id": sub_id}), 200
+
+
+def _dispatch_student_reply(
+    *,
+    student_id: str,
+    mark_id: str | None,
+    hw: dict,
+    sub: dict,
+) -> None:
+    """Fan out the post-approval reply across every channel the student
+    is reachable on. Each branch is best-effort — one failing channel
+    must not block the others or the approval flow itself."""
+    hw_title = hw.get("title") or hw.get("subject") or "Homework"
+    score = sub.get("score", 0)
+    max_score = sub.get("max_score", 0)
+
+    # 1. App push.
+    try:
+        from functions.push import send_student_notification
+        send_student_notification(
+            student_id,
+            "Grade Ready",
+            f"Your {hw_title} has been graded: {score}/{max_score}",
+            {"screen": "StudentResults", "mark_id": mark_id},
+        )
+    except Exception:
+        logger.warning("dispatch: app push failed for student %s (non-fatal)", student_id)
+
+    _dispatch_student_reply_secondary_channels(
+        student_id=student_id, mark_id=mark_id, hw=hw, sub=sub,
+    )
+
+
+def _dispatch_student_reply_secondary_channels(
+    *,
+    student_id: str,
+    mark_id: str | None,
+    hw: dict,
+    sub: dict,
+) -> None:
+    """WhatsApp + email branches only. Bulk-approve uses this directly
+    (without the push) because the bulk handler emits a single summary
+    push covering all approved homework, not one push per submission."""
+    hw_title = hw.get("title") or hw.get("subject") or "Homework"
+    score = sub.get("score", 0)
+    max_score = sub.get("max_score", 0)
+
+    if not mark_id:
+        return
+    mark = get_doc("marks", mark_id)
+    if not mark:
+        return
+    student = get_doc("students", student_id)
+    if not student:
+        return
+
+    source = mark.get("source", "")
+
+    # 2. WhatsApp reply — fires only for STUDENT_WHATSAPP marks. The
+    #    student's phone is the canonical address; we previously sent
+    #    the marked image inline from whatsapp.py before approval, which
+    #    leaked AI grades to students before the teacher could intervene.
+    if source == "student_whatsapp":
+        try:
+            from shared.whatsapp_client import send_image
+            phone = student.get("phone")
+            annotated_urls = mark.get("annotated_urls") or []
+            marked_url = annotated_urls[0] if annotated_urls else mark.get("marked_image_url")
+            if phone and marked_url:
+                pct = mark.get("percentage", 0)
+                caption = f"{hw_title}: {score}/{max_score} ({int(round(pct))}%)"
+                send_image(phone, marked_url, caption)
+        except Exception:
+            logger.warning("dispatch: WhatsApp send failed for student %s (non-fatal)", student_id)
+
+    # 3. Email reply — fires only for EMAIL_SUBMISSION marks. Pulls the
+    #    annotated page bytes straight from the marked-images bucket
+    #    (deterministic blob path: {mark_id}/annotated_{i}.jpg) so we
+    #    can attach them directly rather than send a link the student
+    #    has to click.
+    if source == "email_submission":
+        try:
+            from shared.email_client import send_grade_reply
+            from shared.gcs_client import download_bytes
+
+            email_addr = student.get("email")
+            if not email_addr:
+                return
+            annotated_urls = mark.get("annotated_urls") or []
+            page_count = mark.get("page_count", len(annotated_urls)) or 1
+
+            attachments: list[tuple[str, bytes, str]] = []
+            for i in range(page_count):
+                blob = f"{mark_id}/annotated_{i}.jpg"
+                try:
+                    data = download_bytes(settings.GCS_BUCKET_MARKED, blob)
+                except Exception:
+                    logger.warning(
+                        "dispatch: missing annotated blob %s/%s — skipping page %d",
+                        settings.GCS_BUCKET_MARKED, blob, i,
+                    )
+                    continue
+                attachments.append((f"page_{i + 1}.jpg", data, "image/jpeg"))
+
+            student_full = f"{student.get('first_name','')} {student.get('surname','')}".strip()
+            send_grade_reply(
+                student_email=email_addr,
+                student_name=student_full or "Student",
+                score=score,
+                max_score=max_score,
+                percentage=mark.get("percentage", 0),
+                verdicts=mark.get("verdicts") or [],
+                annotated_pages=attachments,
+                answer_key_title=hw_title,
+            )
+        except Exception:
+            logger.warning("dispatch: email send failed for student %s (non-fatal)", student_id)
 
 
 # ── POST /api/submissions/approve-bulk ───────────────────────────────────────
@@ -413,6 +528,20 @@ def approve_bulk_submissions():
             send_student_notification(student_id, title, message, data)
         except Exception:
             logger.warning("Bulk-approve push failed for student %s (non-fatal)", student_id)
+
+        # WhatsApp + email replies, per submission. We fan out per-sub
+        # rather than one summary so the student gets the actual graded
+        # image attached for each homework — same UX as one-by-one
+        # approval. Loops in graded_at ascending order so the most
+        # recent grade arrives last.
+        for sub in sorted_subs:
+            hw = sub.get("_hw") or {}
+            _dispatch_student_reply_secondary_channels(
+                student_id=student_id,
+                mark_id=sub.get("mark_id"),
+                hw=hw,
+                sub=sub,
+            )
 
     approved_count = sum(len(v) for v in approved_by_student.values())
     return jsonify({

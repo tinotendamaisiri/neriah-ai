@@ -21,5 +21,12 @@ pymupdf>=1.24.0
 python-docx>=1.1.0
 openpyxl>=3.1.0
 sentence-transformers>=3.0.0
+# Email channel — Resend for outbound grade replies, imap_tools for the
+# Zoho IMAP poller (cleaner API than stdlib imaplib for fetch + MOVE),
+# pdf2image to render PDF attachment pages into JPEGs for the per-page
+# grading flow.
+resend>=2.0.0
+imap-tools>=1.6.0
+pdf2image>=1.17.0
 pytest>=8.2.0
 pytest-asyncio>=0.23.0

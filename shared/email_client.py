@@ -1,0 +1,180 @@
+"""
+shared/email_client.py — Resend outbound wrapper for the email-submission
+channel.
+
+Two send paths:
+
+  send_grade_reply(student_email, mark, attachments)
+      Fired from functions/submissions.py once a teacher approves a mark
+      whose source is MarkSource.EMAIL_SUBMISSION. Includes the annotated
+      page(s) inline as attachments and a short HTML body with the score
+      and per-question verdicts.
+
+  send_format_error(student_email, reason)
+      Fired immediately from the email poller when a submission can't be
+      processed (no usable attachment, unparseable subject line, school
+      not found). NOT a grade reply, so this is exempt from the
+      "teacher-approves-first" rule — it's a system-status reply.
+
+Both calls degrade silently to a logged warning when RESEND_API_KEY is
+empty (e.g. local dev without secrets) so the upstream pipeline never
+crashes on a missing creds env var.
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+from typing import Any, Iterable
+
+from shared.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _client():
+    """Lazy import + configure the Resend SDK. Raises ImportError only when
+    actually called, so the rest of the codebase can import this module
+    without the dependency being installed locally."""
+    if not settings.RESEND_API_KEY:
+        return None
+    import resend  # type: ignore
+
+    resend.api_key = settings.RESEND_API_KEY
+    return resend
+
+
+def _format_attachments(attachments: Iterable[tuple[str, bytes, str]]) -> list[dict]:
+    """Build Resend's attachment payload. Each input tuple is
+    (filename, raw_bytes, content_type). Resend expects base64-encoded
+    `content` and a `content_type`, both required for binary attachments
+    (especially images — without content_type Gmail renders them as
+    'noname' downloads)."""
+    out: list[dict] = []
+    for filename, payload, content_type in attachments:
+        out.append({
+            "filename": filename,
+            "content": base64.b64encode(payload).decode("ascii"),
+            "content_type": content_type,
+        })
+    return out
+
+
+def send_grade_reply(
+    *,
+    student_email: str,
+    student_name: str,
+    score: int | float,
+    max_score: int | float,
+    percentage: int | float,
+    verdicts: list[dict],
+    annotated_pages: Iterable[tuple[str, bytes, str]],
+    answer_key_title: str | None = None,
+) -> bool:
+    """Send the graded-and-approved reply to a student.
+
+    Returns True on success, False when Resend is unconfigured or the API
+    call fails (always logged). Caller should not retry on False —
+    Resend has its own retry semantics on transient failures.
+    """
+    if not student_email:
+        logger.warning("send_grade_reply: no student_email — skipping")
+        return False
+
+    client = _client()
+    if client is None:
+        logger.warning("send_grade_reply: RESEND_API_KEY unset — skipping send to %s", student_email)
+        return False
+
+    pct = int(round(percentage))
+    pct_colour = "#22C55E" if pct >= 75 else ("#F59E0B" if pct >= 50 else "#EF4444")
+    title_line = f"<strong>{answer_key_title}</strong> · " if answer_key_title else ""
+
+    rows = []
+    for v in verdicts:
+        verdict = v.get("verdict", "")
+        symbol = "✓" if verdict == "correct" else ("✗" if verdict == "incorrect" else "~")
+        colour = "#22C55E" if verdict == "correct" else ("#EF4444" if verdict == "incorrect" else "#F59E0B")
+        feedback = v.get("feedback") or ""
+        rows.append(
+            f'<tr><td style="padding:6px 10px">Q{v.get("question_number","")}</td>'
+            f'<td style="padding:6px 10px;color:{colour};font-weight:700">{symbol}</td>'
+            f'<td style="padding:6px 10px">{v.get("awarded_marks",0)}/{v.get("max_marks",0)}</td>'
+            f'<td style="padding:6px 10px;color:#555">{feedback}</td></tr>'
+        )
+    rows_html = "\n".join(rows) if rows else '<tr><td colspan="4" style="padding:6px 10px;color:#555">No per-question breakdown available.</td></tr>'
+
+    html = f"""
+    <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
+      <h2 style="margin:0 0 4px 0">Your homework has been graded</h2>
+      <p style="margin:0 0 16px 0;color:#555">Hi {student_name}, here is your result.</p>
+      <p style="margin:0 0 16px 0">
+        {title_line}<span style="font-size:24px;font-weight:800">{score}/{max_score}</span>
+        <span style="font-size:18px;font-weight:700;color:{pct_colour};margin-left:8px">{pct}%</span>
+      </p>
+      <table style="border-collapse:collapse;font-size:13px;border:1px solid #eee;width:100%">
+        <thead>
+          <tr style="background:#f7f7f7">
+            <th style="padding:6px 10px;text-align:left">Q</th>
+            <th style="padding:6px 10px;text-align:left">Verdict</th>
+            <th style="padding:6px 10px;text-align:left">Marks</th>
+            <th style="padding:6px 10px;text-align:left">Feedback</th>
+          </tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      <p style="margin:20px 0 0 0;color:#888;font-size:12px">
+        Marked page(s) attached. Reply to this email to flag any issue with the grading.
+      </p>
+    </div>
+    """
+
+    try:
+        client.Emails.send({
+            "from": settings.RESEND_FROM_ADDRESS,
+            "to": student_email,
+            "subject": f"Your grade: {score}/{max_score} ({pct}%)",
+            "html": html,
+            "attachments": _format_attachments(annotated_pages),
+        })
+        return True
+    except Exception:
+        logger.exception("send_grade_reply: Resend send failed for %s", student_email)
+        return False
+
+
+def send_format_error(*, student_email: str, reason: str) -> bool:
+    """Reply to an unprocessable inbound email. Not a grade — exempt from
+    the teacher-approval gate. Common reasons: no attachment, unparseable
+    subject, school/class not found.
+    """
+    if not student_email:
+        return False
+    client = _client()
+    if client is None:
+        logger.warning("send_format_error: RESEND_API_KEY unset — skipping send to %s", student_email)
+        return False
+
+    html = f"""
+    <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
+      <h2 style="margin:0 0 4px 0">We couldn't grade your submission</h2>
+      <p style="margin:0 0 12px 0">{reason}</p>
+      <p style="margin:0 0 12px 0;color:#555">Please send a new email with:</p>
+      <ul style="margin:0 0 12px 18px;color:#555">
+        <li>Subject line in the format: <code>Name: Your Name | Class: Form 4A | School: St Mary's</code></li>
+        <li>A photo or PDF of your homework attached</li>
+      </ul>
+      <p style="margin:12px 0 0 0;color:#888;font-size:12px">If you keep seeing this, ask your teacher for help.</p>
+    </div>
+    """
+    try:
+        client.Emails.send({
+            "from": settings.RESEND_FROM_ADDRESS,
+            "to": student_email,
+            "subject": "Neriah — couldn't grade your submission",
+            "html": html,
+        })
+        return True
+    except Exception:
+        logger.exception("send_format_error: Resend send failed for %s", student_email)
+        return False

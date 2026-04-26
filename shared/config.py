@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     # Set to a strong random string in production. Empty string disables admin bypass.
     ADMIN_API_KEY: str = ""
 
+    # Resend (outbound email replies for the email-submission channel — sends
+    # the annotated grade back to the student after the teacher approves).
+    # Empty string = not configured; email replies will be skipped at call time.
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_ADDRESS: str = "mark@neriah.ai"
+
+    # Zoho IMAP credentials for the inbound email poller (mark@neriah.ai).
+    # ZOHO_IMAP_PASSWORD must be an *app-specific* password generated in Zoho
+    # account settings — the main account password won't work over IMAP if
+    # 2FA is on. Stored in GCP Secret Manager in production.
+    ZOHO_IMAP_HOST: str = "imap.zoho.com"
+    ZOHO_IMAP_PORT: int = 993
+    ZOHO_IMAP_USER: str = "mark@neriah.ai"
+    ZOHO_IMAP_PASSWORD: str = ""
+
 
 settings = Settings()
 

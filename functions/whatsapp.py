@@ -553,19 +553,22 @@ def _handle_student_submission(phone: str, student: dict, media_id: str):
         percentage=percentage,
         verdicts=[],
         marked_image_url=marked_url,
-        source="student_submission",
+        source="student_whatsapp",
         approved=False,
     )
     upsert("marks", mark.id, mark.model_dump())
 
-    correct = sum(1 for v in raw_verdicts if v.get("verdict") == "correct")
-    total_q = len(raw_verdicts)
-    caption = (
-        f"*Score: {score:.0f}/{max_score:.0f} ({percentage:.0f}%)*\n"
-        f"{correct}/{total_q} questions correct\n\n"
-        "Your teacher will review and confirm your mark."
+    # The graded image used to be sent back to the student here, before
+    # the teacher had even seen it. That violated the "teacher approves
+    # first" policy. The reply is now fired from the approval handler
+    # in submissions.py:_dispatch_student_reply_secondary_channels,
+    # which dispatches to WhatsApp / email / push based on mark.source.
+    # Acknowledge receipt so the student knows their submission landed.
+    send_text(
+        phone,
+        "Thanks — your homework has been received. Your teacher will review it and "
+        "we'll send the marked result back here once it's approved.",
     )
-    send_image(phone, marked_url, caption)
 
 
 # ─── CLASS_SETUP ──────────────────────────────────────────────────────────────

@@ -44,6 +44,14 @@ class MarkSource(str, Enum):
     # accuracy-tier sources.
     TEACHER_SCAN_OFFLINE = "teacher_scan_offline"
     STUDENT_SUBMISSION = "student_submission"
+    # Student submitted homework via WhatsApp inbound. Distinguished from
+    # STUDENT_SUBMISSION (in-app upload) so the approval dispatcher knows
+    # to send the result back through WhatsApp once the teacher approves.
+    STUDENT_WHATSAPP = "student_whatsapp"
+    # Student emailed homework to mark@neriah.ai (Zoho IMAP poller). Same
+    # downstream grading; approval dispatcher replies via Resend with the
+    # annotated image attached.
+    EMAIL_SUBMISSION = "email_submission"
 
 
 class WhatsAppState(str, Enum):
@@ -87,6 +95,11 @@ class Student(BaseModel):
     surname: str
     register_number: Optional[str] = None
     phone: Optional[str] = None
+    # Sender address from email-channel submissions. Used so the second
+    # email from the same student short-circuits the fuzzy name match and
+    # routes straight to this record. Populated on auto-enroll from the
+    # email poller; can also be set manually by a teacher.
+    email: Optional[str] = None
     created_at: str = Field(default_factory=lambda: _now().isoformat())
     role: str = "student"
     token_version: int = 0
