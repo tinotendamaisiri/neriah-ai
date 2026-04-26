@@ -13,16 +13,13 @@ DELETE /api/marks/<mark_id>                    — same cascade, keyed by mark_i
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timezone
-from urllib.parse import unquote, urlparse
 
 from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
 from shared.config import settings
 from shared.firestore_client import delete_doc, get_doc, query, upsert
-from shared.gcs_client import delete_blob
 from shared.training_data import collect_training_sample
 from shared.weakness_tracker import update_student_weaknesses
 
@@ -32,44 +29,6 @@ submissions_bp = Blueprint("submissions", __name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# ── GCS URL parsing for cascade delete ────────────────────────────────────────
-
-def _parse_gcs_url(url: str) -> tuple[str | None, str | None]:
-    """Extract (bucket, blob_name) from a stored image URL. Handles:
-      https://storage.googleapis.com/{bucket}/{object}?...
-      https://{bucket}.storage.googleapis.com/{object}?...
-      gs://{bucket}/{object}
-    Returns (None, None) when the URL isn't recognisable as GCS.
-    """
-    if not url:
-        return None, None
-    if url.startswith("gs://"):
-        rest = url[len("gs://"):]
-        if "/" not in rest:
-            return None, None
-        bucket, blob = rest.split("/", 1)
-        return bucket, unquote(blob.split("?", 1)[0])
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return None, None
-    host = parsed.netloc
-    path = parsed.path.lstrip("/")
-    if not path:
-        return None, None
-    # storage.googleapis.com/{bucket}/{object}
-    if host == "storage.googleapis.com":
-        if "/" not in path:
-            return None, None
-        bucket, blob = path.split("/", 1)
-        return bucket, unquote(blob)
-    # {bucket}.storage.googleapis.com/{object}
-    m = re.match(r"^(?P<bucket>[^.]+)\.storage\.googleapis\.com$", host)
-    if m:
-        return m.group("bucket"), unquote(path)
-    return None, None
 
 
 # ── Shared cascade-delete helper ──────────────────────────────────────────────
@@ -97,17 +56,13 @@ def _cascade_delete_submission(
     student_id = sub.get("student_id") or ""
     cascades: dict[str, bool] = {
         "mark": False,
-        "image_blob": False,
         "training_sample": False,
     }
 
-    # 1. Delete the linked mark document (and pull its marked_image_url for
-    #    the GCS blob step below).
-    marked_image_url: str | None = None
+    # 1. Delete the linked mark document.
     if mark_id:
         mark_doc = get_doc("marks", mark_id)
         if mark_doc:
-            marked_image_url = mark_doc.get("marked_image_url")
             try:
                 delete_doc("marks", mark_id)
                 cascades["mark"] = True
@@ -121,32 +76,17 @@ def _cascade_delete_submission(
         except Exception:
             logger.exception("cascade: failed to delete submission %s", submission_id)
 
-    # 3. Delete the annotated image blob from GCS. The stored URL is a signed
-    #    URL pointing at GCS_BUCKET_MARKED — parse it back to bucket + blob.
-    #    Also try image_urls[] if present (multi-page submissions).
-    image_candidates: list[str] = []
-    if marked_image_url:
-        image_candidates.append(marked_image_url)
-    for u in sub.get("image_urls") or []:
-        if isinstance(u, str):
-            image_candidates.append(u)
-
-    for img_url in image_candidates:
-        bucket, blob_name = _parse_gcs_url(img_url)
-        if not bucket or not blob_name:
-            continue
-        # Only delete blobs we recognise as ours. Guards against an attacker-
-        # crafted mark doc pointing at some other bucket.
-        if bucket not in (settings.GCS_BUCKET_MARKED, settings.GCS_BUCKET_SUBMISSIONS):
-            continue
-        try:
-            delete_blob(bucket, blob_name)
-            cascades["image_blob"] = True
-        except Exception:
-            logger.warning(
-                "cascade: failed to delete blob %s/%s (may already be gone)",
-                bucket, blob_name,
-            )
+    # 3. Image blobs are intentionally NOT deleted on submission cascade.
+    #    Both the original page scans (GCS_BUCKET_SUBMISSIONS) and the
+    #    Pillow-annotated copies (GCS_BUCKET_MARKED) are retained as
+    #    proprietary training data — input/label pairs for future grading
+    #    model fine-tunes. The teacher-facing "delete submission" only
+    #    removes the Firestore record (the submission disappears from the
+    #    UI); the underlying blobs persist in the bucket indefinitely.
+    #
+    #    If we ever need a hard-delete path for compliance (e.g. student
+    #    withdraws consent), add a separate `purge_submission_blobs`
+    #    function rather than re-wiring this cascade. Keep the default safe.
 
     # 4. TODO: training sample cleanup deferred until vector-store API
     #    exposes a delete helper. `shared.training_data` only writes today.
