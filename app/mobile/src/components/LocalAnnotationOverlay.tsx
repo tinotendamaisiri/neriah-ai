@@ -5,19 +5,28 @@
 // label, same bottom-right score bubble — but composed in React Native so no
 // baked image is needed.
 //
-// Positioning rules mirror `_resolve_verdict_position` in the Python annotator:
+// Positioning rules mirror `_resolve_verdict_position` in the Python annotator,
+// but mapped onto the *rendered image bounds*, not the container. The page
+// photo is laid out with `resizeMode="contain"`, so a portrait page in a
+// landscape-ish container leaves big empty gutters on the left/right. If we
+// treated qx as a fraction of the container, qx=0.05 would land in the gutter
+// (which is exactly the bug that put the ticks in a column to the side of
+// the page). Instead, we pull the source image's intrinsic dimensions via
+// Image.getSize, compute the contain-fit bounds, and map qx/qy onto those.
+//
 //   - question_x / question_y are fractions of image dimensions (0.0-1.0)
-//     clamped to [0.05, 0.95] so symbols never bleed off the edge.
-//   - When qx/qy are missing (which is the usual case offline, because OCR
-//     gives no spatial info), fall back to evenly-spaced left margin:
-//     x = 0.05, y = (index + 0.5) / total.
+//     clamped to [0.05, 0.95] so symbols never bleed off the page edge.
+//   - When qx/qy are missing (the usual case offline — OCR gives no spatial
+//     info), fall back to right-side stacking: x = 0.85, y = (i+0.5)/total.
+//     Right side mimics how a teacher pen-marks alongside each answer column,
+//     and stays inside the page rather than landing in the side gutter.
 //
 // The overlay is positioned with StyleSheet.absoluteFill and expects to
 // sit inside a View whose bounds match the rendered page image — the caller
 // is responsible for that alignment.
 
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { GradingVerdict, GradingVerdictEnum } from '../types';
 
 // Matches shared/annotator.py palette.
@@ -37,11 +46,17 @@ interface LocalAnnotationOverlayProps {
   /** Verdicts that apply to the page this overlay is drawn on. Pre-filter by
    *  page_index before passing in. */
   verdicts: GradingVerdict[];
-  /** Rendered width/height of the page image this overlay sits on top of.
-   *  Must match the Image's actual bounds, not the container — otherwise
-   *  symbols land in the wrong place. */
+  /** Container width/height — the bounds the overlay's absoluteFill covers.
+   *  We map qx/qy onto the contain-fitted image bounds *inside* this box,
+   *  not onto the box itself, so symbols don't drift into the side gutters
+   *  for portrait pages in a wider container. */
   width: number;
   height: number;
+  /** Source URI of the page image. Used to read intrinsic dimensions so the
+   *  contain-fit bounds can be computed. Required for correct placement —
+   *  if omitted, the overlay falls back to mapping onto the full container
+   *  (the old buggy behaviour) so existing call sites keep working visually. */
+  imageUri?: string;
   /** Overall score bubble. When omitted, no bubble is rendered — pass only on
    *  the page the bubble should appear on (typically the last page). */
   summary?: {
@@ -64,30 +79,84 @@ export default function LocalAnnotationOverlay({
   verdicts,
   width,
   height,
+  imageUri,
   summary,
 }: LocalAnnotationOverlayProps) {
+  // Intrinsic source dimensions, used to recompute the contain-fit bounds.
+  // Until they resolve, we render nothing — better to flash one frame of
+  // blank overlay than to put symbols in the wrong place for a tick.
+  const [intrinsic, setIntrinsic] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (!imageUri) { setIntrinsic(null); return; }
+    let cancelled = false;
+    Image.getSize(
+      imageUri,
+      (w, h) => { if (!cancelled) setIntrinsic({ w, h }); },
+      // On error just let the overlay map to the container bounds; same as
+      // legacy behaviour — degrades to "ticks may sit in the gutter" but
+      // never crashes.
+      () => { if (!cancelled) setIntrinsic({ w: width, h: height }); },
+    );
+    return () => { cancelled = true; };
+  }, [imageUri, width, height]);
+
+  // Compute contain-fit bounds: the image preserves aspect ratio and is
+  // centred inside the container. Whichever side is the binding constraint
+  // gets the full container dimension; the other side is letterboxed.
+  let renderedW = width;
+  let renderedH = height;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (intrinsic && intrinsic.w > 0 && intrinsic.h > 0) {
+    const containerAspect = width / height;
+    const imageAspect = intrinsic.w / intrinsic.h;
+    if (imageAspect > containerAspect) {
+      // Image is wider than container — fits to width, vertical letterbox.
+      renderedW = width;
+      renderedH = width / imageAspect;
+      offsetY = (height - renderedH) / 2;
+    } else {
+      // Image is taller (or equal) — fits to height, horizontal letterbox.
+      renderedH = height;
+      renderedW = height * imageAspect;
+      offsetX = (width - renderedW) / 2;
+    }
+  }
+
   const total = Math.max(verdicts.length, 1);
-  // Symbol size: 4% of image height, floored at 40px — matches the Pillow
-  // annotator's `max(40, int(height * 0.04))`.
-  const symbolSize = Math.max(40, Math.round(height * 0.04));
-  const labelSize = Math.max(11, Math.round(symbolSize * 0.4));
+  // Symbol size: scale with rendered height but keep big and visible — the
+  // teacher needs to be able to read the verdict at a glance from a thumb-
+  // sized preview. 8% of height with a 56 px floor lands around 56–80 px on
+  // a typical 420 px overlay, which matches a pen-mark you'd actually draw
+  // on the page.
+  const symbolSize = Math.max(56, Math.round(renderedH * 0.08));
+  const labelSize = Math.max(13, Math.round(symbolSize * 0.32));
+
+  // Don't render symbols until we know the rendered bounds — otherwise the
+  // first paint would put them at the old (gutter) position and snap a tick
+  // later, which looks broken. Summary bubble is fine to draw immediately
+  // because it pins to a corner, not a verdict location.
+  const verdictsReady = !imageUri || intrinsic !== null;
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {verdicts.map((v, i) => {
+      {verdictsReady && verdicts.map((v, i) => {
         const colour = VERDICT_COLOUR[v.verdict] ?? VERDICT_COLOUR.incorrect;
         const symbol = VERDICT_SYMBOL[v.verdict] ?? VERDICT_SYMBOL.incorrect;
 
-        // Prefer per-verdict qx/qy when present (cloud verdicts will have
-        // them; offline ones typically won't). Fall back to evenly-spaced
-        // left margin, matching the backend annotator exactly.
-        const qxRaw = typeof v.question_x === 'number' ? v.question_x : 0.05;
-        const qyRaw = typeof v.question_y === 'number' ? v.question_y : (i + 0.5) / total;
-        const qx = clamp(qxRaw, 0.05, 0.95);
-        const qy = clamp(qyRaw, 0.05, 0.95);
+        // Right-margin stacking, evenly spaced top to bottom. We *ignore*
+        // qx/qy from the verdict even when the cloud sends them — the
+        // teacher-facing contract is "one tick or X on the right side of
+        // each answer, in question order", and OCR-derived coordinates can
+        // land anywhere depending on how the student laid out the page.
+        // Forcing a stable layout keeps the visual identical for online
+        // and offline grades and matches what a teacher would do by hand.
+        const qx = 0.92;
+        const qy = clamp((i + 0.5) / total, 0.05, 0.95);
 
-        const cx = Math.round(qx * width);
-        const cy = Math.round(qy * height);
+        // Map onto the rendered image bounds, not the container.
+        const cx = Math.round(offsetX + qx * renderedW);
+        const cy = Math.round(offsetY + qy * renderedH);
 
         return (
           <View
@@ -120,10 +189,20 @@ export default function LocalAnnotationOverlay({
         );
       })}
 
-      {/* Summary bubble — bottom-right, drawn only on the page the caller
-          tagged (typically the last page in a multi-page submission). */}
+      {/* Summary bubble — drawn at the bottom-right corner of the *rendered*
+          image so it sits on the page, not in the side gutter for portrait
+          scans. Falls back to container corner when bounds aren't ready. */}
       {summary && (
-        <View style={[styles.bubble, { backgroundColor: pickColour(summary.percentage) }]}>
+        <View
+          style={[
+            styles.bubble,
+            { backgroundColor: pickColour(summary.percentage) },
+            verdictsReady && {
+              right: Math.round(offsetX) + 16,
+              bottom: Math.round(offsetY) + 16,
+            },
+          ]}
+        >
           <Text style={styles.bubbleScore}>
             {summary.score}/{summary.max_score}
           </Text>

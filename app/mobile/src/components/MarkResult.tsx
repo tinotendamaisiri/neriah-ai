@@ -93,35 +93,45 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
     percentage >= 75 ? COLORS.success : percentage >= 50 ? COLORS.warning : COLORS.error;
 
   // ── Pages ──────────────────────────────────────────────────────────────────
-  // The backend returns `annotated_urls: string[]` with every annotated page
-  // and keeps `marked_image_url` as a legacy alias for the first. Fall back
-  // through both so older responses still render.
+  // We always overlay verdicts in React Native (LocalAnnotationOverlay) so
+  // online and offline grades look identical: big tick/X on the right margin
+  // next to each answer. That means we want the *originals* underneath, not
+  // the server-baked annotated copies — otherwise the teacher would see two
+  // sets of marks (Pillow's left-side marks AND ours).
+  //
+  // Preference order:
+  //   1. `page_urls`   — originals (cloud responses include them)
+  //   2. `annotated_urls` — fallback for older responses or offline (which
+  //      sets annotated_urls to the originals already)
+  //   3. `marked_image_url` — single-page legacy alias
   const pages = useMemo<string[]>(() => {
+    if (result.page_urls && result.page_urls.length > 0) return result.page_urls;
     if (result.annotated_urls && result.annotated_urls.length > 0) return result.annotated_urls;
     if (result.marked_image_url) return [result.marked_image_url];
     return [];
-  }, [result.annotated_urls, result.marked_image_url]);
+  }, [result.page_urls, result.annotated_urls, result.marked_image_url]);
   const isMultiPage = pages.length > 1;
 
-  // ── Local-annotation overlay (offline-graded marks) ───────────────────────
-  // When the mark came from on-device grading, annotated_urls point at the
-  // original unannotated pages. We draw verdict symbols + a score bubble
-  // on top in pure RN (no native dep, no Skia) so the teacher sees the
-  // grades without waiting to reconnect. The cloud replay will eventually
-  // produce a baked annotation; next time the teacher opens the student's
-  // mark, they'll see that one instead.
+  // Tracks whether the result came from on-device grading. Used to gate the
+  // "Graded on-device" toast and the local-only Approve message — *not* the
+  // overlay, which now renders for both online and offline so the visual
+  // contract is identical.
   const isLocallyGraded = !!result.locally_graded;
-  // Map verdicts onto their original page_index (from the offline grading
-  // pipeline). Falls back to 0 — single-page-friendly default.
+
+  // ── Annotation overlay ────────────────────────────────────────────────────
+  // Render the overlay for *every* mark (not just offline). Cloud verdicts
+  // may carry qx/qy from the server-side annotator; offline ones won't and
+  // fall back to right-margin stacking inside the overlay component. Either
+  // way, the visual is consistent: green tick / red X on the right side of
+  // the answer column with a score bubble in the corner.
+  // Map verdicts onto their original page_index. For cloud grades the
+  // backend doesn't currently send verdict_page_indices, so default every
+  // verdict to page 0 (single-page is the common case).
   const pageIndexByVerdict = useMemo<number[]>(() => {
     if (Array.isArray(result.verdict_page_indices)) return result.verdict_page_indices;
     return verdicts.map(() => 0);
   }, [result.verdict_page_indices, verdicts]);
-  // Verdicts grouped by page, preserving order. The summary bubble lives
-  // only on the last page so it doesn't duplicate across a multi-page
-  // submission.
   const verdictsByPage = useMemo<GradingVerdict[][]>(() => {
-    if (!isLocallyGraded) return [];
     const grouped: GradingVerdict[][] = pages.map(() => []);
     verdicts.forEach((v, i) => {
       const pi = pageIndexByVerdict[i] ?? 0;
@@ -129,7 +139,7 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
       grouped[bucket].push(v);
     });
     return grouped;
-  }, [isLocallyGraded, verdicts, pageIndexByVerdict, pages.length]);
+  }, [verdicts, pageIndexByVerdict, pages.length]);
 
   // ── Zoom ───────────────────────────────────────────────────────────────────
   // Single-page: iOS ScrollView's native pinch + zoom buttons control the
@@ -320,20 +330,19 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
                     style={[styles.annotatedImage, { transform: [{ scale: zoomLevel }] }]}
                     resizeMode="contain"
                   />
-                  {isLocallyGraded && (
-                    <LocalAnnotationOverlay
-                      verdicts={verdictsByPage[index] ?? []}
-                      width={PAGE_W}
-                      height={IMAGE_H}
-                      // Score bubble only on the last page so multi-page
-                      // submissions don't duplicate it.
-                      summary={
-                        index === pages.length - 1
-                          ? { score: totalAwarded, max_score: totalMax, percentage }
-                          : undefined
-                      }
-                    />
-                  )}
+                  <LocalAnnotationOverlay
+                    verdicts={verdictsByPage[index] ?? []}
+                    width={PAGE_W}
+                    height={IMAGE_H}
+                    imageUri={item}
+                    // Score bubble only on the last page so multi-page
+                    // submissions don't duplicate it.
+                    summary={
+                      index === pages.length - 1
+                        ? { score: totalAwarded, max_score: totalMax, percentage }
+                        : undefined
+                    }
+                  />
                 </View>
               )}
             />
@@ -360,11 +369,12 @@ export default function MarkResultComponent({ result, student, onDone }: MarkRes
               />
             </ScrollView>
           )}
-          {isLocallyGraded && !isMultiPage && (
+          {!isMultiPage && (
             <LocalAnnotationOverlay
               verdicts={verdicts}
               width={SW - 32}
               height={IMAGE_H}
+              imageUri={pages[0]}
               summary={{ score: totalAwarded, max_score: totalMax, percentage }}
             />
           )}
