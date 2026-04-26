@@ -218,21 +218,21 @@ export async function loadModel(
       const nativePath = localPath.replace(/^file:\/\//, '');
       const instance = lib.createLLM();
       await instance.loadModel(nativePath, {
-        // Default to GPU. Reason: Gemma 4's vision encoder is GPU-only
-        // ("Vision encoder is always set to GPU (required by Gemma models)"
-        // per the upstream README), and the iOS C++ wrapper's fallback
-        // chain (HybridLiteRTLM.cpp tryCreateEngine) only kicks in when
-        // the primary backend is non-CPU. With CPU primary, the wrapper
-        // makes one attempt at CPU/CPU vision and dies because no CPU
-        // implementation of the vision ops exists in the Bazel-built
-        // XCFramework. With GPU primary, the wrapper tries GPU/GPU →
-        // CPU/GPU vision → CPU/CPU vision in order, and Gemma E2B loads
-        // successfully on iOS Metal at the second step. On Android the
-        // library hardcodes visionBackend=GPU regardless of this setting,
-        // so 'gpu' here is a no-op for the main backend on devices
-        // without GPU compute (Mali-G72 etc.) — those devices already
-        // get filtered out by canRunVariant() upstream.
-        backend: 'gpu',
+        // CPU backend on iOS for text-only grading. The GPU executor
+        // (LlmLiteRtCompiledModelExecutorStatic) uses pre-compiled
+        // fixed-shape prefill signatures baked into the .litertlm
+        // file, so prompts that don't fit the model's compiled
+        // prefill windows fail with
+        //   DYNAMIC_UPDATE_SLICE node N failed to prepare …
+        //   SizeOfDimension(update, i) <= SizeOfDimension(operand, i)
+        //   was not true
+        // The CPU executor (LlmLiteRtCompiledModelExecutorDynamic)
+        // builds a graph for the actual input length and respects
+        // litert_lm_engine_settings_set_prefill_chunk_size, which our
+        // C++ wrapper sets to 64. Slower than GPU but correct, and
+        // good enough for a single grading prompt at a time.
+        // (Vision/audio backends stay null — text-only grading.)
+        backend: 'cpu',
       });
 
       _llm = instance;
