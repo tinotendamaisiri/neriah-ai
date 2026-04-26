@@ -143,10 +143,31 @@ def send_grade_reply(
         return False
 
 
-def send_format_error(*, student_email: str, reason: str) -> bool:
+def send_format_error(
+    *,
+    student_email: str,
+    reason: str,
+    original_subject: str | None = None,
+    received_summary: str | None = None,
+    failure_kind: str | None = None,
+) -> bool:
     """Reply to an unprocessable inbound email. Not a grade — exempt from
-    the teacher-approval gate. Common reasons: no attachment, unparseable
-    subject, school/class not found.
+    the teacher-approval gate.
+
+    The reply includes:
+      - The specific `reason` string (e.g. "We couldn't find a homework
+        with code 'ZZZZZZ'") as the lead message.
+      - A "what we received" summary so the student can see what arrived
+        on our side (subject line + attachment count) — useful when the
+        student is sure they attached something but the parser disagrees.
+      - The required subject formats as a reference.
+
+    `failure_kind` is one of: "no_attachment", "bad_subject", "no_code",
+    "no_school", "no_class", "no_homework", "internal", or None. When
+    provided, the email's *subject line* surfaces it so the student
+    knows at a glance which thing to fix; the body still carries the
+    full reason. Useful diagnostically too — Resend dashboard groups
+    by subject.
     """
     if not student_email:
         return False
@@ -155,18 +176,46 @@ def send_format_error(*, student_email: str, reason: str) -> bool:
         logger.warning("send_format_error: RESEND_API_KEY unset — skipping send to %s", student_email)
         return False
 
+    # Subject of the reply — surfaces the failure kind so the student
+    # (and we, in the Resend dashboard) can see what went wrong without
+    # opening the message. Falls back to a generic line if no kind given.
+    subject_by_kind = {
+        "no_attachment":  "Neriah — no photo or PDF attached",
+        "bad_subject":    "Neriah — subject line format issue",
+        "no_code":        "Neriah — homework code not recognised",
+        "no_school":      "Neriah — school not found",
+        "no_class":       "Neriah — class not found",
+        "no_homework":    "Neriah — class has no active homework",
+        "internal":       "Neriah — temporary grading error",
+    }
+    reply_subject = subject_by_kind.get(failure_kind or "", "Neriah — couldn't grade your submission")
+
+    received_block = ""
+    if original_subject is not None or received_summary is not None:
+        rows = []
+        if original_subject is not None:
+            esc = (original_subject or "(empty subject)").replace("<", "&lt;").replace(">", "&gt;")
+            rows.append(f'<li>Subject we received: <code>{esc}</code></li>')
+        if received_summary:
+            rows.append(f"<li>{received_summary}</li>")
+        received_block = (
+            '<p style="margin:14px 0 4px 0;color:#555;font-weight:600">What we received:</p>'
+            f'<ul style="margin:0 0 12px 18px;color:#555">{"".join(rows)}</ul>'
+        )
+
     html = f"""
     <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
       <h2 style="margin:0 0 4px 0">We couldn't grade your submission</h2>
       <p style="margin:0 0 12px 0">{reason}</p>
-      <p style="margin:0 0 8px 0;color:#555">Please send a new email with one of these subject lines:</p>
+      {received_block}
+      <p style="margin:14px 0 4px 0;color:#555;font-weight:600">Please send a new email with one of these subject lines:</p>
       <ul style="margin:0 0 12px 18px;color:#555">
         <li>Preferred (use the code your teacher gave you):
           <br><code>Name: Your Name | Code: ABC123</code></li>
         <li>Or, if you don't have a code:
           <br><code>Name: Your Name | Class: Form 4A | School: Your School</code></li>
       </ul>
-      <p style="margin:0 0 12px 0;color:#555">…and attach a photo or PDF of your homework.</p>
+      <p style="margin:0 0 12px 0;color:#555">…and attach a photo or PDF of your homework (paperclip icon is most reliable).</p>
       <p style="margin:12px 0 0 0;color:#888;font-size:12px">If you keep seeing this, ask your teacher for help.</p>
     </div>
     """
@@ -174,7 +223,7 @@ def send_format_error(*, student_email: str, reason: str) -> bool:
         client.Emails.send({
             "from": settings.RESEND_FROM_ADDRESS,
             "to": student_email,
-            "subject": "Neriah — couldn't grade your submission",
+            "subject": reply_subject,
             "html": html,
         })
         return True

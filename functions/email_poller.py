@@ -34,10 +34,25 @@ Entry points:
 from __future__ import annotations
 
 import logging
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+
+# Cloud Functions Gen2 with a Pub/Sub trigger imports the entry-point
+# module directly — main.py never runs, so the logging.basicConfig there
+# doesn't apply to this function. Configure the root logger here so
+# every logger.info()/warning() actually reaches Cloud Logging via
+# stdout. Idempotent: if some other path already added handlers (HTTP
+# trigger inheriting from main.py), this is a no-op.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        stream=sys.stdout,
+    )
 
 from shared.config import settings
 from shared.email_client import send_format_error
@@ -190,19 +205,46 @@ def _process_message(parsed: ParsedEmail) -> str:
                 fname, ct, why,
             )
 
+    # Helper bound to this message — keeps every format-error caller from
+    # repeating the diagnostic context. The student sees their own
+    # subject line + a count of what we actually received, which makes
+    # "no attachment" replies actionable when they're sure they attached
+    # something (either client-side data: URI we couldn't read, or the
+    # paperclip dropped silently).
+    received_summary = (
+        f"{len(parsed.usable_attachments)} usable attachment(s), "
+        f"{len(parsed.skipped_attachments)} skipped, "
+        f"{len(parsed.body_text or '')} chars of body text"
+    )
+
+    def _bounce(*, reason: str, kind: str) -> str:
+        send_format_error(
+            student_email=sender,
+            reason=reason,
+            original_subject=parsed.subject,
+            received_summary=received_summary,
+            failure_kind=kind,
+        )
+        return FAILED_FOLDER
+
     if not parsed.has_usable_attachment:
         # No image / PDF attached — auto-reply with the format guide.
         # This is a system-status reply, not a grade, so the
         # teacher-approves-first rule doesn't apply.
-        reasons = []
         if parsed.skipped_attachments:
-            for fname, ct, why in parsed.skipped_attachments[:3]:
-                reasons.append(f"{fname or '(unnamed)'} ({ct}): {why}")
-            reason = "Your attachments couldn't be processed: " + "; ".join(reasons)
+            reasons = [
+                f"{fname or '(unnamed)'} ({ct}): {why}"
+                for fname, ct, why in parsed.skipped_attachments[:3]
+            ]
+            reason = "We saw attachments but couldn't use any: " + "; ".join(reasons)
         else:
-            reason = "We couldn't find any photo or PDF attached to your email."
-        send_format_error(student_email=sender, reason=reason)
-        return FAILED_FOLDER
+            reason = (
+                "We couldn't find any photo or PDF attached to your email. "
+                "If you pasted the image into the message body, some clients "
+                "drop it on send — try attaching it via the paperclip / "
+                "attachment icon instead."
+            )
+        return _bounce(reason=reason, kind="no_attachment")
 
     # Resolve the student. parse_subject accepts either:
     #   - "Name: Alice | Code: HW7K2P"           (preferred — exact)
@@ -210,27 +252,25 @@ def _process_message(parsed: ParsedEmail) -> str:
     # See shared/student_matcher.py for the full grammar.
     fields = parse_subject(parsed.subject, parsed.body_text)
     if fields is None:
-        send_format_error(
-            student_email=sender,
+        return _bounce(
             reason=(
-                "We couldn't read your details from the subject line. "
-                "Use either: 'Name: Your Name | Code: ABC123' (the code is "
-                "on your homework slip) or 'Name: Your Name | Class: Form 4A | "
-                "School: Your School'."
+                "We couldn't read your name and homework code from the "
+                "subject line. The format must include 'Name:' and either "
+                "'Code:' or both 'Class:' and 'School:', separated by | "
+                "(pipe) characters."
             ),
+            kind="bad_subject",
         )
-        return FAILED_FOLDER
 
     match: MatchResult = match_student(fields, sender_email=sender)
-    if match.status in (
-        MatchStatus.NOT_FOUND_SCHOOL,
-        MatchStatus.NOT_FOUND_CLASS,
-        MatchStatus.AMBIGUOUS_SCHOOL,
-        MatchStatus.AMBIGUOUS_CLASS,
-        MatchStatus.NOT_FOUND_CODE,
-    ):
-        send_format_error(student_email=sender, reason=match.reason)
-        return FAILED_FOLDER
+    if match.status == MatchStatus.NOT_FOUND_CODE:
+        return _bounce(reason=match.reason, kind="no_code")
+    if match.status == MatchStatus.NOT_FOUND_SCHOOL:
+        return _bounce(reason=match.reason, kind="no_school")
+    if match.status == MatchStatus.NOT_FOUND_CLASS:
+        return _bounce(reason=match.reason, kind="no_class")
+    if match.status in (MatchStatus.AMBIGUOUS_SCHOOL, MatchStatus.AMBIGUOUS_CLASS):
+        return _bounce(reason=match.reason, kind="bad_subject")
 
     # MATCHED or AUTO_ENROLLED — both proceed identically from here.
     student = match.student or {}
@@ -244,16 +284,15 @@ def _process_message(parsed: ParsedEmail) -> str:
     else:
         answer_keys = query("answer_keys", [("class_id", "==", class_doc["id"])]) or []
         if not answer_keys:
-            send_format_error(
-                student_email=sender,
+            return _bounce(
                 reason=(
                     f"Your class ({class_doc.get('name','')}) at "
                     f"{(match.school or {}).get('name','')} doesn't have an active "
                     "homework to grade. Please ask your teacher for the homework code "
                     "and resend with 'Code: ABC123' in the subject."
                 ),
+                kind="no_homework",
             )
-            return FAILED_FOLDER
         answer_key = sorted(
             answer_keys,
             key=lambda a: a.get("created_at", ""),
@@ -264,11 +303,10 @@ def _process_message(parsed: ParsedEmail) -> str:
     # images pass through). Grader expects the same shape mark.py uses.
     pages_bytes = attachments_to_pages(parsed.usable_attachments)
     if not pages_bytes:
-        send_format_error(
-            student_email=sender,
+        return _bounce(
             reason="We couldn't extract any pages from your attachment. Please send a clear photo or PDF.",
+            kind="no_attachment",
         )
-        return FAILED_FOLDER
 
     # First-page quality gate. Cheap reject; saves a Gemma call when the
     # photo is a thumbnail or a hand covering the page.
@@ -277,11 +315,10 @@ def _process_message(parsed: ParsedEmail) -> str:
     except Exception:
         quality = None
     if quality is not None and not quality.get("pass_check", True):
-        send_format_error(
-            student_email=sender,
+        return _bounce(
             reason=quality.get("reason") or "The first page of your submission was unreadable.",
+            kind="no_attachment",
         )
-        return FAILED_FOLDER
 
     # Grade.
     try:
@@ -294,11 +331,10 @@ def _process_message(parsed: ParsedEmail) -> str:
             "email_poller: grading failed for %s (class %s)",
             sender, class_doc.get("id"),
         )
-        send_format_error(
-            student_email=sender,
+        return _bounce(
             reason="Grading temporarily failed on our side. Please try sending again in a few minutes.",
+            kind="internal",
         )
-        return FAILED_FOLDER
 
     # Cap per-question awarded marks against the answer key, drop
     # hallucinated extra questions. Lighter version of the same dedup
