@@ -210,44 +210,33 @@ void HybridLiteRTLM::createNewConversation() {
   if (!engine_) {
     throw std::runtime_error("Cannot create conversation: engine not initialized");
   }
-  
-  // Clean up previous conversation
-  if (conversation_) {
-    litert_lm_conversation_delete(conversation_);
-    conversation_ = nullptr;
+
+  // Clean up previous session
+  if (session_) {
+    litert_lm_session_delete(session_);
+    session_ = nullptr;
   }
-  if (conv_config_) {
-    litert_lm_conversation_config_delete(conv_config_);
-    conv_config_ = nullptr;
-  }
-  
-  // Build system message JSON if provided
-  std::string systemMsgJson;
-  const char* systemMsgPtr = nullptr;
-  if (!systemPrompt_.empty()) {
-    systemMsgJson = "{\"role\":\"system\",\"content\":\"" + escapeJson(systemPrompt_) + "\"}";
-    systemMsgPtr = systemMsgJson.c_str();
-  }
-  
-  // Create conversation config with session config
-  conv_config_ = litert_lm_conversation_config_create(
-    engine_,
-    session_config_,  // may be nullptr for defaults
-    systemMsgPtr,     // system message
-    nullptr,          // tools (not used yet)
-    nullptr,          // messages history
-    false             // constrained decoding
-  );
-  if (!conv_config_) {
-    throw std::runtime_error("Failed to create conversation config");
-  }
-  
-  // Create conversation
-  conversation_ = litert_lm_conversation_create(engine_, conv_config_);
-  if (!conversation_) {
-    litert_lm_conversation_config_delete(conv_config_);
-    conv_config_ = nullptr;
-    throw std::runtime_error("Failed to create conversation");
+  // Conversation pointers stay nullptr on iOS — see comment block below.
+
+  // We deliberately skip litert_lm_conversation_config_create / _create
+  // on iOS. That path constructs a litert::lm::PromptTemplate by reading
+  // the model's chat-template metadata (Gemma 4 ships one with vision
+  // soft-tokens) and feeding it into re2::RE2(). On our XCFramework —
+  // built without vision/audio executor ops — the engine internals
+  // partially initialise the multimodal data-processor with a null
+  // vision_executor, which writes past the end of an internal buffer
+  // and corrupts a libmalloc free-list block. The crash surfaces later,
+  // inside re2, as EXC_BREAKPOINT (libmalloc's "memory corruption of
+  // free block" trap).
+  //
+  // The Session API (litert_lm_engine_create_session / generate_content)
+  // takes raw InputData and bypasses ConversationConfig + PromptTemplate
+  // entirely. We format Gemma 4 turn tokens manually in
+  // sendMessageInternal so the model still gets a proper instruction
+  // turn structure.
+  session_ = litert_lm_engine_create_session(engine_, session_config_);
+  if (!session_) {
+    throw std::runtime_error("Failed to create LiteRT-LM session");
   }
 #endif
 }
@@ -399,8 +388,35 @@ void HybridLiteRTLM::loadModelInternal(
       return false;
     }
 
-    litert_lm_engine_settings_set_max_num_tokens(settings, static_cast<int>(maxTokens_));
-    litert_lm_engine_settings_enable_benchmark(settings);
+    // Do NOT call set_max_num_tokens here. The C-API setting is the engine
+    // *context length* (KV-cache size in tokens), NOT a generation cap.
+    // Hard-coding it to e.g. 1024 caps the KV-cache slot below what the
+    // Gemma 4 E2B prefill graph expects, and the magic-number remap then
+    // wires a context-dim of 1024 into a graph compiled for a longer
+    // context. The first prefill invocation then trips
+    //   dynamic_update_slice.cc:70
+    //     SizeOfDimension(update, i) <= SizeOfDimension(operand, i)
+    // because the prefill chunk is bigger than the (capped) cache slot.
+    //
+    // Default is 0 = "let the magic-number heuristic pick", which reads
+    // the model's compiled context magic and rounds it down to the largest
+    // multiple of 256. That matches what `litert_lm_main` does by default
+    // and is what every published Gemma 4 example assumes.
+    //
+    // Output-token cap belongs on the session (set_max_output_tokens), not
+    // here — that one we still set further down where session_config_ is
+    // built.
+
+    // No benchmark mode — adds extra logging and (on some paths) wires
+    // is_benchmark into AdvancedSettings, which we don't want in production.
+
+    // prefill_chunk_size only takes effect on the *dynamic* CPU executor
+    // (LlmLiteRtCompiledModelExecutorDynamic). Gemma 4 ships as a static
+    // model with fixed-shape prefill signatures, so this is a no-op for it
+    // and we leave it at the C-API default (-1 = no chunking). Setting an
+    // arbitrary value here used to seem like the fix for the
+    // DYNAMIC_UPDATE_SLICE error, but the real issue was max_num_tokens
+    // above; chunk_size never mattered for static models.
 
     // Set cache directory to the same directory as the model file
     std::string cacheDir = modelPath.substr(0, modelPath.find_last_of('/'));
@@ -468,7 +484,7 @@ void HybridLiteRTLM::loadModelInternal(
     litert_lm_session_config_set_max_output_tokens(session_config_, static_cast<int>(maxTokens_));
     
     LiteRtLmSamplerParams sampler{};
-    sampler.type = kTopP;
+    sampler.type = kLiteRtLmSamplerTypeTopP;
     sampler.top_k = static_cast<int32_t>(topK_);
     sampler.top_p = static_cast<float>(topP_);
     sampler.temperature = static_cast<float>(temperature_);
@@ -501,36 +517,122 @@ std::shared_ptr<Promise<std::string>> HybridLiteRTLM::sendMessage(const std::str
 std::string HybridLiteRTLM::sendMessageInternal(const std::string& message) {
   std::lock_guard<std::mutex> lock(mutex_);
   ensureLoaded();
-  
+
   auto startTime = std::chrono::steady_clock::now();
   std::string result;
-  
+
 #ifdef __APPLE__
-  std::string msgJson = buildTextMessageJson(message);
-  
-  auto* response = litert_lm_conversation_send_message(
-    conversation_, msgJson.c_str(), nullptr);
-  
-  if (!response) {
-    throw std::runtime_error("LiteRT-LM: sendMessage failed");
+  if (!session_) {
+    throw std::runtime_error("LiteRT-LM: session not created — call loadModel() first");
   }
-  
-  const char* responseStr = litert_lm_json_response_get_string(response);
-  if (responseStr) {
-    result = extractTextFromResponse(std::string(responseStr));
+
+  // Wrap user input in Gemma 4 turn tokens. The Session API doesn't
+  // apply the model's chat template (that's the very thing we're
+  // skipping to avoid the iOS re2 crash), so the wrapper has to format
+  // the instruction turn explicitly. Single-turn instruction following
+  // is the only mode the JS layer uses (offline homework grading); no
+  // multi-turn history needed.
+  std::string formatted;
+  if (!systemPrompt_.empty()) {
+    formatted  = "<start_of_turn>system\n" + systemPrompt_ + "<end_of_turn>\n";
   }
-  litert_lm_json_response_delete(response);
-  
-  auto* benchInfo = litert_lm_conversation_get_benchmark_info(conversation_);
+  formatted   += "<start_of_turn>user\n" + message + "<end_of_turn>\n";
+  formatted   += "<start_of_turn>model\n";
+
+  // Rebuild the session for every call. The Session API has no
+  // reset / clear-turn function, so a session that's already done
+  // one prefill (or one that errored mid-flight, like our earlier
+  // DYNAMIC_UPDATE_SLICE failure) won't accept a new turn — it
+  // throws "Prefill turn prefill:0 already started". Recreating is
+  // ~tens of ms; total inference is multi-second, so the overhead
+  // is negligible and we get guaranteed clean state.
+  if (session_) {
+    litert_lm_session_delete(session_);
+    session_ = nullptr;
+  }
+  session_ = litert_lm_engine_create_session(engine_, session_config_);
+  if (!session_) {
+    throw std::runtime_error("LiteRT-LM: failed to create session before generate");
+  }
+
+  LiteRtLmInputData input{};
+  input.type = kLiteRtLmInputDataTypeText;
+  input.data = formatted.c_str();
+  input.size = formatted.size();
+
+  // Capture stderr while generate_content runs so any ABSL_LOG /
+  // tflite / kleidiAI error messages get surfaced back to JS land.
+  // Without this the C call just returns null with no context and the
+  // user sees a generic "generate_content failed" with no clue
+  // whether it was OOM, an oversized prompt, a tokenizer issue, or
+  // something else.
+  int saved_stderr = ::dup(STDERR_FILENO);
+  int pipe_fds[2] = {-1, -1};
+  bool capture_active = false;
+  if (saved_stderr >= 0 && ::pipe(pipe_fds) == 0) {
+    int flags = ::fcntl(pipe_fds[0], F_GETFL, 0);
+    if (flags >= 0) ::fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
+    if (::dup2(pipe_fds[1], STDERR_FILENO) >= 0) capture_active = true;
+  }
+
+  auto* responses = litert_lm_session_generate_content(session_, &input, 1);
+
+  std::string captured;
+  if (capture_active) {
+    fflush(stderr);
+    ::dup2(saved_stderr, STDERR_FILENO);
+    ::close(saved_stderr);
+    ::close(pipe_fds[1]);
+    char buf[2048];
+    ssize_t n;
+    while ((n = ::read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
+      buf[n] = '\0';
+      captured += buf;
+      if (captured.size() > 1500) {
+        captured.resize(1500);
+        captured += "…(truncated)";
+        break;
+      }
+    }
+    ::close(pipe_fds[0]);
+    while (!captured.empty() &&
+           (captured.back() == '\n' || captured.back() == '\r' ||
+            captured.back() == ' ')) {
+      captured.pop_back();
+    }
+  } else if (saved_stderr >= 0) {
+    ::close(saved_stderr);
+    if (pipe_fds[0] >= 0) ::close(pipe_fds[0]);
+    if (pipe_fds[1] >= 0) ::close(pipe_fds[1]);
+  }
+
+  if (!responses) {
+    std::string msg = "LiteRT-LM: generate_content failed (prompt=" +
+                      std::to_string(formatted.size()) + " bytes";
+    if (!captured.empty()) msg += ", stderr: " + captured;
+    msg += ")";
+    throw std::runtime_error(msg);
+  }
+
+  if (litert_lm_responses_get_num_candidates(responses) > 0) {
+    const char* text = litert_lm_responses_get_response_text_at(responses, 0);
+    if (text) {
+      result = stripControlTokens(std::string(text));
+    }
+  }
+  litert_lm_responses_delete(responses);
+
+  // Benchmark info on Session — best-effort. Some C API builds expose
+  // a per-session benchmark accessor; if not available, leave the
+  // existing lastStats_ values untouched.
+  auto* benchInfo = litert_lm_session_get_benchmark_info(session_);
   if (benchInfo) {
     int numDecodeTurns = litert_lm_benchmark_info_get_num_decode_turns(benchInfo);
     if (numDecodeTurns > 0) {
       int lastIdx = numDecodeTurns - 1;
-      lastStats_.tokensPerSecond = litert_lm_benchmark_info_get_decode_tokens_per_sec_at(benchInfo, lastIdx);
       lastStats_.completionTokens = static_cast<double>(
         litert_lm_benchmark_info_get_decode_token_count_at(benchInfo, lastIdx));
     }
-    lastStats_.timeToFirstToken = litert_lm_benchmark_info_get_time_to_first_token(benchInfo);
     litert_lm_benchmark_info_delete(benchInfo);
   }
 #else
@@ -620,20 +722,52 @@ void HybridLiteRTLM::sendMessageAsync(
   
 #ifdef __APPLE__
   ensureLoaded();
-  
-  std::string msgJson = buildTextMessageJson(messageCopy);
-  
+  if (!session_) {
+    throw std::runtime_error("LiteRT-LM: session not created — call loadModel() first");
+  }
+
+  // Format Gemma 4 turn tokens manually — same reasoning as
+  // sendMessageInternal: Session API skips the prompt-template machinery
+  // (which crashes on iOS for vision-aware Gemma 4), so the wrapper
+  // formats the chat turns itself.
+  std::string formatted;
+  if (!systemPrompt_.empty()) {
+    formatted  = "<start_of_turn>system\n" + systemPrompt_ + "<end_of_turn>\n";
+  }
+  formatted   += "<start_of_turn>user\n" + messageCopy + "<end_of_turn>\n";
+  formatted   += "<start_of_turn>model\n";
+
+  // Pin the formatted prompt on the StreamContext so its underlying
+  // buffer outlives the C call (InputData.data is a borrowed pointer).
+  ctxOwner->promptBuffer = std::move(formatted);
+
+  // Same session rebuild as sendMessageInternal — Session API has no
+  // reset, so a prior turn (especially one that errored mid-flight)
+  // would block this call with "Prefill turn already started".
+  if (session_) {
+    litert_lm_session_delete(session_);
+    session_ = nullptr;
+  }
+  session_ = litert_lm_engine_create_session(engine_, session_config_);
+  if (!session_) {
+    throw std::runtime_error("LiteRT-LM: failed to create session before stream");
+  }
+
   // Release ownership — the C callback now owns the context via raw pointer.
   // streamCallbackFn will delete it when done or on error.
   StreamContext* ctx = ctxOwner.release();
-  
+
+  LiteRtLmInputData input{};
+  input.type = kLiteRtLmInputDataTypeText;
+  input.data = ctx->promptBuffer.c_str();
+  input.size = ctx->promptBuffer.size();
+
   // Wrap the initial engine call in runOnLargeStack for consistency
   // with all other engine entry points (XNNPack needs >512KB stack).
   runOnLargeStack([&]() {
-    int result = litert_lm_conversation_send_message_stream(
-      conversation_, msgJson.c_str(), nullptr,
-      streamCallbackFn, ctx);
-    
+    int result = litert_lm_session_generate_content_stream(
+      session_, &input, 1, streamCallbackFn, ctx);
+
     if (result != 0) {
       delete ctx;
       throw std::runtime_error("LiteRT-LM: Failed to start streaming inference");
@@ -908,6 +1042,10 @@ void HybridLiteRTLM::close() {
   history_.clear();
   
 #ifdef __APPLE__
+  if (session_) {
+    litert_lm_session_delete(session_);
+    session_ = nullptr;
+  }
   if (conversation_) {
     litert_lm_conversation_delete(conversation_);
     conversation_ = nullptr;
