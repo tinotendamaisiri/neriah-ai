@@ -76,7 +76,11 @@ class Settings(BaseSettings):
     # the annotated grade back to the student after the teacher approves).
     # Empty string = not configured; email replies will be skipped at call time.
     RESEND_API_KEY: str = ""
-    RESEND_FROM_ADDRESS: str = "mark@neriah.ai"
+    # Sends from the Resend-verified subdomain (mark@send.neriah.ai) so
+    # SPF/DKIM are aligned to Resend without disturbing the apex SPF
+    # record that Zoho relies on for inbound at mark@neriah.ai. The
+    # subdomain pattern keeps the two providers isolated cleanly.
+    RESEND_FROM_ADDRESS: str = "mark@send.neriah.ai"
 
     # Zoho IMAP credentials for the inbound email poller (mark@neriah.ai).
     # ZOHO_IMAP_PASSWORD must be an *app-specific* password generated in Zoho
