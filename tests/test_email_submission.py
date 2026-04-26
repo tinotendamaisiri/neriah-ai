@@ -138,6 +138,164 @@ def test_subject_returns_none_when_unparseable():
     assert parse_subject("just a subject", "no body fields either") is None
 
 
+def test_subject_parses_code_form():
+    fields = parse_subject("Name: Alice Mukamuri | Code: HW7K2P")
+    assert fields is not None
+    assert fields.student_name == "Alice Mukamuri"
+    assert fields.submission_code == "HW7K2P"
+    assert fields.has_code is True
+    # School/class stay empty on the code form.
+    assert fields.class_name == ""
+    assert fields.school_name == ""
+
+
+def test_subject_uppercases_lowercase_code():
+    fields = parse_subject("Name: Alice | Code: hw7k2p")
+    assert fields is not None
+    assert fields.submission_code == "HW7K2P"
+
+
+def test_subject_picks_up_optional_code_in_three_field_form():
+    fields = parse_subject(
+        "Name: Alice | Class: Form 4A | School: St Marys | Code: HW7K2P"
+    )
+    assert fields is not None
+    assert fields.student_name == "Alice"
+    assert fields.class_name == "Form 4A"
+    assert fields.submission_code == "HW7K2P"
+    assert fields.has_code is True
+
+
+# ─── Code-based matcher path ─────────────────────────────────────────────────
+
+def test_matcher_code_path_finds_answer_key_directly():
+    """Code-based subject → answer_key resolved exactly, school/class
+    derived from it without any fuzzy matching."""
+    answer_key = {
+        "id": "ak-1",
+        "submission_code": "HW7K2P",
+        "class_id": "class-1",
+        "teacher_id": "teacher-1",
+    }
+    class_doc = {"id": "class-1", "name": "Form 4A", "school_id": "school-1"}
+    school = {"id": "school-1", "name": "St Marys"}
+    students = [{"id": "stu-1", "first_name": "Alice", "surname": "Mukamuri", "class_id": "class-1"}]
+
+    def fake_query_single(coll, filters):
+        if coll == "answer_keys":
+            for f in filters:
+                if f[0] == "submission_code" and f[1] == "==" and f[2] == "HW7K2P":
+                    return answer_key
+        if coll == "students":
+            for f in filters:
+                if f[0] == "email" and f[1] == "==":
+                    return None
+        return None
+
+    def fake_get_doc(coll, doc_id):
+        if coll == "classes" and doc_id == "class-1":
+            return class_doc
+        if coll == "schools" and doc_id == "school-1":
+            return school
+        return None
+
+    def fake_query(coll, filters):
+        if coll == "students":
+            return students
+        return []
+
+    from shared.student_matcher import SubjectFields, match_student
+    with patch("shared.student_matcher.query_single", side_effect=fake_query_single), \
+         patch("shared.student_matcher.get_doc", side_effect=fake_get_doc), \
+         patch("shared.student_matcher.query", side_effect=fake_query), \
+         patch("shared.student_matcher.upsert"):
+        result = match_student(
+            SubjectFields(student_name="Alice Mukamuri", submission_code="HW7K2P"),
+            sender_email="alice@example.com",
+        )
+    assert result.status == MatchStatus.MATCHED
+    assert result.answer_key is not None
+    assert result.answer_key["id"] == "ak-1"
+    assert result.class_doc["id"] == "class-1"
+    assert result.school["id"] == "school-1"
+
+
+def test_matcher_code_path_returns_not_found_for_unknown_code():
+    from shared.student_matcher import SubjectFields, match_student
+    with patch("shared.student_matcher.query_single", return_value=None), \
+         patch("shared.student_matcher.get_doc", return_value=None), \
+         patch("shared.student_matcher.query", return_value=[]):
+        result = match_student(
+            SubjectFields(student_name="Alice", submission_code="ZZZZZZ"),
+            sender_email="alice@example.com",
+        )
+    assert result.status == MatchStatus.NOT_FOUND_CODE
+    assert "ZZZZZZ" in result.reason
+
+
+def test_matcher_code_path_auto_enrols_unknown_student():
+    """Code resolves the class but the named student isn't on the
+    roster → auto-enrol, same policy as the fuzzy path."""
+    answer_key = {
+        "id": "ak-2",
+        "submission_code": "HW9X3R",
+        "class_id": "class-2",
+    }
+    class_doc = {"id": "class-2", "name": "Form 1B", "school_id": "school-1"}
+    school = {"id": "school-1", "name": "Highlands"}
+
+    def fake_query_single(coll, filters):
+        if coll == "answer_keys":
+            return answer_key
+        return None
+
+    def fake_get_doc(coll, doc_id):
+        if coll == "classes":
+            return class_doc
+        if coll == "schools":
+            return school
+        return None
+
+    from shared.student_matcher import SubjectFields, match_student
+    with patch("shared.student_matcher.query_single", side_effect=fake_query_single), \
+         patch("shared.student_matcher.get_doc", side_effect=fake_get_doc), \
+         patch("shared.student_matcher.query", return_value=[]), \
+         patch("shared.student_matcher.upsert") as up:
+        result = match_student(
+            SubjectFields(student_name="Charlie Banda", submission_code="HW9X3R"),
+            sender_email="charlie@example.com",
+        )
+    assert result.status == MatchStatus.AUTO_ENROLLED
+    assert result.answer_key["id"] == "ak-2"
+    assert result.student["first_name"] == "Charlie"
+    assert result.student["email"] == "charlie@example.com"
+    up.assert_called_once()
+
+
+# ─── Code generator ──────────────────────────────────────────────────────────
+
+def test_generate_unique_submission_code_returns_clean_alphabet_only():
+    from shared.submission_codes import generate_unique_submission_code
+    with patch("shared.submission_codes.query_single", return_value=None):
+        for _ in range(20):
+            code = generate_unique_submission_code()
+            assert len(code) == 6
+            # Ambiguous chars (0/O, 1/I/L) must never appear.
+            for c in code:
+                assert c not in "0O1IL"
+
+
+def test_generate_unique_submission_code_retries_on_collision():
+    """First two calls return existing docs (collision), third returns
+    None — generator should give us the third-try code, not the first."""
+    from shared.submission_codes import generate_unique_submission_code
+    side_effects = [{"id": "ak-existing-1"}, {"id": "ak-existing-2"}, None]
+    with patch("shared.submission_codes.query_single", side_effect=side_effects) as qs:
+        code = generate_unique_submission_code()
+    assert qs.call_count == 3
+    assert len(code) == 6
+
+
 def _patch_matcher_firestore(*, schools, classes, students, existing_by_email=None):
     """Bundle the four Firestore patches the matcher needs."""
     existing_by_email = existing_by_email or {}
