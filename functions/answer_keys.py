@@ -27,6 +27,7 @@ from shared.gemma_client import (
 )
 from shared.router import AIRequestType, route_ai_request
 from shared.models import AnswerKey
+from shared.submission_codes import generate_unique_submission_code
 from shared.user_context import get_user_context
 from shared.weakness_tracker import update_student_weaknesses
 
@@ -487,6 +488,7 @@ def create_answer_key():
         generated=generated,
         status=status,
         question_paper_text=stored_qp_text,
+        submission_code=generate_unique_submission_code(),
     )
     doc = key.model_dump()
     if qp_image_url:
@@ -1093,6 +1095,7 @@ def create_homework_with_scheme():
         status="draft",
         question_paper_text=stored_qp_text,
         due_date=due_date,
+        submission_code=generate_unique_submission_code(),
     )
     upsert("answer_keys", key.id, key.model_dump())
     logger.info(

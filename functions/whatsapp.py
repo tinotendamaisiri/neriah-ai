@@ -30,6 +30,7 @@ from shared.gemma_client import (
     student_tutor,
 )
 from shared.models import AnswerKey, Class, Mark, Session, Student, WhatsAppState
+from shared.submission_codes import generate_unique_submission_code
 from shared.whatsapp_client import download_media, send_image, send_text
 from functions.teacher_whatsapp import (
     TEACHER_REVIEW_ACTIVE,
@@ -737,6 +738,7 @@ def _store_answer_key(phone: str, class_id: str, education_level: str, scheme: d
         education_level=education_level,
         questions=questions,
         total_marks=total_marks,
+        submission_code=generate_unique_submission_code(),
     )
     upsert("answer_keys", key.id, key.model_dump())
 

@@ -139,6 +139,17 @@ class AnswerKey(BaseModel):
     status: Optional[str] = None  # None = ready, "draft" = awaiting teacher review, "pending_setup" = unlabeled
     question_paper_text: Optional[str] = None  # stored for server-side regeneration
     due_date: Optional[str] = None
+    # Short, easy-to-share code printed on the slip teachers hand out so
+    # students can email submissions to mark@neriah.ai with a subject of
+    # "Name: Alice | Code: HW7K2P". Code uniquely identifies the homework,
+    # which gives the email poller class + school + answer key in one
+    # Firestore lookup — no fuzzy school/class matching needed when the
+    # student copies the code correctly. Generated on create with retry
+    # on collision; intentionally NOT given a default_factory here so a
+    # legacy AnswerKey reloaded from Firestore without this field stays
+    # empty (the poller falls back to the fuzzy path) instead of getting
+    # a fresh code on every load that wouldn't match anything.
+    submission_code: Optional[str] = None
     created_at: str = Field(default_factory=lambda: _now().isoformat())
 
 
