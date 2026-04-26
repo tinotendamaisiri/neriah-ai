@@ -255,6 +255,33 @@ def parse_rfc822(raw: bytes) -> ParsedEmail:
         usable.extend(embedded_usable)
         skipped.extend(embedded_skipped)
 
+    # Diagnostic dump — only fires when we found nothing usable, so the
+    # log isn't spammed by happy-path emails. Lists each MIME part's
+    # content type + filename + Content-Disposition + size, plus the
+    # first 200 chars of any HTML body so we can spot data: URIs that
+    # didn't match the regex (different encoding, weird whitespace,
+    # quote style, etc).
+    if not usable:
+        try:
+            parts_summary = []
+            for part in msg.walk() if msg.is_multipart() else [msg]:
+                if part.is_multipart():
+                    continue
+                payload = part.get_payload(decode=True)
+                size = len(payload) if payload else 0
+                parts_summary.append(
+                    f"[ct={part.get_content_type()} "
+                    f"name={part.get_filename()!r} "
+                    f"disp={part.get('Content-Disposition')!r} "
+                    f"size={size}]"
+                )
+            logger.info("email_parser diag: parts=%s", " ".join(parts_summary))
+            for i, body in enumerate(html_bodies[:2]):
+                snippet = body[:300].replace("\n", " ")
+                logger.info("email_parser diag: html_body[%d][:300]=%r", i, snippet)
+        except Exception:
+            logger.exception("email_parser diag: dump failed")
+
     return ParsedEmail(
         sender=sender,
         subject=subject,

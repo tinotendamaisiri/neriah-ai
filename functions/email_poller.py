@@ -170,6 +170,26 @@ def _process_message(parsed: ParsedEmail) -> str:
     so the caller knows where to MOVE the message after.
     """
     sender = parsed.sender
+    # Diagnostic line — fires for every inbound message regardless of
+    # outcome so we can compare what the parser saw against what the
+    # student actually sent. Fields kept short so a few lines fit in
+    # one log entry. Body length only (not contents) to avoid leaking
+    # PII into Cloud Logging.
+    logger.info(
+        "email_poller: received from=%s subject=%r body_len=%d usable=%d skipped=%d",
+        sender,
+        parsed.subject[:120],
+        len(parsed.body_text or ""),
+        len(parsed.usable_attachments),
+        len(parsed.skipped_attachments),
+    )
+    if parsed.skipped_attachments:
+        for fname, ct, why in parsed.skipped_attachments[:5]:
+            logger.info(
+                "email_poller: skipped attachment name=%r ct=%s reason=%s",
+                fname, ct, why,
+            )
+
     if not parsed.has_usable_attachment:
         # No image / PDF attached — auto-reply with the format guide.
         # This is a system-status reply, not a grade, so the
