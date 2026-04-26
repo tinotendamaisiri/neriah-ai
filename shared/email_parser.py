@@ -23,8 +23,11 @@ single grading job. Larger files trigger the format-error reply.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import email
 import logging
+import re
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -90,6 +93,81 @@ def _extract_text_body(msg: EmailMessage) -> str:
     if not payload:
         return ""
     return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+
+
+def _collect_html_bodies(msg: EmailMessage) -> list[str]:
+    """Return every text/html body part's decoded string. Used by the
+    data-URI extractor below — when a student "pastes" an image into
+    Gmail's compose field, the image often arrives base64-embedded as
+    a `<img src="data:image/jpeg;base64,...">` tag inside the HTML body
+    rather than as a separate MIME attachment."""
+    out: list[str] = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/html" and not part.get_filename():
+                payload = part.get_payload(decode=True)
+                if payload:
+                    out.append(
+                        payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                    )
+    elif msg.get_content_type() == "text/html":
+        payload = msg.get_payload(decode=True)
+        if payload:
+            out.append(msg.get_content_charset() or "utf-8")
+    return out
+
+
+# Matches data: URIs in HTML, e.g.
+#   src="data:image/jpeg;base64,/9j/4AAQ…"
+#   src='data:image/png;base64,iVBORw0KGgo…'
+# We only extract image/* and application/pdf to mirror the MIME
+# attachment whitelist; case-insensitive content type. Greedy match on
+# the base64 body — the tag's closing quote is the terminator.
+_DATA_URI_RE = re.compile(
+    r"""data:(?P<ct>(?:image/[a-z0-9.+\-]+|application/pdf))\s*;\s*base64\s*,\s*(?P<data>[A-Za-z0-9+/=\s]+?)(?=["'])""",
+    re.IGNORECASE,
+)
+
+
+def _extract_data_uri_attachments(html_bodies: list[str]) -> tuple[list[tuple[str, bytes, str]], list[tuple[str, str, str]]]:
+    """Sweep HTML bodies for `data:image/...;base64,...` URIs and decode
+    each into a usable attachment. Skips ones that fail to base64-decode
+    (malformed paste) and ones that exceed ATTACHMENT_LIMIT_BYTES.
+    """
+    usable: list[tuple[str, bytes, str]] = []
+    skipped: list[tuple[str, str, str]] = []
+    seen: set[bytes] = set()
+
+    for body in html_bodies:
+        for i, m in enumerate(_DATA_URI_RE.finditer(body)):
+            ct = m.group("ct").lower()
+            b64 = m.group("data")
+            # Strip whitespace introduced by HTML word-wrap before
+            # decoding — base64 is whitespace-tolerant in spec but
+            # Python's b64decode is stricter without validate=False.
+            b64_clean = re.sub(r"\s+", "", b64)
+            try:
+                payload = base64.b64decode(b64_clean, validate=True)
+            except (binascii.Error, ValueError):
+                skipped.append(("(pasted image)", ct, "malformed base64 in data: URI"))
+                continue
+            # Dedup identical bytes — Gmail sometimes wraps the same
+            # image in cid: AND data: URIs simultaneously.
+            sig = payload[:64] + bytes([len(payload) % 251])
+            if sig in seen:
+                continue
+            seen.add(sig)
+
+            if len(payload) > ATTACHMENT_LIMIT_BYTES:
+                skipped.append((
+                    "(pasted image)", ct,
+                    f"too large ({len(payload) // (1024 * 1024)} MB > {ATTACHMENT_LIMIT_BYTES // (1024 * 1024)} MB)",
+                ))
+                continue
+
+            usable.append((_default_filename(ct), payload, ct))
+
+    return usable, skipped
 
 
 def _walk_attachments(msg: EmailMessage) -> tuple[list[tuple[str, bytes, str]], list[tuple[str, str, str]]]:
@@ -165,6 +243,17 @@ def parse_rfc822(raw: bytes) -> ParsedEmail:
     subject = (msg.get("Subject") or "").strip()
     body_text = _extract_text_body(msg)
     usable, skipped = _walk_attachments(msg)
+
+    # Some clients (notably Gmail iOS when you long-press → paste a
+    # photo into the compose field) send the image as a base64 data:
+    # URI inside the HTML body rather than as a MIME attachment. The
+    # MIME walk above wouldn't see those, so do a second pass over the
+    # HTML bodies and pull any data: URIs into the usable list.
+    html_bodies = _collect_html_bodies(msg)
+    if html_bodies:
+        embedded_usable, embedded_skipped = _extract_data_uri_attachments(html_bodies)
+        usable.extend(embedded_usable)
+        skipped.extend(embedded_skipped)
 
     return ParsedEmail(
         sender=sender,

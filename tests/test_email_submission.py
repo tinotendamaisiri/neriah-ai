@@ -104,6 +104,50 @@ def test_parser_handles_empty_body_gracefully():
     assert parsed.sender == "alice@example.com"
 
 
+def test_parser_extracts_pasted_image_from_html_body():
+    """Gmail iOS pastes inline images as base64 data: URIs in the HTML
+    body rather than MIME attachments. The parser should find them."""
+    import base64 as _b64
+    img_bytes = b"\xff\xd8\xff\xe0fake-jpeg-bytes"
+    b64 = _b64.b64encode(img_bytes).decode("ascii")
+    html = (
+        "<html><body><p>Here is my homework.</p>"
+        f'<img src="data:image/jpeg;base64,{b64}" />'
+        "</body></html>"
+    )
+    msg = EmailMessage()
+    msg["From"] = "alice@example.com"
+    msg["To"] = "mark@neriah.ai"
+    msg["Subject"] = "Name: Alice | Code: HW7K2P"
+    msg.set_content("Here is my homework.")
+    msg.add_alternative(html, subtype="html")
+    raw = msg.as_bytes()
+
+    parsed = parse_rfc822(raw)
+    assert parsed.has_usable_attachment is True
+    cts = [a[2] for a in parsed.usable_attachments]
+    assert "image/jpeg" in cts
+    # Round-trip the bytes — they must match what we embedded.
+    payloads = [a[1] for a in parsed.usable_attachments if a[2] == "image/jpeg"]
+    assert img_bytes in payloads
+
+
+def test_parser_ignores_malformed_data_uri():
+    # Single base64 char with bogus padding — passes the regex (chars are
+    # in the b64 alphabet) but fails strict b64decode. This is what a
+    # truncated paste would look like.
+    html = '<img src="data:image/jpeg;base64,A===" />'
+    msg = EmailMessage()
+    msg["From"] = "alice@example.com"
+    msg["Subject"] = "Name: Alice | Code: HW7K2P"
+    msg.set_content("body")
+    msg.add_alternative(html, subtype="html")
+    parsed = parse_rfc822(msg.as_bytes())
+    assert parsed.has_usable_attachment is False
+    # The malformed URI should be recorded in skipped, not crash parsing.
+    assert any("malformed" in why for _name, _ct, why in parsed.skipped_attachments)
+
+
 # ─── shared.student_matcher ───────────────────────────────────────────────────
 
 from shared.student_matcher import (  # noqa: E402
