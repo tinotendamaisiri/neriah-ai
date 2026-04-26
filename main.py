@@ -27,6 +27,7 @@ from functions.answer_keys import answer_keys_bp, homework_bp
 from functions.auth import auth_bp
 from functions.classes import classes_bp
 from functions.curriculum import curriculum_bp
+from functions.email_poller import poll_email_pubsub  # noqa: F401 — Pub/Sub entry point exposed at module top-level so `gcloud functions deploy --entry-point=poll_email_pubsub` resolves it
 from functions.mark import mark_bp
 from functions.push import push_bp
 from functions.schools import schools_bp
