@@ -1,17 +1,23 @@
 // src/components/NetworkBanner.tsx
 // Persistent status strip shown at the top of every screen.
-//   Red   → offline (no connection)
 //   Amber → syncing queued items
 //   Green → just synced (auto-dismisses after 3 s)
-//   Hidden when online and nothing pending
+//   Hidden when offline OR when online with nothing pending
+//
+// We deliberately do NOT show a banner for plain "offline" — Neriah is
+// offline-first, so being offline is a supported state, not a problem.
+// The status dot on the profile avatar already conveys connectivity;
+// stacking a top-of-screen banner on top of that just made teachers
+// think something was broken.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { getQueueLength, replayQueue } from '../services/offlineQueue';
+import { getMutationQueueLength, replayMutationQueue } from '../services/mutationQueue';
 import { COLORS } from '../constants/colors';
 
-type BannerState = 'hidden' | 'offline' | 'syncing' | 'synced';
+type BannerState = 'hidden' | 'syncing' | 'synced';
 
 const POLL_INTERVAL_MS = 3000;
 const SYNCED_DISMISS_MS = 3000;
@@ -24,13 +30,17 @@ export default function NetworkBanner() {
   const syncing = useRef(false);
   const wasOffline = useRef(false);
 
-  // Poll queue length
+  // Poll combined queue length (scans + mutations) so the banner
+  // surfaces both kinds of pending work.
   useEffect(() => {
     let active = true;
     const poll = async () => {
       if (!active) return;
-      const n = await getQueueLength();
-      if (active) setQueueCount(n);
+      const [scans, mutations] = await Promise.all([
+        getQueueLength(),
+        getMutationQueueLength(),
+      ]);
+      if (active) setQueueCount(scans + mutations);
     };
     poll();
     const interval = setInterval(poll, POLL_INTERVAL_MS);
@@ -41,19 +51,27 @@ export default function NetworkBanner() {
   useEffect(() => {
     const decide = async () => {
       if (!isConnected) {
+        // Track that we went offline so we know to trigger sync when
+        // we come back, but don't render anything — the profile-avatar
+        // status dot already shows offline state.
         wasOffline.current = true;
-        setBannerState('offline');
+        setBannerState('hidden');
         return;
       }
 
       if (wasOffline.current && !syncing.current) {
         wasOffline.current = false;
-        const n = await getQueueLength();
-        if (n > 0) {
+        const [scans, mutations] = await Promise.all([
+          getQueueLength(),
+          getMutationQueueLength(),
+        ]);
+        if (scans + mutations > 0) {
           syncing.current = true;
           setBannerState('syncing');
           try {
-            await replayQueue();
+            // Replay both queues in parallel. Each handles its own
+            // retries / dead-letters internally.
+            await Promise.all([replayQueue(), replayMutationQueue()]);
           } finally {
             syncing.current = false;
             setQueueCount(0);
@@ -90,7 +108,6 @@ export default function NetworkBanner() {
   if (bannerState === 'hidden') return null;
 
   const config: Record<Exclude<BannerState, 'hidden'>, { bg: string; text: string }> = {
-    offline: { bg: COLORS.error, text: 'No internet connection' },
     syncing: {
       bg: COLORS.warning,
       text: queueCount > 0 ? `Uploading ${queueCount} pending scan${queueCount !== 1 ? 's' : ''}…` : 'Syncing…',

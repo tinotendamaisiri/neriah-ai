@@ -50,7 +50,9 @@ import {
 } from './src/services/offlineQueue';
 import { detectAndStoreCapability } from './src/services/deviceCapabilities';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
-import NetworkBanner from './src/components/NetworkBanner';
+// NetworkBanner is no longer rendered — keep the import out so
+// stale components can't accidentally re-add the top strip.
+// import NetworkBanner from './src/components/NetworkBanner';
 import { COLORS } from './src/constants/colors';
 import { MODEL_DISPLAY_NAME, MODEL_SIZE_LABEL } from './src/services/modelManager';
 import {
@@ -510,7 +512,11 @@ function AppShell() {
   return (
     <NavigationContainer>
       <View style={{ flex: 1 }}>
-        {isAuthed && <NetworkBanner />}
+        {/* NetworkBanner removed — sync status now lives on the
+            profile avatar (orange ring + "Syncing…" label, see
+            AvatarWithStatus). The previous top banner could get
+            stuck "Uploading N pending scans…" because it only
+            triggered replay on offline → online edges. */}
         <ErrorBoundary>
           {content}
         </ErrorBoundary>
