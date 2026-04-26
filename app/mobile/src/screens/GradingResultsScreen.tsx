@@ -97,7 +97,13 @@ export default function GradingResultsScreen() {
           : subs.filter(s => s.answer_key_id === answer_key_id || !answer_key_id),
       );
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Could not load grading results.');
+      // Offline + nothing in cache for this filter — don't yell at
+      // the teacher, just render the empty state. Whatever is in
+      // submissions state stays there (might be partial from a prior
+      // load).
+      if (!err?.isOffline) {
+        Alert.alert('Error', err.message ?? 'Could not load grading results.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

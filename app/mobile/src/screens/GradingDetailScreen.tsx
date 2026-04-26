@@ -86,7 +86,13 @@ export default function GradingDetailScreen() {
       setApproved(mark.approved ?? false);
       setManuallyEdited(mark.manually_edited ?? false);
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Could not load mark details.');
+      // Offline + this mark hasn't been viewed online yet → it's
+      // simply not in cache. Bouncing the teacher back with an alert
+      // doesn't help; just goBack quietly so they see the homework
+      // page and can pick a different submission to view.
+      if (!err?.isOffline) {
+        Alert.alert('Error', err.message ?? 'Could not load mark details.');
+      }
       navigation.goBack();
     } finally {
       setLoading(false);

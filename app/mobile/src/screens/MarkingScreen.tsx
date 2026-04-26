@@ -114,19 +114,38 @@ export default function MarkingScreen() {
   const loadClassData = async (cid: string) => {
     setLoadingData(true);
     try {
-      const [studs, keys] = await Promise.all([
+      // allSettled, not all — offline cache might cover one call but
+      // not the other (e.g. students cached, answer keys never
+      // fetched online). We render whatever's available rather than
+      // bailing on the whole screen.
+      const [studsResult, keysResult] = await Promise.allSettled([
         listStudents(cid),
         listAnswerKeys(cid),
       ]);
-      setStudents(studs);
-      setAnswerKeys(keys);
-      // Pre-select answer key if navigated from HomeworkDetail
-      if (routeAnswerKeyId) {
-        const preSelected = (keys ?? []).find(k => k.id === routeAnswerKeyId) ?? null;
-        if (preSelected) setSelectedAnswerKey(preSelected);
+
+      if (studsResult.status === 'fulfilled') setStudents(studsResult.value);
+      if (keysResult.status === 'fulfilled') {
+        setAnswerKeys(keysResult.value);
+        if (routeAnswerKeyId) {
+          const preSelected = keysResult.value.find(k => k.id === routeAnswerKeyId) ?? null;
+          if (preSelected) setSelectedAnswerKey(preSelected);
+        }
       }
-    } catch {
-      Alert.alert('Error', 'Failed to load class data.');
+
+      // Only show the error alert when BOTH failed AND it wasn't a
+      // network outage. Offline-with-empty-cache is a recoverable
+      // state — the screen still renders, the teacher just sees
+      // "no students yet" until the cache fills next time they're
+      // online. Throwing an alert at them adds nothing.
+      const bothFailed =
+        studsResult.status === 'rejected' && keysResult.status === 'rejected';
+      const isOffline =
+        bothFailed &&
+        ((studsResult.reason as { isOffline?: boolean })?.isOffline ||
+          (keysResult.reason as { isOffline?: boolean })?.isOffline);
+      if (bothFailed && !isOffline) {
+        Alert.alert('Error', 'Failed to load class data.');
+      }
     } finally {
       setLoadingData(false);
     }

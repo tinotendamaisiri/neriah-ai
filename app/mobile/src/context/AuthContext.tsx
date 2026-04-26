@@ -19,6 +19,10 @@ import { JWT_STORAGE_KEY, USER_STORAGE_KEY, registerPushToken, setUnauthorizedHa
 import { AuthUser, VerifyResponse } from '../types';
 import { PENDING_JOIN_CODE_KEY } from '../constants';
 import { clearDeadLetter, clearQueue, getQueue } from '../services/offlineQueue';
+import { clearMutationQueue, getMutationQueue } from '../services/mutationQueue';
+import { clearReadCache } from '../services/readCache';
+import { warmOfflineCache } from '../services/prefetch';
+import NetInfo from '@react-native-community/netinfo';
 
 const PIN_SET_KEY = 'neriah_has_pin';
 const TERMS_ACCEPTED_KEY = 'neriah_terms_accepted';
@@ -145,6 +149,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUnauthorizedHandler(logout);
   }, [logout]);
 
+  // Warm the offline cache on cold-start (after a stored session is
+  // restored) and again whenever connectivity flips offline → online.
+  // Login itself triggers a warm-up directly; this effect handles the
+  // other two entry points.
+  useEffect(() => {
+    if (!user?.id) return;
+
+    // Cold-start warm-up — best-effort, runs once after restore.
+    warmOfflineCache(user.id);
+
+    // Reconnect warm-up — debounced to a single trigger per
+    // offline → online edge.
+    let wasConnected: boolean | null = null;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const nowConnected = !!state.isConnected;
+      if (wasConnected === false && nowConnected) {
+        warmOfflineCache(user.id);
+      }
+      wasConnected = nowConnected;
+    });
+    return unsubscribe;
+  }, [user?.id]);
+
   const login = useCallback(async (response: VerifyResponse) => {
     // If this is a student registering via join code, the pending join_code
     // was stored in AsyncStorage by StudentRegisterScreen before OTP navigation.
@@ -181,6 +208,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(response.token);
     setUser(authUser);
     setPinUnlocked(true); // OTP login always unlocks
+
+    // Fire-and-forget cache warm-up so the app is fully usable
+    // offline without the teacher having to navigate every screen
+    // online first. Failures are logged inside warmOfflineCache and
+    // never block login.
+    warmOfflineCache(authUser.id);
 
     // Show PIN setup prompt if user hasn't set a PIN AND hasn't dismissed the prompt before.
     // "neriah_pin_prompt_shown" is written to AsyncStorage when the user either sets a PIN
@@ -225,8 +258,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           })),
         );
       }
+      // Same reasoning for the mutation queue: log discarded items
+      // before wiping so post-hoc audit is possible if a teacher
+      // reports "I approved a submission but it never went through".
+      const pendingMutations = await getMutationQueue();
+      if (pendingMutations.length > 0) {
+        console.warn(
+          `[logout] discarding ${pendingMutations.length} queued mutation(s):`,
+          pendingMutations.map((m) => ({
+            id: m.id,
+            type: m.op.type,
+            queued_at: m.queued_at,
+            retry_count: m.retry_count,
+          })),
+        );
+      }
       await clearQueue();
       await clearDeadLetter();
+      await clearMutationQueue();
+      await clearReadCache();
     } catch {
       // Best-effort — never block logout on storage errors
     }

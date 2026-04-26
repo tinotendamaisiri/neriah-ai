@@ -57,11 +57,12 @@ interface ClassGroupItemProps {
   onAddHomework: (cls: Class) => void;
   onHomeworkPress: (ak: AnswerKey, cls: Class) => void;
   onViewGrading: (ak: AnswerKey, cls: Class) => void;
+  onMoreHomework: (cls: Class) => void;
 }
 
 const ClassGroupItem = React.memo(function ClassGroupItem({
   cls, answerKeys, submCountByKey, gradedCountByKey, t,
-  onCardPress, onAddHomework, onHomeworkPress, onViewGrading,
+  onCardPress, onAddHomework, onHomeworkPress, onViewGrading, onMoreHomework,
 }: ClassGroupItemProps) {
   return (
     <View style={styles.classGroup}>
@@ -146,7 +147,7 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
                 );
               })}
               {hiddenCount > 0 && (
-                <TouchableOpacity style={styles.moreLink} onPress={() => onCardPress(cls)}>
+                <TouchableOpacity style={styles.moreLink} onPress={() => onMoreHomework(cls)}>
                   <Text style={styles.moreLinkText}>+ {hiddenCount} more</Text>
                 </TouchableOpacity>
               )}
@@ -307,6 +308,10 @@ export default function HomeScreen() {
     });
   }, [navigation]);
 
+  const handleMoreHomework = useCallback((cls: Class) => {
+    navigation.navigate('HomeworkList', { class_id: cls.id, class_name: cls.name });
+  }, [navigation]);
+
   if (loading) {
     return (
       <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
@@ -390,6 +395,7 @@ export default function HomeScreen() {
             onAddHomework={handleAddHomeworkForClass}
             onHomeworkPress={handleHomeworkPress}
             onViewGrading={handleViewGrading}
+            onMoreHomework={handleMoreHomework}
           />
         )}
         ListEmptyComponent={

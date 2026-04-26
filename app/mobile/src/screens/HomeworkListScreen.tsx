@@ -75,7 +75,11 @@ export default function HomeworkListScreen() {
       keys.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
       setHomeworks(keys);
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Could not load homework list.');
+      // Offline + empty cache → no homework yet for this class.
+      // Don't alert; the screen renders its empty state instead.
+      if (!err?.isOffline) {
+        Alert.alert('Error', err.message ?? 'Could not load homework list.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -189,6 +193,7 @@ function HomeworkRow({ hw, onPress }: { hw: HomeworkItem; onPress: () => void })
             {status === 'graded' ? 'Graded' : 'Pending'}
           </Text>
         </View>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.gray500} />
       </View>
 
       <View style={card.metaRow}>
@@ -215,7 +220,6 @@ function HomeworkRow({ hw, onPress }: { hw: HomeworkItem; onPress: () => void })
         )}
       </View>
 
-      <Ionicons name="chevron-forward" size={16} color={COLORS.gray500} style={card.chevron} />
     </TouchableOpacity>
   );
 }
@@ -297,7 +301,7 @@ const card = StyleSheet.create({
     backgroundColor: COLORS.white, marginHorizontal: 16, marginBottom: 10,
     borderRadius: 12, padding: 14, position: 'relative',
   },
-  top: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   title: { flex: 1, fontSize: 15, fontWeight: '700', color: COLORS.text },
   badge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, flexShrink: 0 },
   badgeGreen: { backgroundColor: '#E8F8EF' },
@@ -314,7 +318,6 @@ const card = StyleSheet.create({
   dueOverdue: { color: COLORS.error, fontWeight: '600' },
   statsRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
   stat: { fontSize: 12, color: COLORS.teal500, fontWeight: '600' },
-  chevron: { position: 'absolute', right: 14, top: 14 },
 });
 
 const empty = StyleSheet.create({

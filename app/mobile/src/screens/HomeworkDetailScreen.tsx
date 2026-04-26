@@ -119,7 +119,12 @@ export default function HomeworkDetailScreen() {
 
       if (keysResult.status === 'rejected') {
         console.error('[HomeworkDetail] listAnswerKeys failed:', keysResult.reason);
-        Alert.alert(t('error'), 'Could not load homework details.');
+        // Offline with empty cache for this class — let the screen
+        // render its empty state instead of yelling at the teacher.
+        const isOffline = (keysResult.reason as { isOffline?: boolean })?.isOffline;
+        if (!isOffline) {
+          Alert.alert(t('error'), 'Could not load homework details.');
+        }
         return;
       }
 

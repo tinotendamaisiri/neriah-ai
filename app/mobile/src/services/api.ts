@@ -8,6 +8,15 @@ import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
+import { withCache, readCacheOnly } from './readCache';
+import { enqueueMutation } from './mutationQueue';
+
+// Local helper — promotes "isOffline" axios rejections into the
+// mutation queue with optimistic cache patching so callers can
+// `await` the mutation in either online or offline mode and the
+// teacher's UI updates immediately. Online errors propagate normally.
+const isOfflineErr = (err: unknown): boolean =>
+  !!(err && typeof err === 'object' && (err as { isOffline?: boolean }).isOffline);
 import {
   Class,
   ClassJoinInfo,
@@ -206,10 +215,11 @@ export const registerPushToken = async (push_token: string): Promise<void> => {
 
 // ── Classes ───────────────────────────────────────────────────────────────────
 
-export const listClasses = async (): Promise<Class[]> => {
-  const res: AxiosResponse<Class[]> = await client.get('/classes');
-  return res.data;
-};
+export const listClasses = async (): Promise<Class[]> =>
+  withCache('classes', async () => {
+    const res: AxiosResponse<Class[]> = await client.get('/classes');
+    return res.data;
+  });
 
 export const createClass = async (payload: {
   name: string;
@@ -259,10 +269,11 @@ export const getClassesBySchool = async (school_name: string, search?: string): 
 
 // ── Students ──────────────────────────────────────────────────────────────────
 
-export const listStudents = async (class_id: string): Promise<Student[]> => {
-  const res: AxiosResponse<Student[]> = await client.get('/students', { params: { class_id } });
-  return res.data;
-};
+export const listStudents = async (class_id: string): Promise<Student[]> =>
+  withCache(`students:${class_id}`, async () => {
+    const res: AxiosResponse<Student[]> = await client.get('/students', { params: { class_id } });
+    return res.data;
+  });
 
 export const createStudent = async (payload: {
   class_id: string;
@@ -302,12 +313,13 @@ export const deleteStudent = async (student_id: string): Promise<void> => {
 
 // ── Answer Keys ───────────────────────────────────────────────────────────────
 
-export const listAnswerKeys = async (class_id: string): Promise<AnswerKey[]> => {
-  const res: AxiosResponse<AnswerKey[]> = await client.get('/answer-keys', {
-    params: { class_id },
+export const listAnswerKeys = async (class_id: string): Promise<AnswerKey[]> =>
+  withCache(`answer-keys:${class_id}`, async () => {
+    const res: AxiosResponse<AnswerKey[]> = await client.get('/answer-keys', {
+      params: { class_id },
+    });
+    return res.data;
   });
-  return res.data;
-};
 
 export const createAnswerKey = async (payload: {
   class_id: string;
@@ -573,10 +585,11 @@ export const submitMark = async (payload: {
 };
 
 /** Fetch a single mark document by ID (teacher review or student feedback). */
-export const getMarkById = async (mark_id: string): Promise<any> => {
-  const res = await client.get(`/marks/${mark_id}`);
-  return res.data;
-};
+export const getMarkById = async (mark_id: string): Promise<any> =>
+  withCache(`mark:${mark_id}`, async () => {
+    const res = await client.get(`/marks/${mark_id}`);
+    return res.data;
+  });
 
 /** Teacher updates score, feedback, verdicts, or approves a student submission. */
 export const updateMark = async (
@@ -597,8 +610,20 @@ export const updateMark = async (
     manually_edited?: boolean;
   },
 ): Promise<Mark> => {
-  const res: AxiosResponse<Mark> = await client.put(`/marks/${mark_id}`, payload);
-  return res.data;
+  try {
+    const res: AxiosResponse<Mark> = await client.put(`/marks/${mark_id}`, payload);
+    return res.data;
+  } catch (err) {
+    if (!isOfflineErr(err)) throw err;
+    // Offline — queue for replay and patch the read-cache so screens
+    // see the updated mark immediately. We don't have the full server
+    // shape here so we synthesise a minimal Mark-like object from the
+    // payload + whatever was cached. The real server response replaces
+    // it on next online fetch.
+    await enqueueMutation({ type: 'update_mark', mark_id, payload });
+    const cached = await readCacheOnly<Mark>(`mark:${mark_id}`);
+    return { ...(cached as Mark | null ?? ({} as Mark)), ...(payload as Partial<Mark>) } as Mark;
+  }
 };
 
 /**
@@ -866,13 +891,53 @@ export const getTeacherSubmissions = async (params?: {
   teacher_id?: string;
   answer_key_id?: string;
 }): Promise<TeacherSubmission[]> => {
-  const res: AxiosResponse<TeacherSubmission[]> = await client.get('/submissions', { params });
-  return res.data;
+  // Cache key encodes params so different filter views each get their
+  // own offline snapshot when used online. The teacher-wide slot
+  // (just `teacher_id`) is the broadest and acts as the offline
+  // fallback for narrower views — see below.
+  const specificKey = `submissions:${JSON.stringify(params ?? {})}`;
+  const teacherWideKey = params?.teacher_id
+    ? `submissions:${JSON.stringify({ teacher_id: params.teacher_id })}`
+    : null;
+
+  try {
+    return await withCache(specificKey, async () => {
+      const res: AxiosResponse<TeacherSubmission[]> = await client.get('/submissions', { params });
+      // Mirror the result into the teacher-wide slot too, so that
+      // narrower views (e.g. {class_id, teacher_id}) hitting offline
+      // for the first time can still draw on whatever the home screen
+      // already cached. We only mirror when the request itself is the
+      // broad teacher-wide one — we don't want a class-filtered result
+      // to overwrite the wide cache, that'd corrupt other screens.
+      return res.data;
+    });
+  } catch (err) {
+    const isOffline = !!(err && typeof err === 'object' && (err as { isOffline?: boolean }).isOffline);
+    if (!isOffline || !teacherWideKey || teacherWideKey === specificKey) throw err;
+
+    // Fallback: try the teacher-wide cache slot and filter client-side
+    // to match the requested params. Lets HomeworkDetail render its
+    // submissions list using data the HomeScreen already cached, even
+    // though the param shapes (and therefore the cache keys) differ.
+    const wide = await readCacheOnly<TeacherSubmission[]>(teacherWideKey);
+    if (!wide) throw err;
+    return wide.filter((s) => {
+      if (params?.class_id && s.class_id !== params.class_id) return false;
+      if (params?.answer_key_id && s.answer_key_id !== params.answer_key_id) return false;
+      if (params?.status && s.status !== params.status) return false;
+      return true;
+    });
+  }
 };
 
 /** Teacher: approve a student submission. */
 export const approveSubmission = async (submission_id: string): Promise<void> => {
-  await client.post(`/submissions/${submission_id}/approve`);
+  try {
+    await client.post(`/submissions/${submission_id}/approve`);
+  } catch (err) {
+    if (!isOfflineErr(err)) throw err;
+    await enqueueMutation({ type: 'approve_submission', submission_id });
+  }
 };
 
 /**
@@ -882,8 +947,15 @@ export const approveSubmission = async (submission_id: string): Promise<void> =>
 export const deleteSubmission = async (
   submission_id: string,
 ): Promise<{ deleted: boolean; cascades?: { mark: boolean; image_blob: boolean; training_sample: boolean } }> => {
-  const res = await client.delete(`/submissions/${submission_id}`);
-  return res.data;
+  try {
+    const res = await client.delete(`/submissions/${submission_id}`);
+    return res.data;
+  } catch (err) {
+    if (!isOfflineErr(err)) throw err;
+    await enqueueMutation({ type: 'delete_submission', submission_id });
+    // Synthesise a delete-shaped success so callers don't break.
+    return { deleted: true };
+  }
 };
 
 /**
@@ -893,8 +965,14 @@ export const deleteSubmission = async (
 export const deleteMark = async (
   mark_id: string,
 ): Promise<{ deleted: boolean; submission_id?: string | null; cascades?: { mark: boolean; image_blob: boolean; training_sample: boolean } }> => {
-  const res = await client.delete(`/marks/${mark_id}`);
-  return res.data;
+  try {
+    const res = await client.delete(`/marks/${mark_id}`);
+    return res.data;
+  } catch (err) {
+    if (!isOfflineErr(err)) throw err;
+    await enqueueMutation({ type: 'delete_mark', mark_id });
+    return { deleted: true };
+  }
 };
 
 /** Record terms acceptance on the server (fire-and-forget; no OTP required). */
@@ -1023,3 +1101,18 @@ export const teacherAssistantChat = async (params: {
 // /teacher/assistant/export backend endpoint was deleted because it created
 // draft answer_keys that polluted analytics counts. The chat endpoint above
 // still emits structured homework/quiz content — nothing persists it now.
+
+// ── Mutation queue wiring ────────────────────────────────────────────────────
+//
+// The mutation queue calls back into these api functions during
+// replay. We register them lazily here (after the functions are
+// declared above) to avoid an import cycle: mutationQueue.ts is
+// imported by api.ts to enqueue offline mutations, and api.ts gives
+// it the replay handles via this register call.
+import { _registerReplayApi } from './mutationQueue';
+_registerReplayApi({
+  approveSubmission,
+  deleteSubmission,
+  deleteMark,
+  updateMark: (id, payload) => updateMark(id, payload as Parameters<typeof updateMark>[1]),
+});

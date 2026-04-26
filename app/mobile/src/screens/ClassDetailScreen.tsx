@@ -48,8 +48,14 @@ export default function ClassDetailScreen() {
     try {
       const studs = await listStudents(class_id);
       setStudents(studs);
-    } catch {
-      Alert.alert('Error', 'Failed to load students.');
+    } catch (err) {
+      // Offline + empty cache → no students to show, but the screen
+      // still works (teacher can add new ones). Suppress the alert;
+      // it would just blame them for being offline.
+      const isOffline = (err as { isOffline?: boolean })?.isOffline;
+      if (!isOffline) {
+        Alert.alert('Error', 'Failed to load students.');
+      }
     } finally {
       setLoading(false);
     }

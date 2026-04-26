@@ -444,11 +444,16 @@ export default function PageReviewScreen() {
         } catch (err: any) {
           // On-device path failed (OCR error, model not loaded, JSON parse,
           // etc). Don't lose the scan — drop into queue-for-replay.
-          console.warn('[PageReview] offline grading failed:', err?.message ?? err);
+          const detail = err?.message ?? String(err);
+          console.warn('[PageReview] offline grading failed:', detail);
           await queueForReplay();
+          // Surface the actual failure reason so we can tell whether
+          // it's MLKit OCR, the LiteRT model, JSON parsing, or
+          // something else. Hidden cause turned this into a
+          // black-box "it just doesn't work" issue.
           Alert.alert(
             "Couldn't grade offline",
-            "We saved your submission and will grade it as soon as you reconnect.",
+            `We saved your submission and will grade it as soon as you reconnect.\n\nReason: ${detail}`,
             [{ text: 'OK', onPress: () => navigation.goBack() }],
           );
           return;
