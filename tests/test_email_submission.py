@@ -210,6 +210,76 @@ def test_subject_picks_up_optional_code_in_three_field_form():
     assert fields.has_code is True
 
 
+# ─── Free-text subject parsing (lenient) ─────────────────────────────────────
+
+def test_subject_free_text_name_then_code():
+    """Most natural form: 'Tinotenda Maisiri QJXEPE' — no keywords,
+    no pipes."""
+    fields = parse_subject("Tinotenda Maisiri QJXEPE")
+    assert fields is not None
+    assert fields.student_name == "Tinotenda Maisiri"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_free_text_code_then_name():
+    fields = parse_subject("QJXEPE Tinotenda Maisiri")
+    assert fields is not None
+    assert fields.student_name == "Tinotenda Maisiri"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_free_text_with_punctuation():
+    """Trailing dot, hyphen, etc. between name and code should be tolerated."""
+    fields = parse_subject("Tinotenda Maisiri. QJXEPE")
+    assert fields is not None
+    assert fields.student_name == "Tinotenda Maisiri"
+    assert fields.submission_code == "QJXEPE"
+
+    fields = parse_subject("Tinotenda - QJXEPE")
+    assert fields is not None
+    assert fields.student_name == "Tinotenda"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_free_text_lowercase_code():
+    fields = parse_subject("alice qjxepe")
+    assert fields is not None
+    assert fields.student_name == "alice"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_free_text_strips_reply_prefix():
+    fields = parse_subject("Re: Tinotenda Maisiri QJXEPE")
+    assert fields is not None
+    assert fields.student_name == "Tinotenda Maisiri"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_free_text_strips_stacked_forward_prefixes():
+    fields = parse_subject("Fwd: Re: alice qjxepe")
+    assert fields is not None
+    assert fields.student_name == "alice"
+    assert fields.submission_code == "QJXEPE"
+
+
+def test_subject_rejects_bare_code_with_no_name():
+    """Code-only subject still fails — we need at least something to
+    use as the student's name (the matcher could fall back to the
+    sender's display name later, but for now we want a clean error)."""
+    assert parse_subject("QJXEPE") is None
+
+
+def test_subject_rejects_six_char_token_with_ambiguous_chars():
+    """'STREET' is 6 chars but contains E/T/R/S which are fine; this
+    test uses a 6-char token with ambiguous chars (0/O/1/I/L) which
+    can't be a real code from our generator."""
+    # All forbidden characters: 0, O, 1, I, L
+    # Use "100110" which contains 1 and 0 — never a real code.
+    assert parse_subject("Alice 100110") is None
+    # And one with just O — also never a real code.
+    assert parse_subject("Alice POOLED") is None
+
+
 # ─── Code-based matcher path ─────────────────────────────────────────────────
 
 def test_matcher_code_path_finds_answer_key_directly():

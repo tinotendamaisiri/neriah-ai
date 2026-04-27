@@ -67,11 +67,10 @@ _PIPE_RE = re.compile(
 _HYPHEN_RE = re.compile(
     r"^\s*(?P<name>[^\-,–—]+?)\s*[\-,–—]\s*(?P<class_name>[^\-,–—]+?)\s*[\-,–—]\s*(?P<school>.+?)\s*$",
 )
-# Standalone homework code — pulled from the subject independently of
-# the school/class fields so a student can use the minimal "Name: X |
-# Code: HW7K2P" form. Codes are 6 chars from the typo-resistant alphabet
-# defined in shared.submission_codes; we accept lowercase here (and
-# uppercase below) because students typing on a phone often forget caps.
+# Standalone homework code with explicit "Code:" prefix — pulled from
+# subjects that already have other structured fields (e.g. the full
+# Name|Class|School slip). Codes are 6 chars from the typo-resistant
+# alphabet defined in shared.submission_codes.
 _CODE_RE = re.compile(
     r"code\s*[:\-]\s*(?P<code>[A-Z0-9]{6})\b",
     re.IGNORECASE,
@@ -84,6 +83,33 @@ _NAME_CODE_RE = re.compile(
     r"code\s*[:\-]\s*(?P<code>[A-Z0-9]{6})\b",
     re.IGNORECASE,
 )
+# Bare 6-char token anywhere in the subject. Used by the lenient
+# free-text path: a student typing "Tinotenda Maisiri QJXEPE" or
+# "QJXEPE Tinotenda" or "tinotenda - qjxepe" should still route. The
+# word boundary stops us from grabbing substrings of longer words.
+_BARE_CODE_RE = re.compile(r"\b([A-Za-z0-9]{6})\b")
+# Reply/forward prefixes we strip from the subject before extracting
+# the name — common in email clients but never part of the student's
+# intended name.
+_PREFIX_RE = re.compile(
+    r"^\s*(?:re|fw|fwd|aw|wg|tr|sv|vs|ang|encaminhado)\s*:\s*",
+    re.IGNORECASE,
+)
+# Characters from the typo-resistant alphabet only. Filters bare-token
+# matches: a 6-char English word like "STREET" would match the regex
+# but fails this set check (E and T are present, but T is in the safe
+# alphabet so STREET would also wrongly look like a code). We accept
+# this minor risk — if a student's subject literally says "STREET
+# Tinotenda", we'd treat "STREET" as a code, the matcher would
+# NOT_FOUND_CODE, and the student gets a clear error telling them
+# the code wasn't recognised.
+_CODE_ALPHABET = set("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+
+
+def _looks_like_a_code(token: str) -> bool:
+    if len(token) != 6:
+        return False
+    return all(c in _CODE_ALPHABET for c in token.upper())
 
 
 @dataclass
@@ -110,19 +136,25 @@ def _extract_code(text: str) -> str:
 def parse_subject(subject: str, body_fallback: str = "") -> Optional[SubjectFields]:
     """Parse the subject (or first 500 chars of body) into matcher fields.
 
-    Two valid shapes:
-      A. Code-based:  "Name: Alice | Code: HW7K2P"
-         Minimal form. Code resolves class + school via the answer_key.
-      B. Three-field: "Name: Alice | Class: Form 4A | School: St Marys"
-         Legacy fuzzy path.
+    Three valid shapes, in order of specificity:
+      A. Structured code:  "Name: Alice | Code: HW7K2P"
+      B. Three-field:      "Name: Alice | Class: Form 4A | School: St Marys"
+      C. Free-text:        "Alice Mukamuri QJXEPE", "QJXEPE - alice",
+                           "Tinotenda. QJXEPE" — anything containing a
+                           name and a 6-char code-shaped token. Strips
+                           reply prefixes (Re:, Fwd:, etc.) from the
+                           name. This is the lenient path for students
+                           typing on a phone with no patience for
+                           keyword:value formatting.
 
-    Returns None when neither yields enough to route on.
+    Returns None when none of the three yields a name AND a code/class
+    + school pair.
     """
     for source in (subject, body_fallback[:500]):
         if not source:
             continue
 
-        # Try code-based form first — it's the cheaper match path.
+        # A. Structured "Name: X | Code: Y".
         m = _NAME_CODE_RE.search(source)
         if m:
             return SubjectFields(
@@ -130,9 +162,9 @@ def parse_subject(subject: str, body_fallback: str = "") -> Optional[SubjectFiel
                 submission_code=m.group("code").upper(),
             )
 
-        # Fall through to the three-field form. Pull a code opportunistically
-        # if one happens to be present so a student who copies the full
-        # slip ("Name | Class | School | Code") still gets the fast path.
+        # B. Three-field. Pull a code opportunistically if one happens
+        # to be present so a student who copies the full slip
+        # ("Name | Class | School | Code") still gets the fast path.
         m = _PIPE_RE.search(source)
         if not m:
             m = _HYPHEN_RE.match(source)
@@ -143,6 +175,44 @@ def parse_subject(subject: str, body_fallback: str = "") -> Optional[SubjectFiel
                 school_name=m.group("school").strip().rstrip(".,;"),
                 submission_code=_extract_code(source),
             )
+
+        # C. Free-text. Find any 6-char token from the typo-resistant
+        # code alphabet; treat the rest of the subject (sans reply
+        # prefixes) as the student's name.
+        free = _extract_free_text(source)
+        if free:
+            return free
+
+    return None
+
+
+def _extract_free_text(text: str) -> Optional[SubjectFields]:
+    """Find a code-shaped token anywhere in the text and treat the rest
+    as the student's name. Returns None if no valid code is present, or
+    if stripping the code leaves no name behind.
+    """
+    # Strip leading reply/forward prefixes so they don't end up in the
+    # name (e.g. "Re: Tinotenda QJXEPE" → name "Tinotenda").
+    cleaned = text
+    for _ in range(3):  # allow a few stacked prefixes ("Re: Fwd: …")
+        new = _PREFIX_RE.sub("", cleaned)
+        if new == cleaned:
+            break
+        cleaned = new
+
+    for m in _BARE_CODE_RE.finditer(cleaned):
+        token = m.group(1)
+        if not _looks_like_a_code(token):
+            continue
+        code = token.upper()
+        # Everything in the cleaned text except the code itself is the
+        # name. Collapse whitespace and strip surrounding punctuation
+        # ("Tinotenda. QJXEPE" → "Tinotenda").
+        name_raw = cleaned[: m.start()] + cleaned[m.end() :]
+        name = re.sub(r"\s+", " ", name_raw).strip(" .,;:-_|/\\")
+        if not name:
+            return None
+        return SubjectFields(student_name=name, submission_code=code)
     return None
 
 

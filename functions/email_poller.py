@@ -254,10 +254,10 @@ def _process_message(parsed: ParsedEmail) -> str:
     if fields is None:
         return _bounce(
             reason=(
-                "We couldn't read your name and homework code from the "
-                "subject line. The format must include 'Name:' and either "
-                "'Code:' or both 'Class:' and 'School:', separated by | "
-                "(pipe) characters."
+                "We couldn't find a homework code or your name in the "
+                "subject line. The simplest format is your name and the "
+                "6-character code your teacher gave you, in any order — "
+                "for example 'Alice Mukamuri QJXEPE'."
             ),
             kind="bad_subject",
         )

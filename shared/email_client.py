@@ -208,11 +208,14 @@ def send_format_error(
       <h2 style="margin:0 0 4px 0">We couldn't grade your submission</h2>
       <p style="margin:0 0 12px 0">{reason}</p>
       {received_block}
-      <p style="margin:14px 0 4px 0;color:#555;font-weight:600">Please send a new email with one of these subject lines:</p>
+      <p style="margin:14px 0 4px 0;color:#555;font-weight:600">Please send a new email with:</p>
       <ul style="margin:0 0 12px 18px;color:#555">
-        <li>Preferred (use the code your teacher gave you):
-          <br><code>Name: Your Name | Code: ABC123</code></li>
-        <li>Or, if you don't have a code:
+        <li>Subject: <strong>your name + the homework code your teacher gave you</strong>.
+          Order doesn't matter — all of these work:
+          <br><code>Alice Mukamuri QJXEPE</code>
+          <br><code>QJXEPE Alice Mukamuri</code>
+          <br><code>Alice - QJXEPE</code></li>
+        <li>If you don't have a code, use the longer form:
           <br><code>Name: Your Name | Class: Form 4A | School: Your School</code></li>
       </ul>
       <p style="margin:0 0 12px 0;color:#555">…and attach a photo or PDF of your homework (paperclip icon is most reliable).</p>
