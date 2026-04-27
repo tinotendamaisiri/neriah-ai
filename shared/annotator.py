@@ -94,24 +94,23 @@ def _resolve_verdict_position(
 ) -> tuple[int, int]:
     """Resolve (cx, cy) pixel coordinates for where a verdict symbol lands.
 
-    Prefers `question_x` / `question_y` from the verdict dict — both are
-    fractions of image dimensions (0.0-1.0). Missing or non-numeric
-    values fall back to right-margin stacking (x = 0.92, y evenly
-    distributed by index). Right margin matches how a teacher pen-marks
-    alongside the answer column, mirrors the mobile LocalAnnotation-
-    Overlay default, and stays on the page rather than the gutter for
-    portrait scans.
+    X coordinate is **always forced** to the right margin (0.92) so
+    every tick/X stacks down the right side of the page like a
+    teacher's pen-marks, regardless of what Gemma returned. Honouring
+    the model's question_x put symbols on top of the student's
+    handwriting on the left side of the page — the requested visual is
+    a clean right-margin column.
 
-    Both coords are clamped to [0.05, 0.95] so symbols never bleed off
-    the page edge regardless of what the model returned.
+    Y coordinate prefers question_y from the verdict (so the tick
+    aligns vertically with the answer it grades) and falls back to
+    evenly-spaced stacking when the model didn't provide one.
+
+    qy is clamped to [0.05, 0.95] so symbols never bleed off the page
+    edge regardless of what the model returned.
     """
     n = max(total, 1)
 
-    qx_raw = verdict.get("question_x")
-    try:
-        qx = float(qx_raw) if qx_raw is not None else 0.92
-    except (TypeError, ValueError):
-        qx = 0.92
+    qx = 0.92  # forced right margin
 
     qy_raw = verdict.get("question_y")
     try:
@@ -119,7 +118,6 @@ def _resolve_verdict_position(
     except (TypeError, ValueError):
         qy = (index + 0.5) / n
 
-    qx = max(0.05, min(0.95, qx))
     qy = max(0.05, min(0.95, qy))
     return int(qx * width), int(qy * height)
 
@@ -159,7 +157,6 @@ def annotate_image(
         # in-app and email channels.
         symbol_size = max(56, int(height * 0.08))
         font_symbol = _load_font(symbol_size)
-        font_qlabel = _load_font(max(20, int(symbol_size * 0.4)))
         # Score bubble fonts — unchanged from the previous version.
         font_score_big = _load_font(max(54, int(height * 0.035)))
         font_score_sub = _load_font(max(28, int(height * 0.018)))
@@ -169,9 +166,6 @@ def annotate_image(
         for i, verdict in enumerate(verdicts):
             v_type = verdict.get("verdict", "incorrect")
             colour, symbol = _VERDICT_STYLE.get(v_type, (_RED, "✗"))
-            awarded = float(verdict.get("awarded_marks", 0))
-            max_m = float(verdict.get("max_marks", 1))
-            q_num = verdict.get("question_number", i + 1)
 
             cx, cy = _resolve_verdict_position(verdict, i, total, width, height)
 
@@ -192,18 +186,10 @@ def annotate_image(
                 fill=colour,
             )
 
-            # "Q1: 3/5" label below the symbol
-            label = f"Q{q_num}: {awarded:.0f}/{max_m:.0f}"
-            try:
-                lw = draw.textlength(label, font=font_qlabel)
-            except AttributeError:
-                lw = len(label) * 12
-            draw.text(
-                (cx - lw / 2, cy + th // 2 + 4),
-                label,
-                font=font_qlabel,
-                fill=colour,
-            )
+            # No per-question label. The bare tick/X reads as a teacher's
+            # pen-mark; stacking "Q1: 3/5" underneath every symbol added
+            # noise without information the score-bubble at the bottom
+            # right doesn't already cover.
 
         # ── Summary score bubble (bottom-right) ─────────────────────────────
         total_awarded = sum(float(v.get("awarded_marks", 0)) for v in verdicts)

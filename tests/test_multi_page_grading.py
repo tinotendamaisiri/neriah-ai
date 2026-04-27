@@ -642,19 +642,24 @@ class TestAnnotatorPositioning:
     lands near the actual question on the page. Missing/invalid values fall
     back to evenly-spaced left margin."""
 
-    def test_annotator_uses_verdict_coordinates(self):
-        """Verdict with explicit question_x/question_y → symbol lands at
-        exactly (qx * width, qy * height)."""
+    def test_annotator_forces_x_to_right_margin_ignoring_verdict_qx(self):
+        """X is *always* forced to the right margin (0.92 of width) so
+        every tick stacks down the right side of the page like a
+        teacher's pen-marks. The model's question_x is ignored — using
+        it put symbols on top of the student's handwriting on the left.
+        Y is still honoured so each tick aligns vertically with the
+        answer it grades."""
         from shared.annotator import _resolve_verdict_position
         verdict = {
             "question_number": 1,
             "verdict": "correct",
             "awarded_marks": 5, "max_marks": 5,
-            "question_x": 0.10, "question_y": 0.30,
+            "question_x": 0.10,  # ignored
+            "question_y": 0.30,  # honoured
         }
         cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
-        assert cx == 80   # 0.10 * 800
-        assert cy == 300  # 0.30 * 1000
+        assert cx == 736  # 0.92 * 800 — forced right margin
+        assert cy == 300  # 0.30 * 1000 — verdict's qy
 
     def test_annotator_falls_back_when_no_coordinates(self):
         """Verdict missing question_x/question_y → right-margin fallback:
@@ -677,20 +682,22 @@ class TestAnnotatorPositioning:
         assert cx2 == 736
         assert cy2 == 750  # (1 + 0.5) / 2 * 1000
 
-    def test_annotator_clamps_out_of_range_coordinates(self):
-        """Any qx/qy outside [0.05, 0.95] is clamped, so the symbol never
-        bleeds off the page edge even if the model hallucinates."""
+    def test_annotator_clamps_out_of_range_qy(self):
+        """qy outside [0.05, 0.95] is clamped, so the symbol never
+        bleeds off the top/bottom edge even if the model hallucinates.
+        qx is no longer model-driven (forced right margin), so only
+        qy clamping matters now."""
         from shared.annotator import _resolve_verdict_position
         verdict = {
             "question_number": 1,
             "verdict": "correct",
             "awarded_marks": 5, "max_marks": 5,
-            "question_x": 1.5,      # > 0.95, clamps down
+            "question_x": 1.5,      # ignored — qx is always forced
             "question_y": -0.2,     # < 0.05, clamps up
         }
         cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
-        assert cx == 760  # 0.95 * 800
-        assert cy == 50   # 0.05 * 1000
+        assert cx == 736  # 0.92 * 800 — forced right margin
+        assert cy == 50   # 0.05 * 1000 — clamped from -0.2
 
 # ─── Pre-graded path (offline-graded mobile clients) ───────────────────────────
 
