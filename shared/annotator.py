@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -44,11 +45,44 @@ _VERDICT_STYLE: dict[str, tuple] = {
 }
 
 
+_FONT_PATH_BUNDLED = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fonts",
+    "DejaVuSans-Bold.ttf",
+)
+# Fallback paths to system-installed DejaVu, in case the bundled file
+# is missing (local dev with stripped checkout, etc).
+_FONT_PATH_FALLBACKS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Debian/Ubuntu
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",            # Some RHEL variants
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",               # Arch
+    "/Library/Fonts/Arial Bold.ttf",                          # macOS dev fallback
+)
+
+
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-    except OSError:
-        return ImageFont.load_default()
+    """Load the bundled DejaVu Sans Bold at the requested size.
+
+    The bundled font ships at shared/fonts/DejaVuSans-Bold.ttf so the
+    Cloud Functions runtime — which doesn't include DejaVu by default
+    — has a guaranteed Unicode-capable font for the ✓ / ✗ glyphs. When
+    the file is somehow missing (e.g. a local checkout that excluded
+    binaries), we sweep system paths and ultimately fall back to
+    Pillow's bitmap default — which renders ASCII fine but mangles the
+    Unicode tick. That fallback is the bug we hit in production before
+    bundling: the function ran, drew nothing visible, and silently
+    shipped an "annotated" JPEG that looked unannotated to the student.
+    """
+    for path in (_FONT_PATH_BUNDLED, *_FONT_PATH_FALLBACKS):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    logger.warning(
+        "_load_font: no TTF found at any candidate path (bundled + system); "
+        "falling back to ImageFont.load_default — Unicode glyphs may render incorrectly"
+    )
+    return ImageFont.load_default()
 
 
 def _resolve_verdict_position(
