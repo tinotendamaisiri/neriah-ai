@@ -406,6 +406,24 @@ def _handle_onboarding_confirm(phone: str, context: dict, text: str, media_id: s
         )
         return
 
+    # Cross-role guard: refuse to create a Student if this phone is
+    # already a Teacher. The IDLE branch already routes existing
+    # teachers to teacher flow before onboarding starts, so this is
+    # a belt-and-braces check against any path that might otherwise
+    # land here with a teacher's phone (e.g. a teacher mid-flow whose
+    # session got rebuilt via a different state transition). The API
+    # register endpoints enforce the same rule with explicit 409s; we
+    # keep the WhatsApp wording user-friendly.
+    if query_single("teachers", [("phone", "==", phone)]):
+        _set_state(phone, WhatsAppState.IDLE, {})
+        send_text(
+            phone,
+            "This number is already registered as a *teacher* account. "
+            "If you're a student, please use a different number to register. "
+            "If you're the teacher, just reply *menu* to continue as teacher.",
+        )
+        return
+
     # Create the student document.
     student = Student(
         class_id=context["class_id"],

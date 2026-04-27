@@ -189,19 +189,36 @@ export default function TeacherRegisterScreen() {
         ...(res.channel   ? { channel:   res.channel   } : {}),
       });
     } catch (err: any) {
-      const status = err?.response?.status;
+      const status = err?.status ?? err?.response?.status;
+      const code: string | undefined = err?.error_code;
+      const msg: string = err?.message ?? '';
       const isAlreadyRegistered =
-        status === 409 ||
-        (err?.message ?? '').toLowerCase().includes('already registered');
+        status === 409 || msg.toLowerCase().includes('already registered');
       if (isAlreadyRegistered) {
-        Alert.alert(
-          'Account already exists',
-          'An account with this phone number already exists. Would you like to sign in instead?',
-          [
-            { text: 'Sign in', onPress: () => navigation.navigate('Phone', { role: 'teacher' }) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        );
+        // Surface role-specific cross-role conflicts with the right
+        // sign-in target. Backend uses two error codes:
+        //   PHONE_ALREADY_REGISTERED_TEACHER → already a teacher, sign in here
+        //   PHONE_ALREADY_REGISTERED_STUDENT → already a student, redirect to student sign-in
+        if (code === 'PHONE_ALREADY_REGISTERED_STUDENT') {
+          Alert.alert(
+            'Already a student account',
+            msg || 'This phone number is already registered as a student. Use the student sign-in instead.',
+            [
+              { text: 'Sign in as student', onPress: () => navigation.navigate('Phone', { role: 'student' }) },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        } else {
+          // Default: teacher already exists OR the older generic 409.
+          Alert.alert(
+            'Account already exists',
+            msg || 'An account with this phone number already exists. Would you like to sign in instead?',
+            [
+              { text: 'Sign in', onPress: () => navigation.navigate('Phone', { role: 'teacher' }) },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        }
       } else if (status === 400) {
         // Pin the 400 copy to the phone field so the user sees what's wrong
         // under the input, not just in a transient alert.

@@ -274,17 +274,31 @@ export default function StudentRegisterScreen() {
       });
     } catch (err: any) {
       const msg: string = err.message ?? err.response?.data?.error ?? '';
+      const code: string | undefined = err?.error_code;
       if (err.status === 409 || err.response?.status === 409) {
-        // Backend already explains what's wrong ("already registered as a teacher",
-        // "already registered as a student", etc.) — show it verbatim.
-        Alert.alert(
-          'Already registered',
-          msg || 'This phone number already has an account.',
-          [
-            { text: 'OK', style: 'cancel' },
-            { text: 'Sign in instead', onPress: () => navigation.navigate('Phone', { role: 'student' }) },
-          ],
-        );
+        // Backend explains what's wrong; surface role-specific
+        // cross-role conflicts with the right sign-in target so the
+        // user doesn't get redirected to a sign-in flow that won't
+        // recognise their account.
+        if (code === 'PHONE_ALREADY_REGISTERED_TEACHER') {
+          Alert.alert(
+            'Already a teacher account',
+            msg || 'This phone number is already registered as a teacher. Use the teacher sign-in instead.',
+            [
+              { text: 'Sign in as teacher', onPress: () => navigation.navigate('Phone', { role: 'teacher' }) },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        } else {
+          Alert.alert(
+            'Already registered',
+            msg || 'This phone number already has an account.',
+            [
+              { text: 'Sign in instead', onPress: () => navigation.navigate('Phone', { role: 'student' }) },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        }
       } else {
         Alert.alert('Error', msg || 'Could not register. Please try again.');
       }
