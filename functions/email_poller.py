@@ -399,6 +399,60 @@ def _process_message(parsed: ParsedEmail) -> str:
             expiry_minutes=60 * 24 * 7,
         ))
 
+    # ── Dedup: one submission per (student, answer_key) for the email
+    #    channel. Latest email wins. We delete prior Firestore records
+    #    (marks + student_submissions) but intentionally leave the GCS
+    #    blobs alone — those are training data per the
+    #    submission-cascade policy in functions/submissions.py. The
+    #    student gets a one-shot notification that their previous
+    #    submission was replaced; this fires immediately because it's
+    #    a receipt notice, not a grade reveal.
+    from shared.firestore_client import delete_doc
+    existing_marks = query(
+        "marks",
+        [
+            ("student_id", "==", student["id"]),
+            ("answer_key_id", "==", answer_key["id"]),
+        ],
+    ) or []
+    if existing_marks:
+        for old in existing_marks:
+            old_id = old.get("id") or old.get("mark_id")
+            if old_id:
+                try:
+                    delete_doc("marks", old_id)
+                except Exception:
+                    logger.warning("email_poller: failed to delete old mark %s", old_id)
+        existing_subs = query(
+            "student_submissions",
+            [
+                ("student_id", "==", student["id"]),
+                ("answer_key_id", "==", answer_key["id"]),
+            ],
+        ) or []
+        for old_sub in existing_subs:
+            old_sub_id = old_sub.get("id") or old_sub.get("submission_id")
+            if old_sub_id:
+                try:
+                    delete_doc("student_submissions", old_sub_id)
+                except Exception:
+                    logger.warning("email_poller: failed to delete old submission %s", old_sub_id)
+        logger.info(
+            "email_poller: replaced %d prior submission(s) for student=%s ak=%s",
+            len(existing_marks), student["id"], answer_key["id"],
+        )
+        # Notify the student that we replaced their earlier work. Best-
+        # effort — a Resend failure must not block grading the new one.
+        try:
+            from shared.email_client import send_resubmission_notice
+            send_resubmission_notice(
+                student_email=sender,
+                student_name=f"{student.get('first_name','')} {student.get('surname','')}".strip() or "Student",
+                homework_title=answer_key.get("title") or answer_key.get("subject") or "your homework",
+            )
+        except Exception:
+            logger.exception("email_poller: send_resubmission_notice failed (non-fatal)")
+
     # Persist Mark. approved=False — teacher must approve before the
     # student-facing reply (Resend email) fires from submissions.py.
     mark = Mark(

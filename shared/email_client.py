@@ -143,6 +143,64 @@ def send_grade_reply(
         return False
 
 
+def send_resubmission_notice(
+    *,
+    student_email: str,
+    student_name: str,
+    homework_title: str,
+) -> bool:
+    """Notify the student that their new email replaced an earlier
+    submission for the same homework. Fires immediately from the email
+    poller (not gated on teacher approval) — this is a system-status
+    notification about *receipt*, not a grade reveal, so it doesn't
+    violate the "teacher approves first" rule.
+
+    The grade reply (with annotated pages) still fires only after the
+    teacher approves the new submission.
+    """
+    if not student_email:
+        return False
+    client = _client()
+    if client is None:
+        logger.warning(
+            "send_resubmission_notice: RESEND_API_KEY unset — skipping send to %s",
+            student_email,
+        )
+        return False
+
+    title = homework_title or "your homework"
+    html = f"""
+    <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
+      <h2 style="margin:0 0 4px 0">We replaced your previous submission</h2>
+      <p style="margin:0 0 12px 0">Hi {student_name},</p>
+      <p style="margin:0 0 12px 0">
+        We received your new submission for <strong>{title}</strong> and used
+        it to replace the one you sent earlier. Only the most recent
+        submission per homework counts.
+      </p>
+      <p style="margin:0 0 12px 0;color:#555">
+        Your teacher will review the new submission and you'll get the
+        grade by email once it's approved.
+      </p>
+      <p style="margin:12px 0 0 0;color:#888;font-size:12px">
+        If you didn't mean to resend, no action needed — the previous
+        submission was already replaced.
+      </p>
+    </div>
+    """
+    try:
+        client.Emails.send({
+            "from": settings.RESEND_FROM_ADDRESS,
+            "to": student_email,
+            "subject": f"Neriah — submission replaced ({title})",
+            "html": html,
+        })
+        return True
+    except Exception:
+        logger.exception("send_resubmission_notice: Resend send failed for %s", student_email)
+        return False
+
+
 def send_format_error(
     *,
     student_email: str,
