@@ -213,6 +213,17 @@ def mark():
             )
         pages_bytes.append(page_bytes)
 
+    # Normalise orientation BEFORE quality check / grading / annotation.
+    # See shared/orientation.py — bakes EXIF rotation into pixels and
+    # uses a Gemma pre-check to catch the residual cases (no EXIF,
+    # page rotated within the frame, photo held upside-down). Skipped
+    # on the pre-graded path because the mobile teacher's already-
+    # rendered local verdicts are coordinate-aware to whatever the
+    # client showed; the cloud has nothing to add.
+    from shared.orientation import normalize_to_upright
+    if not request.form.get("pre_graded_verdicts"):
+        pages_bytes = [normalize_to_upright(p) for p in pages_bytes]
+
     # ── Duplicate-submission guard ────────────────────────────────────────────
     # One graded submission per (student_id, answer_key_id). If one exists,
     # the client must opt into overwrite via replace=true. Keeps analytics

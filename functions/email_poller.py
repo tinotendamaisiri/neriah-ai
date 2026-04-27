@@ -308,6 +308,16 @@ def _process_message(parsed: ParsedEmail) -> str:
             kind="no_attachment",
         )
 
+    # Normalise page orientation BEFORE grading or annotation. EXIF
+    # rotation gets baked into pixels (handles iPhone/Android portrait
+    # photos shot as landscape pixels), and a Gemma vision pre-check
+    # catches the residual cases — pages rotated within the frame,
+    # screenshots with stripped EXIF, photos taken upside-down — by
+    # asking what rotation makes the text readable. Pages are always
+    # upright by the time the grader and annotator see them.
+    from shared.orientation import normalize_to_upright
+    pages_bytes = [normalize_to_upright(p) for p in pages_bytes]
+
     # First-page quality gate. Cheap reject; saves a Gemma call when the
     # photo is a thumbnail or a hand covering the page.
     try:

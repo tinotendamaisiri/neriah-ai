@@ -524,6 +524,12 @@ def _handle_student_submission(phone: str, student: dict, media_id: str):
     send_text(phone, "Received! Grading your homework... ✏️")
 
     image_bytes = download_media(media_id)
+    # Normalise orientation before grading + annotation. See
+    # shared/orientation.py — handles EXIF rotation + a vision pre-check
+    # for the residual cases (rotated within frame, no EXIF, etc.) so
+    # the page is upright before Gemma reads it and before ticks land.
+    from shared.orientation import normalize_to_upright
+    image_bytes = normalize_to_upright(image_bytes)
 
     quality = check_image_quality(image_bytes)
     if not quality.get("pass", True):
@@ -781,6 +787,10 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
 
     send_text(phone, "Marking...")
     image_bytes = download_media(media_id)
+    # Normalise orientation before grading + annotation — same rationale
+    # as the student-submission path above.
+    from shared.orientation import normalize_to_upright
+    image_bytes = normalize_to_upright(image_bytes)
 
     quality = check_image_quality(image_bytes)
     if not quality.get("pass", True):
