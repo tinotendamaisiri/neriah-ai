@@ -24,7 +24,7 @@ import logging
 import os
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,19 @@ def annotate_image(
     Returns annotated JPEG bytes (never written to disk).
     """
     try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image = Image.open(io.BytesIO(image_bytes))
+        # Bake EXIF rotation into the pixels BEFORE we annotate. iPhone /
+        # Android cameras store portrait photos as landscape pixels with
+        # an EXIF Orientation tag telling the viewer to rotate. Pillow's
+        # plain Image.open ignores that tag, so without this transpose
+        # we'd draw at "right-margin" coordinates in raw landscape space
+        # — which Gmail later rotates to "bottom of page" when it
+        # respects the EXIF on display. End result: ticks lived in the
+        # bottom margin of the rendered photo and looked invisible to
+        # the student. exif_transpose returns a rotated copy with
+        # orientation reset to 1, so coordinates we draw now line up
+        # with what the recipient sees.
+        image = ImageOps.exif_transpose(image).convert("RGB")
         draw = ImageDraw.Draw(image, "RGBA")
         width, height = image.size
 
