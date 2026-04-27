@@ -627,6 +627,36 @@ def update_mark(mark_id: str):
                 mark_id,
             )
 
+        # Channel-aware student-facing reply. Mirrors the dispatch fired
+        # from submissions.py:approve_submission so the email/WhatsApp
+        # paths get the same treatment regardless of which approval
+        # endpoint the mobile UI hits. The "Save & Approve" button in
+        # MarkResult.tsx calls PUT /api/marks/{id} (this handler), not
+        # POST /api/submissions/{id}/approve, so without this dispatch
+        # email-channel students would never receive their grade reply.
+        try:
+            from functions.submissions import _dispatch_student_reply
+            student_id = mark_doc.get("student_id", "")
+            ak = get_doc("answer_keys", mark_doc.get("answer_key_id", "")) or {}
+            # Score/max from the latest values — prefers the just-applied
+            # update, falls back to the stored mark.
+            sub_payload = {
+                "score": updates.get("score", mark_doc.get("score", 0)),
+                "max_score": updates.get("max_score", mark_doc.get("max_score", 0)),
+            }
+            if student_id:
+                _dispatch_student_reply(
+                    student_id=student_id,
+                    mark_id=mark_id,
+                    hw=ak,
+                    sub=sub_payload,
+                )
+        except Exception:
+            logger.exception(
+                "update_mark: dispatch_student_reply failed for mark %s",
+                mark_id,
+            )
+
     return jsonify({**mark_doc, **updates}), 200
 
 
