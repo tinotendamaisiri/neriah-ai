@@ -57,12 +57,17 @@ interface ClassGroupItemProps {
   onAddHomework: (cls: Class) => void;
   onHomeworkPress: (ak: AnswerKey, cls: Class) => void;
   onViewGrading: (ak: AnswerKey, cls: Class) => void;
-  onMoreHomework: (cls: Class) => void;
+  /** Toggle the inline-expanded state for this class's homework list.
+   *  When expanded, all homework rows render. When collapsed, only the
+   *  first two render plus a "+N more" link. */
+  onToggleExpand: (cls: Class) => void;
+  expanded: boolean;
 }
 
 const ClassGroupItem = React.memo(function ClassGroupItem({
   cls, answerKeys, submCountByKey, gradedCountByKey, t,
-  onCardPress, onAddHomework, onHomeworkPress, onViewGrading, onMoreHomework,
+  onCardPress, onAddHomework, onHomeworkPress, onViewGrading,
+  onToggleExpand, expanded,
 }: ClassGroupItemProps) {
   return (
     <View style={styles.classGroup}>
@@ -85,7 +90,7 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{answerKeys.filter(k => k.open_for_submission === true).length}</Text>
+              <Text style={styles.statValue}>{answerKeys.length}</Text>
               <Text style={styles.statLabel}>{t('homework')}</Text>
             </View>
           </View>
@@ -94,8 +99,12 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
 
       <View style={styles.homeworkSection}>
         {(() => {
-          const allKeys = answerKeys.filter(k => k.open_for_submission === true);
-          const previewKeys = allKeys.slice(0, 2);
+          // Show every homework for the class regardless of
+          // open_for_submission. Teachers want to see closed homework
+          // too — the open/closed status is conveyed per-row by the
+          // status badge, not by hiding the row.
+          const allKeys = answerKeys;
+          const previewKeys = expanded ? allKeys : allKeys.slice(0, 2);
           const hiddenCount = allKeys.length - previewKeys.length;
           return (
             <>
@@ -147,8 +156,13 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
                 );
               })}
               {hiddenCount > 0 && (
-                <TouchableOpacity style={styles.moreLink} onPress={() => onMoreHomework(cls)}>
+                <TouchableOpacity style={styles.moreLink} onPress={() => onToggleExpand(cls)}>
                   <Text style={styles.moreLinkText}>+ {hiddenCount} more</Text>
+                </TouchableOpacity>
+              )}
+              {expanded && allKeys.length > 2 && (
+                <TouchableOpacity style={styles.moreLink} onPress={() => onToggleExpand(cls)}>
+                  <Text style={styles.moreLinkText}>Show less</Text>
                 </TouchableOpacity>
               )}
               {allKeys.length === 0 && (
@@ -308,9 +322,19 @@ export default function HomeScreen() {
     });
   }, [navigation]);
 
-  const handleMoreHomework = useCallback((cls: Class) => {
-    navigation.navigate('HomeworkList', { class_id: cls.id, class_name: cls.name });
-  }, [navigation]);
+  // Per-class expanded-list state for inline "show all homework"
+  // toggling. Stored as a Set<class_id> keyed off the class id so
+  // multiple classes can be expanded simultaneously and React.memo
+  // on ClassGroupItem doesn't see new identities for unchanged rows.
+  const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
+  const handleToggleExpand = useCallback((cls: Class) => {
+    setExpandedClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls.id)) next.delete(cls.id);
+      else next.add(cls.id);
+      return next;
+    });
+  }, []);
 
   if (loading) {
     return (
@@ -395,7 +419,8 @@ export default function HomeScreen() {
             onAddHomework={handleAddHomeworkForClass}
             onHomeworkPress={handleHomeworkPress}
             onViewGrading={handleViewGrading}
-            onMoreHomework={handleMoreHomework}
+            onToggleExpand={handleToggleExpand}
+            expanded={expandedClasses.has(cls.id)}
           />
         )}
         ListEmptyComponent={
