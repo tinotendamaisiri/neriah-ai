@@ -381,7 +381,7 @@ export default function GradingResultsScreen() {
           <Text style={styles.backText}>← {class_name}</Text>
         </TouchableOpacity>
         <Text style={styles.heading}>
-          {isClassView ? 'Marked Homework' : (answer_key_title ?? '')}
+          {isClassView ? 'Homework' : (answer_key_title ?? '')}
         </Text>
         <Text style={styles.subheading}>{t('grading_results')}</Text>
       </View>

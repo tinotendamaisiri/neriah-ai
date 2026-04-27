@@ -92,6 +92,13 @@ export default function ClassDetailScreen() {
         data={students}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
+        // iOS injects an automatic top inset under navigation headers
+        // for scroll views — that was leaving a ~200 px white gap
+        // between the "< Main / Form 2A" header and the class info row.
+        // Disabled here because ScreenContainer already handles safe
+        // area; the navigation header sits above that, so no extra
+        // inset is needed.
+        contentInsetAdjustmentBehavior="never"
         ListHeaderComponent={
           <>
             <View style={styles.classHeader}>
@@ -117,7 +124,7 @@ export default function ClassDetailScreen() {
                 })}
                 activeOpacity={0.7}
               >
-                <Text style={styles.markedBtnText}>Marked Homework</Text>
+                <Text style={styles.markedBtnText}>Homework</Text>
               </TouchableOpacity>
             </View>
 
