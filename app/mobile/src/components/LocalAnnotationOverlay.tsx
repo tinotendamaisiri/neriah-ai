@@ -130,7 +130,6 @@ export default function LocalAnnotationOverlay({
   // a typical 420 px overlay, which matches a pen-mark you'd actually draw
   // on the page.
   const symbolSize = Math.max(56, Math.round(renderedH * 0.08));
-  const labelSize = Math.max(13, Math.round(symbolSize * 0.32));
 
   // Don't render symbols until we know the rendered bounds — otherwise the
   // first paint would put them at the old (gutter) position and snap a tick
@@ -144,15 +143,18 @@ export default function LocalAnnotationOverlay({
         const colour = VERDICT_COLOUR[v.verdict] ?? VERDICT_COLOUR.incorrect;
         const symbol = VERDICT_SYMBOL[v.verdict] ?? VERDICT_SYMBOL.incorrect;
 
-        // Right-margin stacking, evenly spaced top to bottom. We *ignore*
-        // qx/qy from the verdict even when the cloud sends them — the
-        // teacher-facing contract is "one tick or X on the right side of
-        // each answer, in question order", and OCR-derived coordinates can
-        // land anywhere depending on how the student laid out the page.
-        // Forcing a stable layout keeps the visual identical for online
-        // and offline grades and matches what a teacher would do by hand.
+        // X is *always* forced to the right margin (0.92) — never the
+        // model's question_x — so every tick stacks down the right
+        // side of the page like a teacher's pen-marks. Honouring the
+        // cloud's qx put symbols on top of the student's handwriting.
+        // Y honours the verdict's question_y so each tick aligns
+        // vertically with the answer it grades; falls back to evenly-
+        // spaced when missing. Mirrors the server-side annotator's
+        // contract in shared/annotator.py:_resolve_verdict_position.
         const qx = 0.92;
-        const qy = clamp((i + 0.5) / total, 0.05, 0.95);
+        const qyRaw =
+          typeof v.question_y === 'number' ? v.question_y : (i + 0.5) / total;
+        const qy = clamp(qyRaw, 0.05, 0.95);
 
         // Map onto the rendered image bounds, not the container.
         const cx = Math.round(offsetX + qx * renderedW);
@@ -179,12 +181,9 @@ export default function LocalAnnotationOverlay({
             >
               {symbol}
             </Text>
-            <Text
-              style={[styles.label, { color: colour, fontSize: labelSize }]}
-              numberOfLines={1}
-            >
-              Q{v.question_number}: {v.awarded_marks}/{v.max_marks}
-            </Text>
+            {/* Per-question label dropped — the bare tick/X reads as a
+                teacher's pen-mark, and the corner score bubble already
+                carries the totals. Cleaner without. */}
           </View>
         );
       })}
@@ -225,13 +224,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(255,255,255,0.95)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 3,
-  },
-  label: {
-    fontWeight: '700',
-    textAlign: 'center',
-    textShadowColor: 'rgba(255,255,255,0.95)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 2,
   },
   bubble: {
     position: 'absolute',
