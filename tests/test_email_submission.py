@@ -664,76 +664,19 @@ def test_process_message_rejects_when_subject_unparseable():
 
 # ─── Dedup of repeat submissions ─────────────────────────────────────────────
 
-def test_email_shortcut_updates_student_name_from_subject():
-    """A returning student emailing with a different name in the
-    subject should have the student record renamed to match. Fixes
-    the case where an early test/typo submission left an outdated
-    name on the record (e.g. 'Test Student' from initial debugging)."""
-    answer_key = {
-        "id": "ak-1",
-        "submission_code": "HW7K2P",
-        "class_id": "class-1",
-    }
-    class_doc = {"id": "class-1", "name": "Form 4A", "school_id": "school-1"}
-    school = {"id": "school-1", "name": "St Marys"}
-    # Existing student whose email is bound to the address — but the
-    # name on the record is from an earlier test ("Test Student").
-    existing = {
-        "id": "stu-old",
-        "first_name": "Test",
-        "surname": "Student",
-        "class_id": "class-1",
-        "class_ids": ["class-1"],
-        "email": "alice@example.com",
-    }
-
-    def fake_query_single(coll, filters):
-        if coll == "answer_keys":
-            return answer_key
-        if coll == "students":
-            for f in filters:
-                if f[0] == "email" and f[1] == "==" and f[2] == "alice@example.com":
-                    return existing
-        return None
-
-    def fake_get_doc(coll, doc_id):
-        if coll == "classes":
-            return class_doc
-        if coll == "schools":
-            return school
-        return None
-
-    from shared.student_matcher import SubjectFields, match_student
-    with patch("shared.student_matcher.query_single", side_effect=fake_query_single), \
-         patch("shared.student_matcher.get_doc", side_effect=fake_get_doc), \
-         patch("shared.student_matcher.query", return_value=[]), \
-         patch("shared.student_matcher.upsert") as up:
-        result = match_student(
-            SubjectFields(
-                student_name="Tinotenda Maisiri",
-                submission_code="HW7K2P",
-            ),
-            sender_email="alice@example.com",
-        )
-    # Match succeeds, name is updated on the returned record AND
-    # persisted to Firestore via upsert.
-    assert result.status == MatchStatus.MATCHED
-    assert result.student["first_name"] == "Tinotenda"
-    assert result.student["surname"] == "Maisiri"
-    up.assert_called_once()
-    # Same student id — we kept the record, just renamed it.
-    assert up.call_args.args[1] == "stu-old"
-
-
-def test_email_shortcut_skips_update_when_name_unchanged():
-    """No-op when the subject's name matches what's already stored
-    (case-insensitive) — no churn on Firestore."""
+def test_email_shortcut_does_not_rename_existing_student():
+    """The email shortcut MUST NOT rewrite the student's stored name
+    based on the subject. The registered name is canonical; subjects
+    are only used to *match*, never to overwrite. Regression test for
+    a bug where a typo'd subject silently corrupted a real user's
+    identity."""
     answer_key = {"id": "ak-1", "submission_code": "HW7K2P", "class_id": "class-1"}
     class_doc = {"id": "class-1", "name": "Form 4A", "school_id": "school-1"}
     existing = {
-        "id": "stu-old",
+        "id": "stu-real",
         "first_name": "Tinotenda",
         "surname": "Maisiri",
+        "phone": "+13474459580",  # real registered user
         "class_id": "class-1",
         "class_ids": ["class-1"],
         "email": "alice@example.com",
@@ -751,14 +694,18 @@ def test_email_shortcut_skips_update_when_name_unchanged():
          patch("shared.student_matcher.get_doc", return_value=class_doc), \
          patch("shared.student_matcher.query", return_value=[]), \
          patch("shared.student_matcher.upsert") as up:
-        match_student(
+        result = match_student(
             SubjectFields(
-                student_name="tinotenda maisiri",  # different case only
+                student_name="Taku Muti",  # different name in subject
                 submission_code="HW7K2P",
             ),
             sender_email="alice@example.com",
         )
-    up.assert_not_called()
+    # Match found, but the student record name is UNCHANGED.
+    assert result.status == MatchStatus.MATCHED
+    assert result.student["first_name"] == "Tinotenda"
+    assert result.student["surname"] == "Maisiri"
+    up.assert_not_called()  # zero writes to Firestore for the student doc
 
 
 def test_dedup_helper_deletes_prior_marks_and_subs_then_notifies():

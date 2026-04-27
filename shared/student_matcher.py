@@ -251,40 +251,14 @@ _CLASS_FUZZY_CUTOFF = 0.80
 _STUDENT_FUZZY_CUTOFF = 0.85
 
 
-def _maybe_update_name(student: dict, subject_name: str) -> dict:
-    """Use the subject line's name as canonical when the email shortcut
-    hits. The student was previously identified by email alone; the new
-    submission's subject is the freshest signal of how they want their
-    name recorded. Updates first_name/surname in Firestore when the
-    combined names differ case-insensitively, returns the (possibly
-    updated) dict so the caller persists the right name on the new Mark.
-
-    No-ops when the subject name is empty (some legacy paths pass "").
-    """
-    if not subject_name:
-        return student
-    parts = subject_name.strip().split(None, 1)
-    if not parts:
-        return student
-    new_first = parts[0]
-    new_surname = parts[1] if len(parts) > 1 else ""
-
-    current = f"{student.get('first_name','')} {student.get('surname','')}".strip().lower()
-    proposed = f"{new_first} {new_surname}".strip().lower()
-    if current == proposed:
-        return student
-
-    updated = {**student, "first_name": new_first, "surname": new_surname}
-    try:
-        upsert("students", student["id"], updated)
-        logger.info(
-            "_maybe_update_name: %s → %s for student %s",
-            current, proposed, student["id"],
-        )
-    except Exception:
-        logger.exception("_maybe_update_name: upsert failed for %s", student.get("id"))
-        return student
-    return updated
+# NOTE: _maybe_update_name was removed. It used to overwrite the
+# student's stored first_name/surname with whatever name appeared in
+# the latest email subject — intended to fix a debug-time
+# "Test Student" record but in production it silently corrupted real
+# user identities (a legitimate student who emailed once with a typo
+# in their subject would have their registered name overwritten).
+# The student's name is now whatever they registered with, full stop.
+# Email subjects are used to *match* the student, never to *rename*.
 
 
 def _fuzzy_pick(needle: str, haystack: list[dict], key: str, cutoff: float) -> list[dict]:
@@ -341,10 +315,10 @@ def match_student(fields: SubjectFields, sender_email: str) -> MatchResult:
             class_doc = _resolve_class_for_returning_student(existing, fields.class_name)
             if class_doc:
                 school = get_doc("schools", class_doc.get("school_id", "")) if class_doc.get("school_id") else None
-                # Subject name takes precedence over the stored name —
-                # corrects test/typo data left over from earlier
-                # submissions when the student first signed up.
-                existing = _maybe_update_name(existing, fields.student_name)
+                # Match found via email shortcut — return the existing
+                # record as-is. We don't rename based on the subject;
+                # the registered name is canonical. See the deleted
+                # _maybe_update_name docstring above for why.
                 return MatchResult(
                     status=MatchStatus.MATCHED,
                     student=existing,
@@ -470,9 +444,9 @@ def _match_by_code(fields: SubjectFields, sender_email_norm: str) -> MatchResult
         if existing and class_doc["id"] in (
             existing.get("class_ids") or [existing.get("class_id")]
         ):
-            # Subject name overrides the stored record name — see the
-            # comment on the legacy-path call site for rationale.
-            existing = _maybe_update_name(existing, fields.student_name)
+            # Match found via email shortcut — return the existing
+            # record as-is. The registered name is canonical; we never
+            # rename based on email-subject contents.
             return MatchResult(
                 status=MatchStatus.MATCHED,
                 student=existing,
