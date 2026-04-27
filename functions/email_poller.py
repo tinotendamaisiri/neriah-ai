@@ -415,6 +415,7 @@ def _process_message(parsed: ParsedEmail) -> str:
             ("answer_key_id", "==", answer_key["id"]),
         ],
     ) or []
+    was_resubmission = bool(existing_marks)
     if existing_marks:
         for old in existing_marks:
             old_id = old.get("id") or old.get("mark_id")
@@ -499,6 +500,21 @@ def _process_message(parsed: ParsedEmail) -> str:
         match.status == MatchStatus.AUTO_ENROLLED,
         score, total_max,
     )
+
+    # Receipt notice — only on first submissions. Resubmissions already
+    # got the "we replaced your previous" notice in the dedup branch
+    # above, and stacking both would be noise.
+    if not was_resubmission:
+        try:
+            from shared.email_client import send_receipt_notice
+            send_receipt_notice(
+                student_email=sender,
+                student_name=f"{student.get('first_name','')} {student.get('surname','')}".strip() or "Student",
+                homework_title=answer_key.get("title") or answer_key.get("subject") or "your homework",
+            )
+        except Exception:
+            logger.exception("email_poller: send_receipt_notice failed (non-fatal)")
+
     return PROCESSED_FOLDER
 
 

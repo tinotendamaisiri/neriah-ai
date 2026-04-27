@@ -143,6 +143,63 @@ def send_grade_reply(
         return False
 
 
+def send_receipt_notice(
+    *,
+    student_email: str,
+    student_name: str,
+    homework_title: str,
+) -> bool:
+    """Confirmation email fired the moment a submission is successfully
+    received and graded — before teacher approval. Does NOT include the
+    score (that's the grade reveal, which still waits for the teacher).
+    Just acknowledges receipt so the student knows the email landed,
+    they were correctly identified, and grading is underway.
+
+    System-status reply, exempt from the teacher-approval gate by the
+    same logic as send_format_error and send_resubmission_notice.
+    """
+    if not student_email:
+        return False
+    client = _client()
+    if client is None:
+        logger.warning(
+            "send_receipt_notice: RESEND_API_KEY unset — skipping send to %s",
+            student_email,
+        )
+        return False
+
+    title = homework_title or "your homework"
+    html = f"""
+    <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#111;max-width:560px">
+      <h2 style="margin:0 0 4px 0">We got your submission ✓</h2>
+      <p style="margin:0 0 12px 0">Hi {student_name},</p>
+      <p style="margin:0 0 12px 0">
+        Your submission for <strong>{title}</strong> arrived and we matched
+        it to your record. It's being reviewed by your teacher right now.
+      </p>
+      <p style="margin:0 0 12px 0;color:#555">
+        You'll get the grade by email as soon as your teacher approves it
+        — usually within a day. No need to resend.
+      </p>
+      <p style="margin:12px 0 0 0;color:#888;font-size:12px">
+        If you spot a mistake on your submission, you can email us a new
+        photo for the same homework code and it will replace this one.
+      </p>
+    </div>
+    """
+    try:
+        client.Emails.send({
+            "from": settings.RESEND_FROM_ADDRESS,
+            "to": student_email,
+            "subject": f"Neriah — submission received ({title})",
+            "html": html,
+        })
+        return True
+    except Exception:
+        logger.exception("send_receipt_notice: Resend send failed for %s", student_email)
+        return False
+
+
 def send_resubmission_notice(
     *,
     student_email: str,
