@@ -499,6 +499,14 @@ def mark():
     # marked_image_url and page_urls[0]/annotated_urls[0] are kept as legacy
     # singular aliases for any UI screen still reading the old field names.
     mark_source = "teacher_scan_offline" if is_pre_graded else "teacher_scan"
+    # Role invariants: Mark.student_id MUST be in students, teacher_id
+    # MUST be in teachers. Firestore can't enforce this; we do it here.
+    from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_student(student_id)
+        assert_is_teacher(teacher_id)
+    except RoleInvariantError as e:
+        return jsonify({"error": str(e), "error_code": "ROLE_INVARIANT_VIOLATION"}), 400
     mark_doc = Mark(
         id=mark_id,
         student_id=student_id,

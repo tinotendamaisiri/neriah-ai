@@ -568,6 +568,17 @@ def _handle_student_submission(phone: str, student: dict, media_id: str):
     upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
     marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60)
 
+    # Role invariants — refuse to create a Mark whose student_id or
+    # teacher_id is wired to the wrong collection.
+    from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_student(student["id"])
+        assert_is_teacher(answer_key.get("teacher_id", ""))
+    except RoleInvariantError as e:
+        logger.error("whatsapp student-submission role-invariant violated: %s", e)
+        send_text(phone, "Sorry, we couldn't save that submission — please ask your teacher to check the homework setup.")
+        return
+
     mark = Mark(
         student_id=student["id"],
         class_id=class_id,
@@ -755,6 +766,17 @@ def _store_answer_key(phone: str, class_id: str, education_level: str, scheme: d
         return
     total_marks = sum(float(q.get("marks", 0)) for q in questions)
 
+    # Role invariant — refuse to credit homework creation to a student
+    # account. teacher_id came from _get_teacher(phone) above which only
+    # queries the teachers collection, so this is belt-and-braces.
+    from shared.role_invariants import assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_teacher(teacher_id)
+    except RoleInvariantError as e:
+        logger.error("whatsapp _store_answer_key role-invariant violated: %s", e)
+        send_text(phone, "Couldn't save the answer key — please type 'menu' to start over.")
+        return
+
     key = AnswerKey(
         class_id=class_id,
         teacher_id=teacher_id,
@@ -840,6 +862,16 @@ def _handle_marking_active(phone: str, context: dict, text: str, media_id: str |
         return
     upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
     marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60)
+
+    # Role invariants — same rule as the student-submission path above.
+    from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_student(student_id)
+        assert_is_teacher(teacher_id)
+    except RoleInvariantError as e:
+        logger.error("whatsapp teacher-scan role-invariant violated: %s", e)
+        send_text(phone, "Couldn't save that mark — please type 'menu' and try again.")
+        return
 
     mark = Mark(
         student_id=student_id,

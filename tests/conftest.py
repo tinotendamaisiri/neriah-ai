@@ -32,3 +32,25 @@ for key, value in _DEFAULTS.items():
     os.environ.setdefault(key, value)
 
 # GCP_PROJECT_ID must be set for live tests; skip gracefully if not.
+
+
+# ── Autouse fixture: no-op the role-invariant guards by default ──────────────
+# shared.role_invariants.assert_is_student / assert_is_teacher each do a
+# Firestore get_doc to verify the ID lands in the right collection. Most
+# unit tests build minimal fixtures that don't bother creating real student
+# / teacher docs, so without this fixture every Mark or AnswerKey
+# construction site that now calls these helpers would 400. Tests that
+# WANT to verify the invariants (tests/test_role_invariants.py) bypass this
+# fixture by patching shared.role_invariants.get_doc themselves.
+import pytest  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _disable_role_invariants(request):
+    # Skip when the test module explicitly targets the invariants.
+    if "test_role_invariants" in (request.node.module.__name__ or ""):
+        yield
+        return
+    from unittest.mock import patch
+    with patch("shared.role_invariants.assert_is_student"), \
+         patch("shared.role_invariants.assert_is_teacher"):
+        yield

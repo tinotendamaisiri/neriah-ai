@@ -476,6 +476,15 @@ def create_answer_key():
                      "Add questions with their marks before saving.",
             "error_code": "INVALID_HOMEWORK_NO_MARKS",
         }), 400
+    # Role invariant — refuse to credit homework creation to a student
+    # account. teacher_id came from require_role(teacher) above so this
+    # is belt-and-braces against a future bug that bypasses the JWT
+    # check (e.g. a service-to-service caller passing a raw user_id).
+    from shared.role_invariants import assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_teacher(teacher_id)
+    except RoleInvariantError as e:
+        return jsonify({"error": str(e), "error_code": "ROLE_INVARIANT_VIOLATION"}), 400
     key = AnswerKey(
         class_id=class_id,
         teacher_id=teacher_id,
@@ -1082,6 +1091,12 @@ def create_homework_with_scheme():
                      "or add questions and marks manually before saving.",
             "error_code": "INVALID_HOMEWORK_NO_MARKS",
         }), 400
+    # Role invariant — same rationale as the manual-create path above.
+    from shared.role_invariants import assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_teacher(teacher_id)
+    except RoleInvariantError as e:
+        return jsonify({"error": str(e), "error_code": "ROLE_INVARIANT_VIOLATION"}), 400
     key = AnswerKey(
         class_id=class_id,
         teacher_id=teacher_id,
@@ -1428,6 +1443,16 @@ def grade_all_submissions(homework_id: str):
             blob_name = f"{student_id}/{uuid.uuid4()}.jpg"
             upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
             marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
+
+            # Role invariants — refuse to save the Mark if either id
+            # is wired to the wrong collection.
+            from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+            try:
+                assert_is_student(student_id)
+                assert_is_teacher(teacher_id)
+            except RoleInvariantError as e:
+                logger.error("answer_keys close-and-grade role-invariant violated: %s", e)
+                continue
 
             # Write Mark document (teacher review required before student can see)
             mark_doc = Mark(

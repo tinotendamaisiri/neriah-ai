@@ -464,6 +464,21 @@ def _process_message(parsed: ParsedEmail) -> str:
         except Exception:
             logger.exception("email_poller: send_resubmission_notice failed (non-fatal)")
 
+    # Role invariants — student_id must be in students, teacher_id in
+    # teachers. Catches edge cases like a class doc whose teacher_id
+    # got corrupted, or a student matched against a teacher record by
+    # an upstream bug.
+    from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+    try:
+        assert_is_student(student["id"])
+        assert_is_teacher(answer_key.get("teacher_id", ""))
+    except RoleInvariantError as e:
+        logger.error("email_poller role-invariant violated: %s", e)
+        return _bounce(
+            reason="We couldn't save your submission — please ask your teacher to check the homework setup.",
+            kind="internal",
+        )
+
     # Persist Mark. approved=False — teacher must approve before the
     # student-facing reply (Resend email) fires from submissions.py.
     mark = Mark(

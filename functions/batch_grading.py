@@ -105,6 +105,16 @@ def main() -> None:
             upload_bytes(settings.GCS_BUCKET_MARKED, blob_name, annotated_bytes, public=False)
             marked_url = generate_signed_url(settings.GCS_BUCKET_MARKED, blob_name, expiry_minutes=60 * 24 * 7)
 
+            # Role invariants — refuse to save the Mark if either id
+            # is in the wrong collection.
+            from shared.role_invariants import assert_is_student, assert_is_teacher, RoleInvariantError
+            try:
+                assert_is_student(student_id)
+                assert_is_teacher(teacher_id)
+            except RoleInvariantError as e:
+                logger.error("batch_grading role-invariant violated for sub %s: %s", submission.get("id"), e)
+                continue
+
             # Write mark
             mark_doc = Mark(
                 student_id=student_id,
