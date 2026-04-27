@@ -61,20 +61,23 @@ def _resolve_verdict_position(
     """Resolve (cx, cy) pixel coordinates for where a verdict symbol lands.
 
     Prefers `question_x` / `question_y` from the verdict dict — both are
-    fractions of image dimensions (0.0-1.0). Missing, non-numeric, or
-    out-of-sensible-range values fall back to evenly-spaced left margin
-    (x = 0.05, y = (index + 0.5) / total).
+    fractions of image dimensions (0.0-1.0). Missing or non-numeric
+    values fall back to right-margin stacking (x = 0.92, y evenly
+    distributed by index). Right margin matches how a teacher pen-marks
+    alongside the answer column, mirrors the mobile LocalAnnotation-
+    Overlay default, and stays on the page rather than the gutter for
+    portrait scans.
 
-    Both coords are clamped to [0.05, 0.95] so symbols never bleed off the
-    page edge regardless of what the model returned.
+    Both coords are clamped to [0.05, 0.95] so symbols never bleed off
+    the page edge regardless of what the model returned.
     """
     n = max(total, 1)
 
     qx_raw = verdict.get("question_x")
     try:
-        qx = float(qx_raw) if qx_raw is not None else 0.05
+        qx = float(qx_raw) if qx_raw is not None else 0.92
     except (TypeError, ValueError):
-        qx = 0.05
+        qx = 0.92
 
     qy_raw = verdict.get("question_y")
     try:
@@ -110,9 +113,13 @@ def annotate_image(
 
         # Symbol: ~4% of image height, floor of 40 px so it stays legible
         # even on small preview renders.
-        symbol_size = max(40, int(height * 0.04))
+        # Bigger ticks/Xs so they read at thumbnail scale in the
+        # student's email reply. Mirrors the mobile overlay's bump
+        # to 8% of height (min 56px) for visual parity between the
+        # in-app and email channels.
+        symbol_size = max(56, int(height * 0.08))
         font_symbol = _load_font(symbol_size)
-        font_qlabel = _load_font(max(20, int(symbol_size * 0.5)))
+        font_qlabel = _load_font(max(20, int(symbol_size * 0.4)))
         # Score bubble fonts — unchanged from the previous version.
         font_score_big = _load_font(max(54, int(height * 0.035)))
         font_score_sub = _load_font(max(28, int(height * 0.018)))

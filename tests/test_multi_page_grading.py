@@ -657,8 +657,11 @@ class TestAnnotatorPositioning:
         assert cy == 300  # 0.30 * 1000
 
     def test_annotator_falls_back_when_no_coordinates(self):
-        """Verdict missing question_x/question_y → evenly-spaced fallback:
-        x = 0.05 * width, y = (index + 0.5) / total * height."""
+        """Verdict missing question_x/question_y → right-margin fallback:
+        x = 0.92 * width, y = (index + 0.5) / total * height. Right
+        margin matches the mobile LocalAnnotationOverlay's default and
+        keeps the symbol next to the answer column rather than in the
+        gutter on portrait scans."""
         from shared.annotator import _resolve_verdict_position
         verdict = {
             "question_number": 1,
@@ -666,12 +669,12 @@ class TestAnnotatorPositioning:
             "awarded_marks": 5, "max_marks": 5,
         }
         cx, cy = _resolve_verdict_position(verdict, index=0, total=1, width=800, height=1000)
-        assert cx == 40   # 0.05 * 800 (left margin default)
+        assert cx == 736  # 0.92 * 800 (right margin default)
         assert cy == 500  # (0 + 0.5) / 1 * 1000 (evenly-spaced single row)
 
         # Second-of-two fallback position
         cx2, cy2 = _resolve_verdict_position(verdict, index=1, total=2, width=800, height=1000)
-        assert cx2 == 40
+        assert cx2 == 736
         assert cy2 == 750  # (1 + 0.5) / 2 * 1000
 
     def test_annotator_clamps_out_of_range_coordinates(self):
