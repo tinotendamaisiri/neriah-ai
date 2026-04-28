@@ -18,7 +18,7 @@ from shared.auth import (
     verify_otp_hash,
     verify_pin,
 )
-from shared.config import is_demo
+from shared.config import is_demo, settings
 from shared.constants import TERMS_URL, TERMS_VERSION
 from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Student, Teacher
@@ -515,7 +515,19 @@ def auth_verify():
         remaining = max(0, _OTP_VERIFY_LIMIT - new_attempts)
         return _err(code_msg, code_key, 400, headers=bad_headers, attempts_remaining=remaining)
 
-    if method == "bypass" or is_bypassed(phone):
+    # ── WhatsApp template-pending bypass ──────────────────────────────────
+    # While the neriah_otp template is awaiting Meta approval, accept "000000"
+    # as a valid OTP for any phone. See shared/config.py:WHATSAPP_TEMPLATE_PENDING
+    # for the rationale. Flip the flag off once the template is live.
+    template_pending_bypass = settings.WHATSAPP_TEMPLATE_PENDING and otp == "000000"
+    if template_pending_bypass:
+        logger.warning(
+            "[BYPASS] WHATSAPP_TEMPLATE_PENDING bypass accepted for ...%s — "
+            "set WHATSAPP_TEMPLATE_PENDING=false on the function once "
+            "neriah_otp template is approved by Meta.",
+            phone[-4:],
+        )
+    elif method == "bypass" or is_bypassed(phone):
         if otp != BYPASS_OTP_CODE:
             return _reject_bad_otp(
                 "The code you entered is incorrect. Please try again.",
@@ -1015,7 +1027,16 @@ def auth_update_me():
         remaining = max(0, _OTP_VERIFY_LIMIT - new_attempts)
         return _err(code_msg, code_key, 400, headers=bad_headers, attempts_remaining=remaining)
 
-    if method == "verify":
+    # Same template-pending bypass as the main /auth/verify endpoint —
+    # accept "000000" while WHATSAPP_TEMPLATE_PENDING is set so the
+    # profile-update OTP gate doesn't block users either.
+    template_pending_bypass = settings.WHATSAPP_TEMPLATE_PENDING and otp_code == "000000"
+    if template_pending_bypass:
+        logger.warning(
+            "[BYPASS] WHATSAPP_TEMPLATE_PENDING bypass accepted (profile update) for ...%s",
+            verification_id[-4:],
+        )
+    elif method == "verify":
         verify_sid = otp_doc.get("verify_sid")
         if not verify_sid:
             logger.error("Twilio Verify check requested but no verify_sid stored for ...%s", verification_id[-4:])

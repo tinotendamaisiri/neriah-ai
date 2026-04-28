@@ -91,6 +91,15 @@ class Settings(BaseSettings):
     ZOHO_IMAP_USER: str = "mark@neriah.ai"
     ZOHO_IMAP_PASSWORD: str = ""
 
+    # While the neriah_otp WhatsApp template is awaiting Meta approval, the
+    # WhatsApp template send returns HTTP 400 ("Template not found") and the
+    # SMS fallback fires (which costs Twilio credits). To let everyone test
+    # the verification flow without burning SMS or waiting on Meta, we
+    # accept the literal code "000000" as a successful OTP for any phone
+    # while this flag is True. Flip to False once Meta approves the
+    # template — production must NEVER ship with this enabled.
+    WHATSAPP_TEMPLATE_PENDING: bool = True
+
 
 settings = Settings()
 

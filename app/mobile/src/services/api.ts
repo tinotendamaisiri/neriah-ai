@@ -146,9 +146,20 @@ client.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-/** Request an OTP for login. Pass role to enforce role-gated auth. */
+/** Request an OTP for login. Pass role to enforce role-gated auth.
+ *
+ * Defaults to channel_preference='whatsapp' — WhatsApp is the dominant
+ * messaging channel across the SADC user base, and the backend's
+ * send_otp() falls through to SMS automatically if the WhatsApp send
+ * fails (template not approved yet, account not on WhatsApp, etc).
+ * No reason to default to SMS-first.
+ */
 export const requestLoginOtp = async (phone: string, role?: 'teacher' | 'student'): Promise<OtpSentResponse> => {
-  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/login', { phone, ...(role ? { role } : {}) });
+  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/login', {
+    phone,
+    channel_preference: 'whatsapp',
+    ...(role ? { role } : {}),
+  });
   return res.data;
 };
 
@@ -176,7 +187,12 @@ export const requestRegisterOtp = async (payload: {
   /** Version of the terms the user saw (from src/constants/legal.ts). */
   terms_version: string;
 }): Promise<OtpSentResponse> => {
-  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/register', payload);
+  // Default to WhatsApp delivery; backend falls back to SMS if the
+  // template send fails. See requestLoginOtp for rationale.
+  const res: AxiosResponse<OtpSentResponse> = await client.post('/auth/register', {
+    ...payload,
+    channel_preference: 'whatsapp',
+  });
   return res.data;
 };
 
@@ -710,7 +726,12 @@ export const studentRegister = async (data: {
   /** Version of the terms the user saw (from src/constants/legal.ts). */
   terms_version: string;
 }): Promise<OtpSentResponse> => {
-  const res = await client.post('/auth/student/register', data);
+  // Default to WhatsApp delivery; backend falls back to SMS if the
+  // template send fails. See requestLoginOtp for rationale.
+  const res = await client.post('/auth/student/register', {
+    ...data,
+    channel_preference: 'whatsapp',
+  });
   return res.data;
 };
 
