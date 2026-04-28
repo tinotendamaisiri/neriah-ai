@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { updateAnswerKey, regenerateScheme } from '../services/api';
 import { ReviewQuestion } from '../types';
@@ -319,9 +320,7 @@ export default function ReviewSchemeScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
-          <TouchableOpacity style={styles.back} onPress={() => navigation.goBack()}>
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
+          <BackButton style={{ marginBottom: 12 }} />
 
           <Text style={styles.heading}>Review Marking Scheme</Text>
           <Text style={styles.subheading}>

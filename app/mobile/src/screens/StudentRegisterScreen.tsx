@@ -31,6 +31,7 @@ import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { useLanguage } from '../context/LanguageContext';
+import { BackButton } from '../components/BackButton';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'StudentRegister'>;
 
@@ -337,9 +338,7 @@ export default function StudentRegisterScreen() {
         <View style={styles.container}>
 
         {/* Back */}
-        <TouchableOpacity style={styles.back} onPress={handleBack}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+        <BackButton onPress={handleBack} style={{ marginBottom: 12 }} />
 
         {/* Step indicator */}
         <View style={styles.stepRow}>

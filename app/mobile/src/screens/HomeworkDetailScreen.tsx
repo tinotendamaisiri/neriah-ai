@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import {
   listAnswerKeys,
   updateAnswerKey,
@@ -366,14 +367,7 @@ export default function HomeworkDetailScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Text style={styles.backText}>← {class_name}</Text>
-          </TouchableOpacity>
+          <BackButton style={{ marginBottom: 8 }} />
 
           {/* Rename row — shown for Unlabeled/pending_setup homework */}
           {isPendingSetup && editingTitle ? (

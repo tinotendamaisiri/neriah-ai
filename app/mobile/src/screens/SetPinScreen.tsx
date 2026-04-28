@@ -18,6 +18,7 @@ import { setPin as apiSetPin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/colors';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 export default function SetPinScreen() {
   const navigation = useNavigation<any>();
@@ -84,9 +85,7 @@ export default function SetPinScreen() {
   return (
     <ScreenContainer scroll={false}>
       <View style={styles.container}>
-        <TouchableOpacity style={styles.back} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 12 }} />
 
         <Text style={styles.heading}>Set PIN</Text>
         <Text style={styles.subheading}>

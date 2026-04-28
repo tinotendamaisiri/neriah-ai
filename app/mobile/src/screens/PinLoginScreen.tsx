@@ -20,6 +20,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import * as SecureStore from 'expo-secure-store';
 import { verifyPin, requestProfileOtp, updateProfile, setPin as apiSetPin, deletePin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -282,9 +283,10 @@ export default function PinLoginScreen() {
     return (
       <ScreenContainer scroll={false}>
           <View style={styles.container}>
-            <TouchableOpacity style={styles.backRow} onPress={() => { setStep('pin'); setOtp(''); }}>
-              <Text style={styles.backText}>← Back</Text>
-            </TouchableOpacity>
+            <BackButton
+              onPress={() => { setStep('pin'); setOtp(''); }}
+              style={{ marginBottom: 12 }}
+            />
 
             <View style={styles.top}>
               <Text style={styles.heading}>Verify your identity</Text>

@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,6 +36,10 @@ export default function EditProfileScreen() {
 
   // ── Edit step state ──────────────────────────────────────────────────────────
   const [title, setTitle] = useState(user?.title ?? '');
+  // Tracks whether the title-chips horizontal scroll is at the far
+  // right. We hide the "swipe for more" chevron once the user has
+  // scrolled to the end (no more content to reveal).
+  const [titleAtEnd, setTitleAtEnd] = useState(false);
   const [firstName, setFirstName] = useState(user?.first_name ?? '');
   const [surname, setSurname] = useState(user?.surname ?? '');
   const [phone, setPhone] = useState(user?.phone ?? '');
@@ -192,10 +197,10 @@ export default function EditProfileScreen() {
           )}
 
           <View style={styles.container}>
-            <TouchableOpacity style={styles.backRow} onPress={() => { setStep('edit'); setOtp(''); }}>
-              <Ionicons name="chevron-back" size={22} color={COLORS.gray500} />
-              <Text style={styles.backText}>Back</Text>
-            </TouchableOpacity>
+            <BackButton
+              onPress={() => { setStep('edit'); setOtp(''); }}
+              style={{ marginBottom: 12 }}
+            />
 
             <Text style={styles.heading}>Verify it's you</Text>
             <Text style={styles.subheading}>
@@ -249,32 +254,46 @@ export default function EditProfileScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity style={styles.backRow} onPress={() => navigation.goBack()}>
-              <Ionicons name="chevron-back" size={22} color={COLORS.gray500} />
-              <Text style={styles.backText}>Back</Text>
-            </TouchableOpacity>
+            <BackButton style={{ marginBottom: 12 }} />
             <Text style={styles.heading}>Edit Profile</Text>
           </View>
 
-          {/* Title chips */}
+          {/* Title chips. Wrapped in a positioned container so we can
+              overlay a small "swipe for more" chevron on the right edge —
+              indicates the row scrolls horizontally without relying on
+              the partial-cutoff of the last chip (which clients reported
+              as just looking broken). */}
           <View style={styles.section}>
             <Text style={styles.fieldLabel}>Title</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chipsRow}
-            >
-              {TITLES.map(t => (
-                <TouchableOpacity
-                  key={t}
-                  style={[styles.chip, title === t && styles.chipSelected]}
-                  onPress={() => setTitle(title === t ? '' : t)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.chipText, title === t && styles.chipTextSelected]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <View style={styles.chipsRowWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsRow}
+                onScroll={(e) => {
+                  const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+                  const atEnd = contentOffset.x + layoutMeasurement.width >= contentSize.width - 4;
+                  setTitleAtEnd(atEnd);
+                }}
+                scrollEventThrottle={32}
+              >
+                {TITLES.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.chip, title === t && styles.chipSelected]}
+                    onPress={() => setTitle(title === t ? '' : t)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.chipText, title === t && styles.chipTextSelected]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {!titleAtEnd && (
+                <View style={styles.chipsScrollHint} pointerEvents="none">
+                  <Ionicons name="chevron-forward" size={20} color={COLORS.teal500} />
+                </View>
+              )}
+            </View>
           </View>
 
           {/* First name */}
@@ -402,7 +421,26 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  chipsRow: { gap: 8, paddingBottom: 4 },
+  chipsRowWrap: {
+    position: 'relative',
+  },
+  chipsRow: {
+    gap: 8,
+    paddingBottom: 4,
+    // Trailing space so the last chip never sits flush under the
+    // scroll-hint chevron (which would block taps on it visually).
+    paddingRight: 28,
+  },
+  chipsScrollHint: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 28,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
   chip: {
     paddingHorizontal: 14,
     paddingVertical: 7,

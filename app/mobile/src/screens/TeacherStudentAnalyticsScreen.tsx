@@ -24,6 +24,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { TeacherStudentAnalyticsData, RootStackParamList } from '../types';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TeacherStudentAnalytics'>;
 
@@ -161,15 +162,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
-          style={styles.backBtn}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-        >
-          <Text style={styles.backText}>{t('back')}</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 8 }} />
         <Text style={styles.heading} numberOfLines={2}>{student_name}</Text>
         <Text style={styles.subheading}>{class_name}</Text>
       </View>

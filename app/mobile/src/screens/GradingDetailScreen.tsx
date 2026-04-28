@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import { getMarkById, updateMark, deleteMark } from '../services/api';
 import { GradingVerdict } from '../types';
 import { COLORS } from '../constants/colors';
@@ -204,14 +205,7 @@ export default function GradingDetailScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Text style={styles.backText}>← {class_name}</Text>
-          </TouchableOpacity>
+          <BackButton style={{ marginBottom: 8 }} />
           <View style={styles.titleRow}>
             <View style={styles.titleLeft}>
               <Text style={styles.studentName}>{student_name}</Text>

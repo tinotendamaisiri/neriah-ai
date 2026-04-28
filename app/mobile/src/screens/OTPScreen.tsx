@@ -23,6 +23,7 @@ import { AuthStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { maskPhone } from '../utils/maskPhone';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Route = RouteProp<AuthStackParamList, 'OTP'>;
 
@@ -159,9 +160,7 @@ export default function OTPScreen() {
   return (
     <ScreenContainer scroll={false}>
       <View style={styles.container}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{t('back')}</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 12 }} />
 
         {debug_otp && (
           <TouchableOpacity style={styles.devBanner} onPress={() => setOtp(debug_otp)} activeOpacity={0.7}>

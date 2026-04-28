@@ -28,6 +28,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'TeacherRegister'>;
 
@@ -240,9 +241,7 @@ export default function TeacherRegisterScreen() {
     <>
       <ScreenContainer>
         <View style={styles.container}>
-          <TouchableOpacity style={styles.back} onPress={() => navigation.goBack()}>
-            <Text style={styles.backText}>{t('back')}</Text>
-          </TouchableOpacity>
+          <BackButton style={{ marginBottom: 12 }} />
 
           <View style={styles.iconBadge}>
             <Ionicons name="clipboard-outline" size={36} color={COLORS.teal500} />

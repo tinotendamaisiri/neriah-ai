@@ -24,6 +24,7 @@ import { BarChart, LineChart } from 'react-native-chart-kit';
 import { getClassAnalytics, listAnswerKeys } from '../services/api';
 import type { AnswerKey } from '../types';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import { useLanguage } from '../context/LanguageContext';
 import { COLORS } from '../constants/colors';
 import type { ClassAnalyticsDetail, RootStackParamList } from '../types';
@@ -186,15 +187,7 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
-          style={styles.backBtn}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-        >
-          <Text style={styles.backText}>{t('back')}</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 8 }} />
         <Text style={styles.heading} numberOfLines={2}>{class_name}</Text>
       </View>
 

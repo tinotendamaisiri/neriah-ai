@@ -21,6 +21,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { RootStackParamList, TeacherSubmission } from '../types';
 import { COLORS } from '../constants/colors';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -372,14 +373,7 @@ export default function GradingResultsScreen() {
     <View style={styles.flex}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-        >
-          <Text style={styles.backText}>← {class_name}</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 8 }} />
         <Text style={styles.heading}>
           {isClassView ? 'Homework' : (answer_key_title ?? '')}
         </Text>

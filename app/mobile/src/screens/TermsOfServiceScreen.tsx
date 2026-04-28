@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
@@ -111,10 +112,7 @@ export default function TermsOfServiceScreen() {
     <ScreenContainer scroll={false}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backRow} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={22} color={COLORS.gray500} />
-          <Text style={styles.backText}>Back</Text>
-        </TouchableOpacity>
+        <BackButton style={{ marginBottom: 8 }} />
         <Text style={styles.heading}>{t('legal')}</Text>
       </View>
 
