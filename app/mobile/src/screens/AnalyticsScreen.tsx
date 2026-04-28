@@ -211,12 +211,10 @@ export default function AnalyticsScreen() {
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
       <View style={styles.container}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>
+      {/* Profile avatar removed — sync status surface lives on the
+          My Classes header avatar only; this screen uses a plain title. */}
+      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
         <Text style={styles.screenHeading}>{t('analytics')}</Text>
-        <AvatarWithStatus
-          initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}
-          onPress={() => navigation.navigate('Settings' as any)}
-        />
       </View>
       <FlatList
         data={(data ?? []).filter(Boolean)}

@@ -626,17 +626,17 @@ export default function TeacherAssistantScreen() {
           )}
 
           {/* ── Header ── */}
+          {/* Profile avatar removed from this screen — sync status now
+              lives on the My Classes header avatar; duplicating it on
+              Assistant clutters the chrome. Hairline placeholder keeps
+              the title visually centred between the menu button and
+              the right edge. */}
           <View style={s.header}>
             <TouchableOpacity style={s.hBtn} onPress={openDrawer}>
               <Ionicons name="menu-outline" size={24} color={AI.userText} />
             </TouchableOpacity>
             <Text style={s.hTitle}>Neriah AI</Text>
-            <AvatarWithStatus
-              variant="light"
-              initial={(user?.first_name?.[0] ?? 'T').toUpperCase()}
-              onPress={() => navigation.navigate('Settings' as any)}
-              size={36}
-            />
+            <View style={{ width: 36 }} />
           </View>
 
           {/* ── Context pills ── */}
