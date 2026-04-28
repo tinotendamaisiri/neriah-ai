@@ -155,6 +155,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // other two entry points.
   useEffect(() => {
     if (!user?.id) return;
+    // warmOfflineCache hits teacher-only endpoints (listClasses,
+    // listAnswerKeys, getTeacherSubmissions). Firing it for a student
+    // 401s on listClasses, the axios 401 interceptor calls logout(),
+    // and the student gets bounced back to RoleSelect immediately
+    // after registration. Students get their own offline cache
+    // warm-up via the per-screen load() effects (StudentHomeScreen,
+    // etc.); this teacher-wide prefetch should never run for them.
+    if (user.role !== 'teacher') return;
 
     // Cold-start warm-up — best-effort, runs once after restore.
     warmOfflineCache(user.id);
@@ -170,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       wasConnected = nowConnected;
     });
     return unsubscribe;
-  }, [user?.id]);
+  }, [user?.id, user?.role]);
 
   const login = useCallback(async (response: VerifyResponse) => {
     // If this is a student registering via join code, the pending join_code
@@ -211,9 +219,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Fire-and-forget cache warm-up so the app is fully usable
     // offline without the teacher having to navigate every screen
-    // online first. Failures are logged inside warmOfflineCache and
-    // never block login.
-    warmOfflineCache(authUser.id);
+    // online first. Teacher-only — see the role guard on the
+    // useEffect above. Calling for a student 401s on listClasses
+    // and bounces them back to RoleSelect via the axios handler.
+    if (authUser.role === 'teacher') {
+      warmOfflineCache(authUser.id);
+    }
 
     // Show PIN setup prompt if user hasn't set a PIN AND hasn't dismissed the prompt before.
     // "neriah_pin_prompt_shown" is written to AsyncStorage when the user either sets a PIN
