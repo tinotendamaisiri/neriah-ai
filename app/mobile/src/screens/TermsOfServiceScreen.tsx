@@ -13,6 +13,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import { RootStackParamList } from '../types';
+import { useLanguage } from '../context/LanguageContext';
 
 type Tab = 'terms' | 'privacy';
 
@@ -100,6 +101,7 @@ type Route = RouteProp<RootStackParamList, 'TermsOfService'>;
 export default function TermsOfServiceScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<Route>();
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<Tab>(route.params?.initialTab ?? 'terms');
 
   const sections = activeTab === 'terms' ? TERMS_SECTIONS : PRIVACY_SECTIONS;
@@ -113,7 +115,7 @@ export default function TermsOfServiceScreen() {
           <Ionicons name="chevron-back" size={22} color={COLORS.gray500} />
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
-        <Text style={styles.heading}>Legal</Text>
+        <Text style={styles.heading}>{t('legal')}</Text>
       </View>
 
       {/* Tabs */}
@@ -124,7 +126,7 @@ export default function TermsOfServiceScreen() {
           activeOpacity={0.7}
         >
           <Text style={[styles.tabLabel, activeTab === 'terms' && styles.tabLabelActive]}>
-            Terms of Service
+            {t('terms_of_service')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -133,7 +135,7 @@ export default function TermsOfServiceScreen() {
           activeOpacity={0.7}
         >
           <Text style={[styles.tabLabel, activeTab === 'privacy' && styles.tabLabelActive]}>
-            Privacy Policy
+            {t('privacy_policy')}
           </Text>
         </TouchableOpacity>
       </View>

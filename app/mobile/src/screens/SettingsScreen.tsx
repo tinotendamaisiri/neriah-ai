@@ -331,7 +331,7 @@ export default function SettingsScreen() {
 
       {/* Offline Mode */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Offline Mode</Text>
+        <Text style={styles.sectionTitle}>{t('offline_mode')}</Text>
 
         <View style={styles.card}>
           {/* Toggle row.
@@ -403,7 +403,7 @@ export default function SettingsScreen() {
           {modelStatus === 'done' && (
             <View style={{ paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
-              <Text style={{ fontSize: 13, color: COLORS.success, fontWeight: '600' }}>Offline mode ready</Text>
+              <Text style={{ fontSize: 13, color: COLORS.success, fontWeight: '600' }}>{t('offline_mode_ready')}</Text>
             </View>
           )}
 
@@ -438,11 +438,11 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.divider} />
         <TouchableOpacity style={styles.settingsRow} onPress={() => navigation.navigate('TermsOfService', { initialTab: 'terms' })}>
-          <Text style={styles.settingsRowLabel}>Terms of Service</Text>
+          <Text style={styles.settingsRowLabel}>{t('terms_of_service')}</Text>
           <Text style={styles.rowChevron}>›</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.settingsRow} onPress={() => navigation.navigate('TermsOfService', { initialTab: 'privacy' })}>
-          <Text style={styles.settingsRowLabel}>Privacy Policy</Text>
+          <Text style={styles.settingsRowLabel}>{t('privacy_policy')}</Text>
           <Text style={styles.rowChevron}>›</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.settingsRow, styles.lastRow]} onPress={handleDeleteAccount}>

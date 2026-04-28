@@ -354,10 +354,10 @@ export default function TeacherRegisterScreen() {
                 ) : null}
               </View>
               <Text style={styles.termsText}>
-                I agree to the{' '}
-                <Text style={styles.termsLink} onPress={openLegal}>Terms of Service</Text>
-                {' '}and{' '}
-                <Text style={styles.termsLink} onPress={openLegal}>Privacy Policy</Text>
+                {t('terms_agree_prefix')}{' '}
+                <Text style={styles.termsLink} onPress={openLegal}>{t('terms_of_service')}</Text>
+                {' '}{t('terms_agree_and')}{' '}
+                <Text style={styles.termsLink} onPress={openLegal}>{t('privacy_policy')}</Text>
               </Text>
             </Pressable>
 

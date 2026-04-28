@@ -30,6 +30,7 @@ import { AuthStackParamList, School } from '../types';
 import { COLORS } from '../constants/colors';
 import PhoneInput, { isValidE164 } from '../components/PhoneInput';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { useLanguage } from '../context/LanguageContext';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'StudentRegister'>;
 
@@ -66,6 +67,7 @@ const TYPE_TEXT_COLORS: Record<string, string> = {
 
 export default function StudentRegisterScreen() {
   const navigation = useNavigation<Nav>();
+  const { t } = useLanguage();
 
   const [step, setStep] = useState<Step>('phone');
 
@@ -572,10 +574,10 @@ export default function StudentRegisterScreen() {
                   ) : null}
                 </View>
                 <Text style={styles.termsText}>
-                  I agree to the{' '}
-                  <Text style={styles.termsLink} onPress={openLegal}>Terms of Service</Text>
-                  {' '}and{' '}
-                  <Text style={styles.termsLink} onPress={openLegal}>Privacy Policy</Text>
+                  {t('terms_agree_prefix')}{' '}
+                  <Text style={styles.termsLink} onPress={openLegal}>{t('terms_of_service')}</Text>
+                  {' '}{t('terms_agree_and')}{' '}
+                  <Text style={styles.termsLink} onPress={openLegal}>{t('privacy_policy')}</Text>
                 </Text>
               </Pressable>
 

@@ -372,7 +372,7 @@ export default function StudentSettingsScreen() {
 
       {/* ── OFFLINE MODE ─────────────────────────────────────────── */}
       <View style={s.section}>
-        <Text style={s.sectionTitle}>Offline Mode</Text>
+        <Text style={s.sectionTitle}>{t('offline_mode')}</Text>
         <View style={s.card}>
           <View style={[s.settingsRow, { justifyContent: 'space-between', borderTopWidth: 0 }]}>
             <View style={{ flex: 1, marginRight: 12 }}>
@@ -410,7 +410,7 @@ export default function StudentSettingsScreen() {
           {modelStatus === 'done' && (
             <View style={{ paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
-              <Text style={{ fontSize: 13, color: COLORS.success, fontWeight: '600' }}>Offline mode ready</Text>
+              <Text style={{ fontSize: 13, color: COLORS.success, fontWeight: '600' }}>{t('offline_mode_ready')}</Text>
             </View>
           )}
           {modelStatus === 'error' && (
@@ -427,10 +427,10 @@ export default function StudentSettingsScreen() {
         <View style={s.card}>
           <Row label="Version" value="1.0.0" />
           <TouchableOpacity style={s.settingsRow} onPress={() => Linking.openURL('https://neriah.ai/terms')}>
-            <Text style={s.settingsRowLabel}>Terms of Service</Text><Text style={s.chevron}>›</Text>
+            <Text style={s.settingsRowLabel}>{t('terms_of_service')}</Text><Text style={s.chevron}>›</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.settingsRow} onPress={() => Linking.openURL('https://neriah.ai/privacy')}>
-            <Text style={s.settingsRowLabel}>Privacy Policy</Text><Text style={s.chevron}>›</Text>
+            <Text style={s.settingsRowLabel}>{t('privacy_policy')}</Text><Text style={s.chevron}>›</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.settingsRow} onPress={handleDeleteAccount}>
             <Text style={[s.settingsRowLabel, { color: COLORS.error }]}>Delete Account</Text><Text style={s.chevron}>›</Text>
