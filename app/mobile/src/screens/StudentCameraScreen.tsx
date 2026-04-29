@@ -21,6 +21,7 @@ import { COLORS } from '../constants/colors';
 import InAppCamera from '../components/InAppCamera';
 import { getAnswerKeyQuestions } from '../services/api';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type QuestionItem = { question_number: number; question_text: string; marks: number };
 
@@ -150,6 +151,12 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
 
       <ScreenContainer scroll={false}>
       <View style={styles.container}>
+      {/* In-screen back-button row replaces the native header so the
+          status bar isn't padded by the navigator's default chrome. */}
+      <View style={styles.titleRow}>
+        <BackButton />
+        <Text style={styles.titleText}>Capture Pages</Text>
+      </View>
       {/* Assignment context */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
@@ -231,6 +238,12 @@ export default function StudentCameraScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+  titleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12,
+    backgroundColor: COLORS.background,
+  },
+  titleText: { fontSize: 22, fontWeight: '700', color: COLORS.text, flex: 1 },
   header: {
     backgroundColor: COLORS.teal500,
     paddingHorizontal: 20,

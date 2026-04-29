@@ -26,6 +26,7 @@ import { enhanceImage } from '../services/imageEnhance';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { checkImageQuality } from '../services/imageQuality';
 import InAppCamera from '../components/InAppCamera';
+import { BackButton } from '../components/BackButton';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'StudentPreview'>;
 
@@ -130,6 +131,10 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
       />
       <ScreenContainer scroll={false} style={{ backgroundColor: '#111827' }}>
       <View style={styles.container}>
+      <View style={styles.titleRow}>
+        <BackButton variant="onTeal" />
+        <Text style={styles.titleText}>Preview</Text>
+      </View>
       {/* Quality warnings */}
       {qualityWarnings.length > 0 && (
         <View style={styles.warningBanner}>
@@ -212,6 +217,11 @@ export default function StudentPreviewScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827' },
+  titleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12,
+  },
+  titleText: { fontSize: 22, fontWeight: '700', color: '#FFFFFF', flex: 1 },
   optimizingContainer: {
     flex: 1,
     backgroundColor: '#111827',

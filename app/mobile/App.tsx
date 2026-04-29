@@ -226,7 +226,7 @@ function TeacherNavigator() {
       <TeacherStack.Screen
         name="SetPin"
         component={SetPinScreen}
-        options={{ headerShown: true, title: 'Set PIN', headerBackTitleVisible: false }}
+        options={{ headerShown: false }}
       />
       <TeacherStack.Screen
         name="HomeworkList"
@@ -342,17 +342,17 @@ function StudentNavigator() {
       <StudentRootStack.Screen
         name="StudentCamera"
         component={StudentCameraScreen}
-        options={{ headerShown: true, title: 'Capture Pages', headerBackTitleVisible: false }}
+        options={{ headerShown: false }}
       />
       <StudentRootStack.Screen
         name="StudentPreview"
         component={StudentPreviewScreen}
-        options={{ headerShown: true, title: 'Preview' }}
+        options={{ headerShown: false }}
       />
       <StudentRootStack.Screen
         name="StudentConfirm"
         component={StudentConfirmScreen}
-        options={{ headerShown: true, title: 'Submit' }}
+        options={{ headerShown: false }}
       />
       <StudentRootStack.Screen
         name="SubmissionSuccess"
@@ -372,7 +372,7 @@ function StudentNavigator() {
       <StudentRootStack.Screen
         name="SetPin"
         component={SetPinScreen}
-        options={{ headerShown: true, title: 'Set PIN', headerBackTitleVisible: false }}
+        options={{ headerShown: false }}
       />
       <StudentRootStack.Screen
         name="ClassManagement"

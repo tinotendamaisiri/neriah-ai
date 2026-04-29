@@ -20,6 +20,7 @@ import { Assignment, StudentRootStackParamList } from '../types';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -77,8 +78,13 @@ export default function StudentSubmitScreen() {
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Submit Work</Text>
-        <Text style={styles.headerSub}>Choose an assignment to submit</Text>
+        <View style={styles.headerRow}>
+          <BackButton variant="onTeal" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Submit Work</Text>
+            <Text style={styles.headerSub}>Choose an assignment to submit</Text>
+          </View>
+        </View>
       </View>
 
       {!user?.class_id ? (
@@ -133,10 +139,11 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     backgroundColor: COLORS.teal500,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 16,
   },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
   headerSub: { color: COLORS.teal100, fontSize: 13, marginTop: 4 },
   listContent: { padding: 16 },

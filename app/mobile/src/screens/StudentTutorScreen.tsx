@@ -38,6 +38,11 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { useNavigation } from '@react-navigation/native';
+import {
+  SafeAreaView,
+  SafeAreaProvider,
+  initialWindowMetrics,
+} from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { sendTutorMessage, TutorChatMessage } from '../services/api';
 import InAppCamera from '../components/InAppCamera';
@@ -82,6 +87,21 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const sessionsKey = (id: string) => `student_tutor_sessions_${id}`;
 const usageKey    = (id: string) => `tutor_usage_${id}_${new Date().toISOString().slice(0, 10)}`;
 const makeId      = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+// Strip basic markdown the model leaks into chat bubbles. RN Text doesn't
+// parse markdown so users see literal '**' chars. Same helper as the
+// teacher Assistant — keep them in sync if either changes.
+function stripMarkdown(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?;:]|$)/g, '$1$2')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?;:]|$)/g, '$1$2')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*\*\s+/gm, '• ');
+}
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -211,7 +231,7 @@ export default function StudentTutorScreen() {
       try {
         const res = await sendTutorMessage({ message: '', is_greeting: true });
         const msg: ChatMessage = {
-          id: makeId(), role: 'assistant', content: res.response,
+          id: makeId(), role: 'assistant', content: stripMarkdown(res.response),
           timestamp: new Date().toISOString(),
         };
         setConversationId(res.conversation_id);
@@ -308,7 +328,7 @@ export default function StudentTutorScreen() {
       });
       setConversationId(res.conversation_id);
       const aiMsg: ChatMessage = {
-        id: makeId(), role: 'assistant', content: res.response,
+        id: makeId(), role: 'assistant', content: stripMarkdown(res.response),
         timestamp: new Date().toISOString(),
       };
       const withAi = [...nextMsgs, aiMsg];
@@ -322,7 +342,7 @@ export default function StudentTutorScreen() {
         ? "You've used all your messages for today. They reset at midnight!"
         : 'Something went wrong. Please try again.';
       const errMsg: ChatMessage = {
-        id: makeId(), role: 'assistant', content: errText,
+        id: makeId(), role: 'assistant', content: stripMarkdown(errText),
         timestamp: new Date().toISOString(),
       };
       const withErr = [...nextMsgs, errMsg];
@@ -573,8 +593,11 @@ export default function StudentTutorScreen() {
       {/* ── Chat History Drawer ── */}
       {showDrawer && (
         <Modal visible transparent animationType="none" onRequestClose={closeDrawer}>
+          {/* Modal severs the parent SafeAreaProvider on iOS — re-seed it. */}
+          <SafeAreaProvider initialMetrics={initialWindowMetrics}>
           <TouchableOpacity style={s.drawerBackdrop} activeOpacity={1} onPress={closeDrawer} />
           <Animated.View style={[s.drawer, { transform: [{ translateX: drawerAnim }] }]}>
+            <SafeAreaView style={s.drawerSafeInner} edges={['top', 'bottom']} mode="margin">
             <View style={s.drawerHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Image source={require('../../assets/icon-transparent.png')} style={{ width: 26, height: 26, tintColor: AI.teal }} resizeMode="contain" />
@@ -618,7 +641,9 @@ export default function StudentTutorScreen() {
                 );
               }}
             />
+            </SafeAreaView>
           </Animated.View>
+          </SafeAreaProvider>
         </Modal>
       )}
     </View>
@@ -723,13 +748,18 @@ const s = StyleSheet.create({
   drawerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
   drawer: {
     position: 'absolute', top: 0, bottom: 0, left: 0,
-    width: SCREEN_WIDTH * 0.8, backgroundColor: AI.card,
+    width: SCREEN_WIDTH * 0.8,
+    // Background + shadow live on the inner SafeAreaView so the white panel
+    // shrinks to fit between the status bar and home indicator inside Modal.
+  },
+  drawerSafeInner: {
+    flex: 1, backgroundColor: AI.card,
     shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 2, height: 0 },
     elevation: 8,
   },
   drawerHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 16, paddingBottom: 12,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12,
     borderBottomWidth: 1, borderBottomColor: AI.border,
   },
   drawerTitle: { fontSize: 18, fontWeight: '800', color: AI.text },
