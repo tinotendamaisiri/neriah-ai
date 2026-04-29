@@ -36,6 +36,15 @@ function mean(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch { return ''; }
+}
+
 export default function TeacherStudentAnalyticsScreen({ route, navigation }: Props) {
   const { student_id, student_name, class_id, class_name } = route.params;
   const { t } = useLanguage();
@@ -162,9 +171,11 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <BackButton style={{ marginBottom: 8 }} />
-        <Text style={styles.heading} numberOfLines={2}>{student_name}</Text>
-        <Text style={styles.subheading}>{class_name}</Text>
+        <BackButton variant="onTeal" />
+        <View style={styles.headerTitleBlock}>
+          <Text style={styles.heading} numberOfLines={2}>{student_name}</Text>
+          <Text style={styles.subheading}>{class_name}</Text>
+        </View>
       </View>
 
       {/* Student header card */}
@@ -178,7 +189,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
             <Text style={styles.studentCardSub}>
               {student.total_submissions ?? 0} {t('submissions_label').toLowerCase()}
               {student.first_submission_date
-                ? `  ·  ${t('since_label')} ${student.first_submission_date}`
+                ? `  ·  ${t('since_label')} ${fmtDate(student.first_submission_date)}`
                 : ''}
             </Text>
           </View>
@@ -304,7 +315,7 @@ export default function TeacherStudentAnalyticsScreen({ route, navigation }: Pro
           >
             <View style={styles.submissionLeft}>
               <Text style={styles.submissionTitle} numberOfLines={1}>{sub.homework_title ?? 'Assignment'}</Text>
-              <Text style={styles.submissionDate}>{sub.date ?? ''}</Text>
+              <Text style={styles.submissionDate}>{fmtDate(sub.date)}</Text>
               {sub.feedback_preview ? (
                 <Text style={styles.feedbackPreview} numberOfLines={2}>{sub.feedback_preview}</Text>
               ) : null}
@@ -370,9 +381,14 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: COLORS.teal500,
+    paddingTop: 12,
     paddingBottom: 16,
     paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleBlock: { flex: 1 },
   backBtn: {
     marginBottom: 8,
   },

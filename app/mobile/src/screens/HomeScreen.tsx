@@ -45,6 +45,18 @@ function fmtDate(iso?: string | null): string {
   } catch { return iso ?? ''; }
 }
 
+/** Short DD/MM/YY format — e.g. "12/04/26". Used on homework cards. */
+function fmtDateShort(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}/${mm}/${yy}`;
+  } catch { return iso ?? ''; }
+}
+
 // ── Memoized class group item — prevents re-renders on unrelated state changes ─
 
 interface ClassGroupItemProps {
@@ -123,9 +135,10 @@ const ClassGroupItem = React.memo(function ClassGroupItem({
                   >
                     <View style={styles.homeworkCardLeft}>
                       <Text style={styles.homeworkTitle}>{ak.title}</Text>
-                      <Text style={styles.homeworkMeta}>{t('created')} {fmtDate(ak.created_at)}</Text>
                       {ak.due_date && (
-                        <Text style={styles.homeworkDue}>{t('due_date')} {fmtDate(ak.due_date)}</Text>
+                        <Text style={styles.homeworkDue}>
+                          {t('due_date')} {fmtDateShort(ak.due_date)}
+                        </Text>
                       )}
                       <Text style={styles.homeworkSubCount}>{subCount} {t('submissions')}</Text>
                     </View>
@@ -476,7 +489,8 @@ const styles = StyleSheet.create({
   centre: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    paddingTop: 16, paddingBottom: 16,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   headerRow: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',

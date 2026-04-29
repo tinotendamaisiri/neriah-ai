@@ -26,6 +26,7 @@ import {
   uploadAnswerKeyFile,
   getTeacherSubmissions,
   closeAndGrade,
+  approveAllMarks,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -94,6 +95,15 @@ export default function HomeworkDetailScreen() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
+
+  // Marking scheme collapsed by default — keeps the page short. Teacher
+  // taps the section header to expand and review the questions.
+  const [schemeExpanded, setSchemeExpanded] = useState(false);
+
+  // "Approve all" — shown when there are AI-graded submissions awaiting
+  // teacher approval. Common path for submissions that arrived via WhatsApp
+  // or email channel where the teacher didn't grade in-app.
+  const [approvingAll, setApprovingAll] = useState(false);
 
   // Camera state for file picker
   const [cameraVisible, setCameraVisible] = useState(false);
@@ -300,6 +310,48 @@ export default function HomeworkDetailScreen() {
     });
   };
 
+  /**
+   * Bulk-approve every AI-graded submission on this homework that the
+   * teacher hasn't yet approved. Use case: the teacher receives WhatsApp
+   * or email submissions, opens the homework, and is happy to release
+   * the AI grades wholesale without per-student review.
+   */
+  const handleApproveAll = () => {
+    const ids = awaitingApproval
+      .map(s => s.id)
+      .filter((id): id is string => !!id);
+    if (ids.length === 0) return;
+    Alert.alert(
+      'Approve all',
+      `Approve all ${ids.length} graded submission${ids.length !== 1 ? 's' : ''} and release results to students?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve all',
+          style: 'default',
+          onPress: async () => {
+            setApprovingAll(true);
+            try {
+              const result = await approveAllMarks(ids);
+              await loadData();
+              const skipped = (result.skipped?.length ?? 0) + (result.errors?.length ?? 0);
+              Alert.alert(
+                'Approved',
+                skipped > 0
+                  ? `${result.approved} approved · ${skipped} skipped (already approved or invalid).`
+                  : `${result.approved} submission${result.approved !== 1 ? 's' : ''} approved.`,
+              );
+            } catch (err: any) {
+              Alert.alert('Error', err.message ?? 'Could not approve submissions.');
+            } finally {
+              setApprovingAll(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleCloseAndGrade = () => {
     if (!answerKey || pendingCount === 0) return;
     Alert.alert(
@@ -354,6 +406,13 @@ export default function HomeworkDetailScreen() {
   const hasQuestions = answerKey.questions.length > 0;
   const pendingCount = submissions.filter(s => s.status === 'pending').length;
   const gradedCount = submissions.filter(s => s.status === 'graded' || s.status === 'approved').length;
+  // Submissions where AI has graded but the teacher hasn't approved yet.
+  // These are the only ones the bulk "Approve all" button acts on. Both
+  // 'graded' and the legacy 'graded_pending_approval' state qualify — the
+  // row badge already groups them under "Awaiting Approval".
+  const awaitingApproval = submissions.filter(
+    s => s.status === 'graded' || s.status === 'graded_pending_approval',
+  );
 
   return (
     <>
@@ -365,50 +424,51 @@ export default function HomeworkDetailScreen() {
       />
       <ScreenContainer scroll={false} edges={['top', 'left', 'right']} keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Header */}
+        {/* Header — back button + title block side-by-side */}
         <View style={styles.header}>
-          <BackButton style={{ marginBottom: 8 }} />
-
-          {/* Rename row — shown for Unlabeled/pending_setup homework */}
-          {isPendingSetup && editingTitle ? (
-            <View style={styles.renameRow}>
-              <TextInput
-                style={styles.renameInput}
-                value={titleDraft}
-                onChangeText={setTitleDraft}
-                placeholder={t('homework_title_placeholder')}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleSaveTitle}
-              />
-              <TouchableOpacity
-                style={[styles.saveBtn, savingTitle && styles.saveBtnDisabled]}
-                onPress={handleSaveTitle}
-                disabled={savingTitle}
-              >
-                {savingTitle
-                  ? <ActivityIndicator size="small" color={COLORS.white} />
-                  : <Text style={styles.saveBtnText}>{t('save')}</Text>
-                }
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.headingRow}>
-              <Text style={styles.heading}>{answerKey.title ?? answerKey.subject}</Text>
-              {isPendingSetup && (
+          <BackButton />
+          <View style={styles.headerTitleBlock}>
+            {/* Rename row — shown for Unlabeled/pending_setup homework */}
+            {isPendingSetup && editingTitle ? (
+              <View style={styles.renameRow}>
+                <TextInput
+                  style={styles.renameInput}
+                  value={titleDraft}
+                  onChangeText={setTitleDraft}
+                  placeholder={t('homework_title_placeholder')}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={handleSaveTitle}
+                />
                 <TouchableOpacity
-                  onPress={() => { setTitleDraft(answerKey.title ?? ''); setEditingTitle(true); }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={[styles.saveBtn, savingTitle && styles.saveBtnDisabled]}
+                  onPress={handleSaveTitle}
+                  disabled={savingTitle}
                 >
-                  <Text style={styles.renameLink}>{t('rename_homework')}</Text>
+                  {savingTitle
+                    ? <ActivityIndicator size="small" color={COLORS.white} />
+                    : <Text style={styles.saveBtnText}>{t('save')}</Text>
+                  }
                 </TouchableOpacity>
-              )}
-            </View>
-          )}
+              </View>
+            ) : (
+              <View style={styles.headingRow}>
+                <Text style={styles.heading}>{answerKey.title ?? answerKey.subject}</Text>
+                {isPendingSetup && (
+                  <TouchableOpacity
+                    onPress={() => { setTitleDraft(answerKey.title ?? ''); setEditingTitle(true); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.renameLink}>{t('rename_homework')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
 
-          {answerKey.title && (
-            <Text style={styles.subjectTag}>{answerKey.subject}</Text>
-          )}
+            {answerKey.title && (
+              <Text style={styles.subjectTag}>{answerKey.subject}</Text>
+            )}
+          </View>
         </View>
 
         {/* Key info row */}
@@ -427,7 +487,6 @@ export default function HomeworkDetailScreen() {
           {answerKey.total_marks != null && (
             <InfoRow label="Total marks" value={String(answerKey.total_marks)} />
           )}
-          <InfoRow label="AI generated" value={answerKey.generated ? 'Yes' : 'No'} />
           {answerKey.submission_code && (
             <InfoRow label="Submission code" value={answerKey.submission_code} />
           )}
@@ -483,15 +542,29 @@ export default function HomeworkDetailScreen() {
           </View>
         )}
 
-        {/* Questions summary — shown when questions exist */}
+        {/* Questions summary — shown when questions exist. Collapsible:
+            tap the header to fold/unfold the question list. */}
         {hasQuestions && (
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>{t('marking_scheme')}</Text>
+              <TouchableOpacity
+                style={styles.schemeTitleRow}
+                onPress={() => setSchemeExpanded(v => !v)}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons
+                  name={schemeExpanded ? 'chevron-down' : 'chevron-forward'}
+                  size={14}
+                  color={COLORS.gray500}
+                />
+                <Text style={styles.sectionTitle}>{t('marking_scheme')}</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={handlePickFile}>
                 <Text style={styles.regenerateLink}>{t('regenerate')}</Text>
               </TouchableOpacity>
             </View>
+            {schemeExpanded && <>
             {/* Show question paper image when question texts are missing */}
             {answerKey.questions.length > 0 && !answerKey.questions.some(q => q.question_text) && (
               (answerKey as any).qp_image_url ? (
@@ -597,19 +670,14 @@ export default function HomeworkDetailScreen() {
                 </TouchableOpacity>
               ),
             )}
+            </>}
           </View>
         )}
 
-        {/* Open for submissions toggle */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('submissions')}</Text>
-          <View style={styles.toggleRow}>
-            <View>
-              <Text style={styles.toggleLabel}>{t('open_for_submissions')}</Text>
-              <Text style={styles.toggleSub}>
-                {answerKey.open_for_submission ? t('submissions_open') : t('submissions_closed')}
-              </Text>
-            </View>
+        {/* Submissions — compact: title + open/closed toggle + inline counts */}
+        <View style={[styles.section, styles.submissionsSectionCompact]}>
+          <View style={styles.submissionsCompactRow}>
+            <Text style={styles.sectionTitleInline}>{t('submissions')}</Text>
             <TouchableOpacity
               style={[styles.toggle, answerKey.open_for_submission && styles.toggleOn]}
               onPress={handleToggleOpen}
@@ -628,23 +696,38 @@ export default function HomeworkDetailScreen() {
           )}
 
           {submissions.length > 0 && (
-            <View style={styles.submCountRow}>
-              <View style={styles.submCountBadge}>
-                <Text style={styles.submCountNum}>{pendingCount}</Text>
-                <Text style={styles.submCountLabel}>{t('pending')}</Text>
-              </View>
-              <View style={styles.submCountBadge}>
-                <Text style={styles.submCountNum}>{gradedCount}</Text>
-                <Text style={styles.submCountLabel}>{t('graded')}</Text>
-              </View>
-            </View>
+            <Text style={styles.submCountInline}>
+              <Text style={styles.submCountNumInline}>{pendingCount}</Text>
+              <Text style={styles.submCountLabelInline}> {t('pending')}  ·  </Text>
+              <Text style={styles.submCountNumInline}>{gradedCount}</Text>
+              <Text style={styles.submCountLabelInline}> {t('graded')}</Text>
+            </Text>
           )}
         </View>
 
-        {/* Student submissions list — sorted earliest first (Fix 2) */}
+        {/* Student submissions list — sorted earliest first (Fix 2).
+            "Approve all" appears next to the title when at least one
+            submission is AI-graded but not yet teacher-approved. */}
         {submissions.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('student_submissions')}</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>{t('student_submissions')}</Text>
+              {awaitingApproval.length > 0 && (
+                <TouchableOpacity
+                  style={[styles.approveAllBtn, approvingAll && styles.approveAllBtnDisabled]}
+                  onPress={handleApproveAll}
+                  disabled={approvingAll}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  {approvingAll
+                    ? <ActivityIndicator size="small" color={COLORS.white} />
+                    : <Text style={styles.approveAllBtnText}>
+                        Approve all ({awaitingApproval.length})
+                      </Text>
+                  }
+                </TouchableOpacity>
+              )}
+            </View>
             {[...submissions]
               .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime())
               .map(s => (
@@ -841,9 +924,13 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 16, paddingBottom: 20,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleBlock: { flex: 1 },
   backText: { fontSize: 14, color: COLORS.teal500, marginBottom: 10 },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   heading: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, flex: 1 },
@@ -883,6 +970,15 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 13, fontWeight: '700', color: COLORS.gray500, textTransform: 'uppercase', marginBottom: 12 },
   sectionHint: { fontSize: 13, color: COLORS.textLight, marginBottom: 12 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  schemeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  approveAllBtn: {
+    backgroundColor: COLORS.teal500,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 8,
+    minWidth: 110, alignItems: 'center', justifyContent: 'center',
+  },
+  approveAllBtnDisabled: { opacity: 0.6 },
+  approveAllBtnText: { color: COLORS.white, fontSize: 12, fontWeight: '700' },
   regenerateLink: { fontSize: 13, color: COLORS.teal500, fontWeight: '600' },
 
   setupBtn: {
@@ -951,6 +1047,20 @@ const styles = StyleSheet.create({
   },
   submCountNum: { fontSize: 22, fontWeight: 'bold', color: COLORS.teal500 },
   submCountLabel: { fontSize: 12, color: COLORS.gray500, marginTop: 2 },
+
+  // Compact "Submissions" card — collapses the multi-row label / sub-label /
+  // big count boxes into a single header row + inline count line.
+  submissionsSectionCompact: { paddingVertical: 12 },
+  submissionsCompactRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  sectionTitleInline: {
+    fontSize: 13, fontWeight: '700', color: COLORS.gray500,
+    textTransform: 'uppercase',
+  },
+  submCountInline: { marginTop: 10 },
+  submCountNumInline: { fontSize: 14, fontWeight: '700', color: COLORS.teal500 },
+  submCountLabelInline: { fontSize: 13, color: COLORS.gray500 },
 
   submissionRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

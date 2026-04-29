@@ -85,9 +85,11 @@ export default function SetPinScreen() {
   return (
     <ScreenContainer scroll={false}>
       <View style={styles.container}>
-        <BackButton style={{ marginBottom: 12 }} />
-
-        <Text style={styles.heading}>Set PIN</Text>
+        {/* Header — back button + title side-by-side */}
+        <View style={styles.headerRow}>
+          <BackButton />
+          <Text style={[styles.heading, styles.headerTitleFlex]}>Set PIN</Text>
+        </View>
         <Text style={styles.subheading}>
           {step === 'enter'
             ? 'Choose a 4-digit PIN to lock the app.'
@@ -148,7 +150,11 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 24, alignItems: 'center' },
   back: { alignSelf: 'flex-start', marginBottom: 32 },
   backText: { fontSize: 16, color: COLORS.gray500 },
-  heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8,
+  },
+  headerTitleFlex: { flex: 1 },
+  heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text },
   subheading: { fontSize: 15, color: COLORS.gray500, textAlign: 'center', marginBottom: 40 },
   dotsRow: { flexDirection: 'row', gap: 20, marginBottom: 12 },
   dot: {

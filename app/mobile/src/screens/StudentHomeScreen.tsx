@@ -166,18 +166,15 @@ export default function StudentHomeScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1 }} />
-        <View style={styles.headerCenter}>
+        <View style={styles.headerTitleBlock}>
           <Text style={styles.greeting} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('my_homework')}</Text>
           <Text style={styles.subGreeting}>{t('hello_name').replace('{name}', firstName)}</Text>
         </View>
-        <View style={{ flex: 1, alignItems: 'flex-end' }}>
-          <AvatarWithStatus
-              variant="light"
-            initial={firstName[0].toUpperCase()}
-            onPress={() => navigation.navigate('StudentSettings' as any)}
-          />
-        </View>
+        <AvatarWithStatus
+            variant="light"
+          initial={firstName[0].toUpperCase()}
+          onPress={() => navigation.navigate('StudentSettings' as any)}
+        />
       </View>
 
       {/* Class switcher (only if 2+ classes) */}
@@ -319,14 +316,15 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: COLORS.teal500,
     paddingHorizontal: 20,
+    paddingTop: 20,
     paddingBottom: 28,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerCenter: {
+  headerTitleBlock: {
     flex: 1,
-    alignItems: 'center',
+    paddingRight: 12,
   },
   greeting: { color: COLORS.white, fontSize: 20, fontWeight: '800' },
   subGreeting: { color: COLORS.teal100, fontSize: 12, marginTop: 2 },

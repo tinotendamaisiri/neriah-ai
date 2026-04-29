@@ -252,10 +252,10 @@ export default function EditProfileScreen() {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Header */}
+          {/* Header — back button + title side-by-side */}
           <View style={styles.header}>
-            <BackButton style={{ marginBottom: 12 }} />
-            <Text style={styles.heading}>Edit Profile</Text>
+            <BackButton />
+            <Text style={[styles.heading, styles.headerTitleFlex]}>Edit Profile</Text>
           </View>
 
           {/* Title chips. Wrapped in a positioned container so we can
@@ -377,7 +377,11 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleFlex: { flex: 1 },
   backRow: {
     flexDirection: 'row',
     alignItems: 'center',

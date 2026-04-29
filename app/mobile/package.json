@@ -6,6 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "ios:tino": "expo run:ios --device Tino",
+    "ios:tino:release": "expo run:ios --device Tino --configuration Release",
     "web": "expo start --web",
     "postinstall": "patch-package && bash scripts/install-litert-ios-framework.sh"
   },

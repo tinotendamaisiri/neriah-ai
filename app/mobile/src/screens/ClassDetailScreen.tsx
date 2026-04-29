@@ -86,7 +86,11 @@ export default function ClassDetailScreen() {
   const curriculumLabel = curriculum === 'cambridge' ? 'Cambridge' : 'ZIMSEC';
 
   return (
-    <ScreenContainer scroll={false}>
+    // Exclude 'top' edge: the native React Navigation header already
+    // sits inside the status-bar safe area for this screen. Including
+    // 'top' here would stack a second safe-area inset under the nav
+    // header and leave a ~90 pt empty gap above the class info row.
+    <ScreenContainer scroll={false} edges={['left', 'right', 'bottom']}>
     <View style={styles.container}>
       <FlatList
         data={students}

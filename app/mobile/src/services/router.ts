@@ -17,9 +17,11 @@ import {
   generateResponse,
   buildGradingPrompt,
   buildTutorPrompt,
+  buildAssistantPrompt,
   ModelVariant,
   type OnDeviceUserContext,
   type OcrPageInput,
+  type AssistantOnDeviceActionType,
 } from './litert';
 
 export type { OnDeviceUserContext };
@@ -32,7 +34,7 @@ import { recognizePages } from './ocr';
 export type AIRoute = 'cloud' | 'on-device' | 'unavailable';
 
 /** Which kind of AI operation is being requested. */
-export type AIRequestType = 'grading' | 'tutoring' | 'scheme';
+export type AIRequestType = 'grading' | 'tutoring' | 'scheme' | 'teacher_assistant';
 
 /** Message shown when no route is available. */
 export const CONNECT_TO_CONTINUE = 'Connect to continue';
@@ -333,6 +335,26 @@ export async function tutorOnDevice(
   onToken?: (partial: string) => void,
 ): Promise<string> {
   const prompt = buildTutorPrompt(history, userMessage, userContext);
+  return generateResponse(prompt, onToken);
+}
+
+/**
+ * Run a teaching-assistant turn via the on-device E2B LiteRT model.
+ *
+ * Mirrors tutorOnDevice but uses the assistant prompt template, which
+ * supports four action types: chat, prepare_notes, teaching_methods,
+ * exam_questions. The cloud version's data-aware action_type
+ * 'class_performance' is intentionally not supported here — class weak
+ * topics are surfaced via the analytics cache instead.
+ */
+export async function assistantOnDevice(
+  action: AssistantOnDeviceActionType,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userMessage: string,
+  userContext?: OnDeviceUserContext,
+  onToken?: (partial: string) => void,
+): Promise<string> {
+  const prompt = buildAssistantPrompt(action, history, userMessage, userContext);
   return generateResponse(prompt, onToken);
 }
 

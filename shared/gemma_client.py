@@ -946,10 +946,23 @@ def student_tutor(
             "opportunities — never as failures."
         )
 
+    # Profile-aware addendum: age band rules, hallucination control,
+    # interaction style, format hints, country-specific cultural context,
+    # hard refusals. Country comes from user_context (resolved from the
+    # student's phone number / school document).
+    from shared.guardrails import build_system_addendum  # noqa: PLC0415
+    addendum = build_system_addendum(
+        role="student",
+        education_level=education_level,
+        subject=ctx.get("subject"),
+        country=ctx.get("country"),
+    )
+
     system_prompt = (
         _TUTOR_SYSTEM_TEMPLATE.format(identity=_NERIAH_IDENTITY, education_level=education_level)
         + curriculum_note
         + weakness_note
+        + addendum
     )
 
     try:

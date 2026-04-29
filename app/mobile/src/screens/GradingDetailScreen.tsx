@@ -3,7 +3,7 @@
 // Shows per-question verdicts with editable marks and per-question comments,
 // plus an overall feedback field. Teacher saves edits and optionally approves.
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   View,
@@ -16,12 +16,17 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
+  Dimensions,
+  FlatList,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { BackButton } from '../components/BackButton';
 import { getMarkById, updateMark, deleteMark } from '../services/api';
-import { GradingVerdict } from '../types';
+import { GradingVerdict, Mark } from '../types';
 import { COLORS } from '../constants/colors';
 
 interface EditableVerdict {
@@ -63,29 +68,118 @@ export default function GradingDetailScreen() {
   const [overallFeedback, setOverallFeedback] = useState('');
   const [approved, setApproved] = useState(false);
   const [manuallyEdited, setManuallyEdited] = useState(false);
+  // The submitted document — annotated pages preferred, fall back to
+  // originals, then to legacy single-page marked_image_url. Same source
+  // of truth as the post-scan MarkResult flow so the teacher sees the
+  // actual paper regardless of how it was submitted (in-app scan,
+  // WhatsApp, email).
+  const [pages, setPages] = useState<string[]>([]);
+  // Per-section collapsed state — default closed so the document is the
+  // first thing the teacher sees. Tap a section header to expand.
+  const [breakdownExpanded, setBreakdownExpanded] = useState(false);
+  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
+
+  // ── Document viewer state — mirrors MarkResult ─────────────────────────────
+  // Single page: iOS native pinch via ScrollView.maximumZoomScale; Android
+  // falls back to button-driven transform scale on the inner Image.
+  // Multi-page: horizontal pager FlatList + button-driven scale (nested
+  // ScrollView would break horizontal paging on Android).
+  const imageScrollRef = useRef<ScrollView>(null);
+  const pagerRef = useRef<FlatList<string>>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [currentPage, setCurrentPage] = useState(0);
+
+  const isMultiPage = pages.length > 1;
+  const SW = Dimensions.get('window').width;
+  const IMAGE_H = 420;
+  const PAGE_W = SW - 32;
+
+  const setZoom = (next: number) => {
+    const clamped = Math.max(1, Math.min(5, next));
+    setZoomLevel(clamped);
+    if (isMultiPage) return; // multi-page uses transform only
+    const node: any = imageScrollRef.current;
+    if (Platform.OS === 'ios' && node?.scrollResponderZoomTo) {
+      const visibleW = SW - 32;
+      const w = visibleW / clamped;
+      const h = IMAGE_H / clamped;
+      node.scrollResponderZoomTo({
+        x: (visibleW - w) / 2,
+        y: (IMAGE_H - h) / 2,
+        width: w,
+        height: h,
+        animated: true,
+      });
+    }
+  };
+
+  const handlePagerMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / PAGE_W);
+    if (idx !== currentPage) {
+      setCurrentPage(idx);
+      setZoomLevel(1); // each page starts at 1×
+    }
+  };
+
+  // Snapshot of the mark as the teacher first saw it, taken on load. Used
+  // to decide whether the teacher actually changed anything before they
+  // press Save / Approve. Without this, every save flagged the mark as
+  // "Teacher-edited" — even when the teacher only tapped Approve.
+  const originalRef = useRef<{
+    verdicts: { qn: number; awarded: string; feedback: string }[];
+    totalScore: string;
+    overallFeedback: string;
+  }>({ verdicts: [], totalScore: '', overallFeedback: '' });
 
   const loadMark = useCallback(async () => {
     setLoading(true);
     try {
       const mark = await getMarkById(mark_id);
       const rawVerdicts: GradingVerdict[] = mark.verdicts ?? [];
+      let initialTotalScore = '';
+      let initialVerdictSnapshot: { qn: number; awarded: string; feedback: string }[] = [];
       if (rawVerdicts.length > 0) {
         setHasVerdicts(true);
-        setVerdicts(rawVerdicts.map(v => ({
+        const editable = rawVerdicts.map(v => ({
           question_number: v.question_number,
           verdict: v.verdict,
           awarded_marks: String(v.awarded_marks),
           max_marks: v.max_marks,
           feedback: v.feedback ?? '',
-        })));
+        }));
+        setVerdicts(editable);
+        initialVerdictSnapshot = editable.map(v => ({
+          qn: v.question_number,
+          awarded: v.awarded_marks,
+          feedback: v.feedback,
+        }));
       } else {
         setHasVerdicts(false);
-        setTotalScore(String(mark.score ?? 0));
+        initialTotalScore = String(mark.score ?? 0);
+        setTotalScore(initialTotalScore);
         setTotalMax(String(mark.max_score ?? 0));
       }
-      setOverallFeedback(mark.feedback ?? '');
+      const initialOverall = mark.feedback ?? '';
+      setOverallFeedback(initialOverall);
       setApproved(mark.approved ?? false);
       setManuallyEdited(mark.manually_edited ?? false);
+      // Populate the document viewer. Prefer annotated, then originals,
+      // then the legacy single-page url. None of these may be present on
+      // very old marks — the viewer hides itself in that case.
+      const m = mark as Mark;
+      const documentPages: string[] = (
+        (m.annotated_urls && m.annotated_urls.length > 0)
+          ? m.annotated_urls
+          : (m.page_urls && m.page_urls.length > 0)
+            ? m.page_urls
+            : (m.marked_image_url ? [m.marked_image_url] : [])
+      );
+      setPages(documentPages);
+      originalRef.current = {
+        verdicts: initialVerdictSnapshot,
+        totalScore: initialTotalScore,
+        overallFeedback: initialOverall,
+      };
     } catch (err: any) {
       // Offline + this mark hasn't been viewed online yet → it's
       // simply not in cache. Bouncing the teacher back with an alert
@@ -113,9 +207,29 @@ export default function GradingDetailScreen() {
   const handleSave = async (shouldApprove = false) => {
     setSaving(true);
     try {
+      // Did the teacher actually change anything since the screen loaded?
+      // Approving alone is not an "edit" — the badge should only flag
+      // submissions where marks or feedback were genuinely modified.
+      const original = originalRef.current;
+      const overallChanged = overallFeedback !== original.overallFeedback;
+      let verdictsChanged = false;
+      if (hasVerdicts) {
+        const byQn = new Map(original.verdicts.map(v => [v.qn, v]));
+        verdictsChanged = (verdicts ?? []).some(v => {
+          const o = byQn.get(v.question_number);
+          if (!o) return true; // new verdict that wasn't in the original
+          return o.awarded !== v.awarded_marks || o.feedback !== v.feedback;
+        });
+      } else {
+        verdictsChanged = totalScore !== original.totalScore;
+      }
+      // Sticky: once a mark has been teacher-edited it stays flagged even
+      // if the teacher reverts. We never silently clear the flag here.
+      const editedFlag = manuallyEdited || overallChanged || verdictsChanged;
+
       const payload: Parameters<typeof updateMark>[1] = {
         overall_feedback: overallFeedback || undefined,
-        manually_edited: true,
+        manually_edited: editedFlag,
       };
 
       if (hasVerdicts) {
@@ -203,33 +317,129 @@ export default function GradingDetailScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
+        {/* Header — back button + title block side-by-side. The Teacher-edited
+            badge appears under the Approved badge (right column) — and only
+            when the teacher actually changed something before approving. */}
         <View style={styles.header}>
-          <BackButton style={{ marginBottom: 8 }} />
-          <View style={styles.titleRow}>
-            <View style={styles.titleLeft}>
-              <Text style={styles.studentName}>{student_name}</Text>
-              <Text style={styles.homeworkTitle}>{answer_key_title}</Text>
-            </View>
-            {approved && (
-              <View style={styles.approvedBadge}>
-                <Text style={styles.approvedBadgeText}>Approved</Text>
+          <BackButton />
+          <View style={styles.headerTitleBlock}>
+            <View style={styles.titleRow}>
+              <View style={styles.titleLeft}>
+                <Text style={styles.studentName}>{student_name}</Text>
+                <Text style={styles.homeworkTitle}>{answer_key_title}</Text>
               </View>
-            )}
-          </View>
-          {manuallyEdited && (
-            <View style={styles.editedHintRow}>
-              <Ionicons name="pencil-outline" size={12} color={COLORS.amber500} />
-              <Text style={styles.editedHint}> Teacher-edited</Text>
+              <View style={styles.titleRight}>
+                {approved && (
+                  <View style={styles.approvedBadge}>
+                    <Text style={styles.approvedBadgeText}>Approved</Text>
+                  </View>
+                )}
+                {manuallyEdited && (
+                  <View style={styles.editedHintRow}>
+                    <Ionicons name="pencil-outline" size={12} color={COLORS.amber500} />
+                    <Text style={styles.editedHint}> Teacher-edited</Text>
+                  </View>
+                )}
+              </View>
             </View>
-          )}
+          </View>
         </View>
 
-        {/* Per-question section */}
+        {/* Submitted work — same document viewer used in the post-scan flow.
+            Pinch to zoom (iOS), +/-/reset buttons (both platforms), swipe
+            sideways to page through multi-page submissions. */}
+        {pages.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Submitted Work</Text>
+            <View style={styles.imageCard}>
+              {isMultiPage ? (
+                <FlatList
+                  ref={pagerRef}
+                  data={pages}
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(uri, i) => `${i}-${uri}`}
+                  onMomentumScrollEnd={handlePagerMomentumEnd}
+                  getItemLayout={(_, index) => ({
+                    length: PAGE_W, offset: PAGE_W * index, index,
+                  })}
+                  renderItem={({ item }) => (
+                    <View style={[styles.pagerItem, { width: PAGE_W, height: IMAGE_H }]}>
+                      <Image
+                        source={{ uri: item }}
+                        style={[styles.annotatedImage, { transform: [{ scale: zoomLevel }] }]}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                />
+              ) : (
+                <ScrollView
+                  ref={imageScrollRef}
+                  style={styles.imageScroll}
+                  contentContainerStyle={styles.imageScrollContent}
+                  maximumZoomScale={5}
+                  minimumZoomScale={1}
+                  bouncesZoom
+                  showsHorizontalScrollIndicator={false}
+                  showsVerticalScrollIndicator={false}
+                  centerContent
+                  pinchGestureEnabled
+                >
+                  <Image
+                    source={{ uri: pages[0] }}
+                    style={[
+                      styles.annotatedImage,
+                      Platform.OS === 'android' && { transform: [{ scale: zoomLevel }] },
+                    ]}
+                    resizeMode="contain"
+                  />
+                </ScrollView>
+              )}
+
+              {/* Zoom controls, top-right over the image */}
+              <View style={styles.zoomControls}>
+                <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(zoomLevel + 0.5)}>
+                  <Text style={styles.zoomBtnText}>＋</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(zoomLevel - 0.5)}>
+                  <Text style={styles.zoomBtnText}>－</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(1)}>
+                  <Text style={styles.zoomBtnText}>⊡</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Page indicator — only when there's more than one page. */}
+              {isMultiPage && (
+                <View style={styles.pageIndicator}>
+                  <Text style={styles.pageIndicatorText}>
+                    {currentPage + 1} / {pages.length}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Per-question section — collapsible */}
         {hasVerdicts ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Question Breakdown</Text>
-            {(verdicts ?? []).map(v => (
+            <TouchableOpacity
+              style={styles.collapsibleHeader}
+              onPress={() => setBreakdownExpanded(v => !v)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name={breakdownExpanded ? 'chevron-down' : 'chevron-forward'}
+                size={14}
+                color={COLORS.gray500}
+              />
+              <Text style={styles.sectionTitle}>Question Breakdown</Text>
+            </TouchableOpacity>
+            {breakdownExpanded && (verdicts ?? []).map(v => (
               <View key={v.question_number} style={styles.verdictCard}>
                 <View style={styles.verdictTop}>
                   <View style={[styles.iconCircle, { backgroundColor: verdictColor(v.verdict) }]}>
@@ -261,46 +471,74 @@ export default function GradingDetailScreen() {
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Score</Text>
-            <Text style={styles.sectionHint}>No auto-grading data. Enter the score manually.</Text>
-            <View style={styles.manualScoreRow}>
-              <View style={styles.manualField}>
-                <Text style={styles.manualLabel}>Awarded</Text>
-                <TextInput
-                  style={styles.manualInput}
-                  value={totalScore}
-                  onChangeText={setTotalScore}
-                  keyboardType="decimal-pad"
-                  selectTextOnFocus
-                />
+            <TouchableOpacity
+              style={styles.collapsibleHeader}
+              onPress={() => setBreakdownExpanded(v => !v)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name={breakdownExpanded ? 'chevron-down' : 'chevron-forward'}
+                size={14}
+                color={COLORS.gray500}
+              />
+              <Text style={styles.sectionTitle}>Score</Text>
+            </TouchableOpacity>
+            {breakdownExpanded && <>
+              <Text style={styles.sectionHint}>No auto-grading data. Enter the score manually.</Text>
+              <View style={styles.manualScoreRow}>
+                <View style={styles.manualField}>
+                  <Text style={styles.manualLabel}>Awarded</Text>
+                  <TextInput
+                    style={styles.manualInput}
+                    value={totalScore}
+                    onChangeText={setTotalScore}
+                    keyboardType="decimal-pad"
+                    selectTextOnFocus
+                  />
+                </View>
+                <Text style={styles.manualSep}>/</Text>
+                <View style={styles.manualField}>
+                  <Text style={styles.manualLabel}>Out of</Text>
+                  <TextInput
+                    style={styles.manualInput}
+                    value={totalMax}
+                    onChangeText={setTotalMax}
+                    keyboardType="decimal-pad"
+                    selectTextOnFocus
+                  />
+                </View>
               </View>
-              <Text style={styles.manualSep}>/</Text>
-              <View style={styles.manualField}>
-                <Text style={styles.manualLabel}>Out of</Text>
-                <TextInput
-                  style={styles.manualInput}
-                  value={totalMax}
-                  onChangeText={setTotalMax}
-                  keyboardType="decimal-pad"
-                  selectTextOnFocus
-                />
-              </View>
-            </View>
+            </>}
           </View>
         )}
 
-        {/* Overall feedback */}
+        {/* Overall feedback — collapsible */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Overall Feedback</Text>
-          <TextInput
-            style={styles.overallInput}
-            value={overallFeedback}
-            onChangeText={setOverallFeedback}
-            placeholder="Add overall feedback for this student..."
-            placeholderTextColor={COLORS.gray500}
-            multiline
-            textAlignVertical="top"
-          />
+          <TouchableOpacity
+            style={styles.collapsibleHeader}
+            onPress={() => setFeedbackExpanded(v => !v)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={feedbackExpanded ? 'chevron-down' : 'chevron-forward'}
+              size={14}
+              color={COLORS.gray500}
+            />
+            <Text style={styles.sectionTitle}>Overall Feedback</Text>
+          </TouchableOpacity>
+          {feedbackExpanded && (
+            <TextInput
+              style={styles.overallInput}
+              value={overallFeedback}
+              onChangeText={setOverallFeedback}
+              placeholder="Add overall feedback for this student..."
+              placeholderTextColor={COLORS.gray500}
+              multiline
+              textAlignVertical="top"
+            />
+          )}
         </View>
 
         {/* Action buttons */}
@@ -348,9 +586,13 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 16, paddingBottom: 20,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleBlock: { flex: 1 },
   backText: { fontSize: 14, color: COLORS.teal500, marginBottom: 10 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   titleLeft: { flex: 1 },
@@ -361,7 +603,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginLeft: 10,
   },
   approvedBadgeText: { fontSize: 12, color: COLORS.teal500, fontWeight: '700' },
-  editedHintRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  titleRight: { alignItems: 'flex-end' },
+  editedHintRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   editedHint: { fontSize: 12, color: COLORS.amber500 },
 
   section: {
@@ -370,6 +613,35 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  collapsibleHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  // Document viewer — mirrors MarkResult: 420 px tall card with pinch
+  // zoom (iOS), button zoom (both), and horizontal pager for multi-page.
+  imageCard: {
+    width: '100%', height: 420, borderRadius: 8,
+    backgroundColor: COLORS.gray50, overflow: 'hidden',
+    position: 'relative',
+  },
+  imageScroll: { flex: 1 },
+  imageScrollContent: { flexGrow: 1, justifyContent: 'center' },
+  annotatedImage: { width: '100%', height: 420 },
+  pagerItem: { alignItems: 'center', justifyContent: 'center' },
+  pageIndicator: {
+    position: 'absolute', bottom: 8, right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
+  },
+  pageIndicatorText: { color: COLORS.white, fontSize: 12, fontWeight: '700' },
+  zoomControls: {
+    position: 'absolute', top: 8, right: 8, flexDirection: 'column', gap: 6,
+  },
+  zoomBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  zoomBtnText: { color: COLORS.white, fontSize: 20, fontWeight: '700' },
   sectionTitle: {
     fontSize: 12, fontWeight: '700', color: COLORS.gray500,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12,

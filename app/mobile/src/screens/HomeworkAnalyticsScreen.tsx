@@ -129,9 +129,11 @@ export default function HomeworkAnalyticsScreen({ route, navigation }: Props) {
     <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
       {/* Header */}
       <View style={styles.header}>
-        <BackButton style={{ marginBottom: 8 }} />
-        <Text style={styles.heading} numberOfLines={2}>{homework_title}</Text>
-        <Text style={styles.subheading}>{class_name}</Text>
+        <BackButton variant="onTeal" />
+        <View style={styles.headerTitleBlock}>
+          <Text style={styles.heading} numberOfLines={2}>{homework_title}</Text>
+          <Text style={styles.subheading}>{class_name}</Text>
+        </View>
       </View>
 
       {/* Summary cards */}
@@ -235,8 +237,12 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, color: COLORS.textLight, textAlign: 'center', lineHeight: 20 },
   header: {
     backgroundColor: COLORS.teal500,
-    paddingBottom: 16, paddingHorizontal: 16,
+    paddingTop: 12, paddingBottom: 16, paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleBlock: { flex: 1 },
   backBtn: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 2 },
   backText: { color: COLORS.white, fontSize: 14, opacity: 0.9 },
   heading: { fontSize: 20, fontWeight: '700', color: COLORS.white },

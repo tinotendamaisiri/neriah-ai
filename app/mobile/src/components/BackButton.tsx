@@ -30,9 +30,12 @@ interface BackButtonProps {
   style?: StyleProp<ViewStyle>;
   /** Visual size variant. Default 'md' = 36 px circle. */
   size?: 'sm' | 'md';
+  /** Color variant. 'default' = teal circle + white chevron (light pages).
+   *  'onTeal' = white circle + teal chevron (when sitting on the teal header band). */
+  variant?: 'default' | 'onTeal';
 }
 
-export function BackButton({ onPress, style, size = 'md' }: BackButtonProps) {
+export function BackButton({ onPress, style, size = 'md', variant = 'default' }: BackButtonProps) {
   const navigation = useNavigation<any>();
   const handle = onPress ?? (() => {
     if (navigation.canGoBack()) navigation.goBack();
@@ -41,6 +44,7 @@ export function BackButton({ onPress, style, size = 'md' }: BackButtonProps) {
 
   const dim = size === 'sm' ? 32 : 36;
   const iconSize = size === 'sm' ? 18 : 22;
+  const onTeal = variant === 'onTeal';
 
   return (
     <TouchableOpacity
@@ -49,13 +53,14 @@ export function BackButton({ onPress, style, size = 'md' }: BackButtonProps) {
       style={[
         styles.btn,
         { width: dim, height: dim, borderRadius: dim / 2 },
+        onTeal && styles.btnOnTeal,
         style,
       ]}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       accessibilityLabel="Go back"
       accessibilityRole="button"
     >
-      <Ionicons name="chevron-back" size={iconSize} color={COLORS.white} />
+      <Ionicons name="chevron-back" size={iconSize} color={onTeal ? COLORS.teal500 : COLORS.white} />
     </TouchableOpacity>
   );
 }
@@ -72,5 +77,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 4,
     elevation: 2,
+  },
+  btnOnTeal: {
+    backgroundColor: COLORS.white,
   },
 });

@@ -22,6 +22,7 @@ from shared.auth import require_role
 from shared.firestore_client import get_doc, increment_field, query_single, upsert
 from shared.gemma_client import student_tutor
 from shared.guardrails import (
+    apply_confidence_hedge,
     check_rate_limit as guardrails_rate_limit,
     log_ai_interaction,
     validate_input,
@@ -168,7 +169,11 @@ def tutor_chat():
         return jsonify({"error": "message is required"}), 400
     else:
         # ── Input guardrails (skip for system-generated greeting messages) ────
-        valid_in, cleaned_msg = validate_input(message, role="student")
+        # Resolve education_level early so age-band topic blocks fire correctly.
+        early_level = _get_education_level(student_id)
+        valid_in, cleaned_msg = validate_input(
+            message, role="student", education_level=early_level,
+        )
         if not valid_in:
             log_ai_interaction(
                 student_id, "student", "tutor", message, "", 0, 0,
@@ -231,6 +236,10 @@ def tutor_chat():
             blocked=True, block_reason=response_text,
         )
         return jsonify({"error": "Response failed safety check. Please try again."}), 422
+
+    # Confidence hedge: append a verify-with-teacher note when the response
+    # asserts specific facts (years, percentages) without already hedging.
+    response_text = apply_confidence_hedge(response_text, role="student")
 
     # ── Persist updated history ───────────────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()

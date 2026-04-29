@@ -33,6 +33,38 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Curriculum + level picker options (per teacher's country) ────────────────
+
+@curriculum_bp.get("/curriculum/options")
+def curriculum_options():
+    """
+    Return the curriculum + level picker config for the calling teacher.
+
+    Country is resolved from the teacher's phone number / school document
+    via shared.user_context. Mobile teacher UI calls this on mount to
+    populate the curriculum and level pills, so a Zimbabwe teacher sees
+    ZIMSEC by default while a Kenya teacher sees KNEC (CBC) — without
+    either of them seeing the other's options.
+
+    Auth: teacher JWT.
+    """
+    teacher_id, err = require_role(request, "teacher")
+    if err:
+        return jsonify({"error": err}), 401
+
+    from shared.country_profile import picker_options  # noqa: PLC0415
+    from shared.user_context import detect_country_from_phone  # noqa: PLC0415
+
+    teacher = get_doc("teachers", teacher_id) or {}
+    school = get_doc("schools", teacher.get("school_id") or "") or {}
+    # School document is authoritative; fall back to phone country detection.
+    country = school.get("country") or detect_country_from_phone(teacher.get("phone", ""))
+    if not country or country == "Unknown":
+        country = None  # → Pan-African default
+
+    return jsonify(picker_options(country)), 200
+
+
 # ── Text extraction ────────────────────────────────────────────────────────────
 
 def _extract_text(file_bytes: bytes, filename: str) -> str:

@@ -61,6 +61,23 @@ else
   cp -R "$VENDORED" "$DEST_DIR/LiteRTLM.xcframework"
 fi
 
+# Sync cpp/include/litert_lm_engine.h with the vendored XCFramework's
+# authoritative header. The npm package ships a stale 509-line copy
+# under cpp/include/ from upstream v0.3.4 that uses the old short-name
+# API (InputData, kInputText, kTopP). Our vendored XCFramework is a
+# newer build with the verbose-name API (LiteRtLmInputData,
+# kLiteRtLmInputDataTypeText, kLiteRtLmSamplerTypeTopP), and the
+# patched HybridLiteRTLM.cpp targets the new names — so without this
+# sync the build picks up the stale include and 5 symbols fail to
+# resolve at compile time. Both XCFramework slices ship identical
+# headers, so we copy from ios-arm64.
+SRC_HEADER="$VENDORED/ios-arm64/LiteRTLM.framework/Headers/litert_lm_engine.h"
+DEST_HEADER="$PROJECT_ROOT/node_modules/react-native-litert-lm/cpp/include/litert_lm_engine.h"
+if [ -f "$SRC_HEADER" ] && [ -d "$(dirname "$DEST_HEADER")" ]; then
+  cp "$SRC_HEADER" "$DEST_HEADER"
+  echo "[litert-ios] Synced cpp/include/litert_lm_engine.h with vendored framework."
+fi
+
 # Vendored Hybrid wrapper patches:
 #   - tryCreateEngine accepts a third audioBackend arg and we call it with
 #     nullptr, nullptr for vision and audio. Skips multimodal executor

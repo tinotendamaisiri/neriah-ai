@@ -110,10 +110,10 @@ export default function TermsOfServiceScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      {/* Header */}
+      {/* Header — back button + title side-by-side */}
       <View style={styles.header}>
-        <BackButton style={{ marginBottom: 8 }} />
-        <Text style={styles.heading}>{t('legal')}</Text>
+        <BackButton />
+        <Text style={[styles.heading, styles.headerTitleFlex]}>{t('legal')}</Text>
       </View>
 
       {/* Tabs */}
@@ -167,7 +167,11 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleFlex: { flex: 1 },
   backRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   backText: { fontSize: 16, color: COLORS.gray500, marginLeft: 2 },
   heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text },

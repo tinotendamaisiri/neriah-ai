@@ -28,13 +28,26 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import {
+  SafeAreaView,
+  SafeAreaProvider,
+  initialWindowMetrics,
+} from 'react-native-safe-area-context';
 
 import {
   AssistantActionType,
   AssistantChatMessage,
   AssistantResponse,
+  CurriculumOptions,
+  getCurriculumOptions,
   teacherAssistantChat,
 } from '../services/api';
+import {
+  resolveRoute,
+  assistantOnDevice,
+  showUnavailableAlert,
+} from '../services/router';
+import type { AssistantOnDeviceActionType } from '../services/litert';
 import InAppCamera from '../components/InAppCamera';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useAuth } from '../context/AuthContext';
@@ -71,7 +84,6 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 // still work; teachers just can't pick them as a button anymore.
 const QUICK_ACTIONS: Array<{ label: string; action: AssistantActionType }> = [
   { label: 'Prepare Notes',             action: 'prepare_notes' },
-  { label: 'How is my class performing?', action: 'class_performance' },
   { label: 'Suggest teaching methods',  action: 'teaching_methods' },
   { label: 'Generate exam questions',   action: 'exam_questions' },
 ];
@@ -231,6 +243,7 @@ function TypingIndicator() {
     useRef(new Animated.Value(0)).current,
     useRef(new Animated.Value(0)).current,
   ];
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
     const anims = dots.map((dot, i) =>
       Animated.loop(
@@ -243,7 +256,11 @@ function TypingIndicator() {
       ),
     );
     anims.forEach(a => a.start());
-    return () => anims.forEach(a => a.stop());
+    const slowTimer = setTimeout(() => setSlow(true), 30000);
+    return () => {
+      anims.forEach(a => a.stop());
+      clearTimeout(slowTimer);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <View style={s.rowLeft}>
@@ -256,6 +273,9 @@ function TypingIndicator() {
             <Animated.View key={i} style={[s.dot, { transform: [{ translateY: dot }] }]} />
           ))}
         </View>
+        {slow && (
+          <Text style={s.slowText}>Neriah is taking longer than usual — still thinking…</Text>
+        )}
       </View>
     </View>
   );
@@ -276,6 +296,29 @@ export default function TeacherAssistantScreen() {
   const [level, setLevel]                 = useState(ALL_LEVELS);
   const [showCurrDrop, setShowCurrDrop]   = useState(false);
   const [showLvlDrop, setShowLvlDrop]     = useState(false);
+
+  // Country-driven picker config: fetched from /api/curriculum/options on mount.
+  // Server resolves country from teacher's phone — Zimbabwe teachers see ZIMSEC,
+  // Kenya teachers see KNEC (CBC), etc. Falls back to local hardcoded ZIMSEC list
+  // if the fetch fails (offline or first paint).
+  const [pickerOptions, setPickerOptions] = useState<CurriculumOptions | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const opts = await getCurriculumOptions();
+        if (cancelled) return;
+        setPickerOptions(opts);
+        // Snap to the server-suggested default unless the user has already
+        // changed the curriculum manually (state still equals 'ZIMSEC' default).
+        setCurriculum(prev => (prev === 'ZIMSEC' ? opts.default_curriculum : prev));
+      } catch {
+        // Offline / unauthorised — keep hardcoded ZIMSEC fallback.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [messages, setMessages]           = useState<ChatMessage[]>([]);
   const [input, setInput]                 = useState('');
   const [typing, setTyping]               = useState(false);
@@ -508,6 +551,63 @@ export default function TeacherAssistantScreen() {
       .map(m => ({ role: m.role, content: m.content }));
 
     try {
+      const route = await resolveRoute('teacher_assistant');
+
+      if (route === 'unavailable') {
+        showUnavailableAlert();
+        // Surface a placeholder assistant turn so the user sees a clear reason
+        // for the missing reply rather than just the dots disappearing.
+        const aiMsg: ChatMessage = {
+          id:        makeId(),
+          role:      'assistant',
+          content:   'You\'re offline and the on-device model is not loaded. Connect to use Neriah AI, or download the assistant model from Settings.',
+          timestamp: new Date().toISOString(),
+        };
+        const updated = [...updatedWithUser, aiMsg];
+        setMessages(updated);
+        persistHistory(updated);
+        saveToSessionHistory(updated, activeChatId);
+        return;
+      }
+
+      if (route === 'on-device') {
+        // Map cloud action types to the on-device subset (drops class_performance).
+        const onDeviceAction: AssistantOnDeviceActionType =
+          forcedActionType === 'prepare_notes'    ? 'prepare_notes' :
+          forcedActionType === 'teaching_methods' ? 'teaching_methods' :
+          forcedActionType === 'exam_questions'   ? 'exam_questions' :
+          'chat';
+
+        const onDeviceHistory = apiHistory.map(m => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        }));
+
+        const responseText = await assistantOnDevice(
+          onDeviceAction,
+          onDeviceHistory,
+          text.trim() || '(See attached file)',
+          {
+            curriculum,
+            education_level: level === ALL_LEVELS ? undefined : level,
+          },
+        );
+
+        const aiMsg: ChatMessage = {
+          id:          makeId(),
+          role:        'assistant',
+          content:     responseText,
+          actionType:  forcedActionType ?? 'chat',
+          timestamp:   new Date().toISOString(),
+        };
+        const updated = [...updatedWithUser, aiMsg];
+        setMessages(updated);
+        persistHistory(updated);
+        saveToSessionHistory(updated, activeChatId, forcedActionType ?? 'chat');
+        return;
+      }
+
+      // Cloud path
       const res: AssistantResponse = await teacherAssistantChat({
         message:          text.trim() || '(See attached file)',
         action_type:      forcedActionType,
@@ -523,12 +623,25 @@ export default function TeacherAssistantScreen() {
         setConversationId(res.conversation_id);
       }
 
+      // Detect an empty structured payload from older backends — render a
+      // friendly prompt so the user isn't staring at a blank card.
+      const structured = res.structured;
+      const isEmptyStructured = !!structured && Object.values(structured).every((v) => {
+        if (v == null) return true;
+        if (typeof v === 'string') return v.trim() === '';
+        if (Array.isArray(v)) return v.length === 0;
+        return false;
+      });
+      const fallbackContent = isEmptyStructured && !res.response
+        ? 'I need a bit more info — what topic, subject or grade should I focus on?'
+        : (res.response ?? '');
+
       const aiMsg: ChatMessage = {
         id:          makeId(),
         role:        'assistant',
-        content:     res.response ?? '',
+        content:     fallbackContent,
         actionType:  res.action_type,
-        structured:  res.structured,
+        structured:  isEmptyStructured ? undefined : structured,
         exportable:  res.exportable,
         timestamp:   new Date().toISOString(),
       };
@@ -555,7 +668,14 @@ export default function TeacherAssistantScreen() {
   // handleExport / doExport removed 2026-04-22 along with
   // POST /api/teacher/assistant/export.
 
-  const levels = CURRICULUM_LEVELS[curriculum] ?? CURRICULUM_LEVELS.ZIMSEC;
+  // Prefer server-driven options for the teacher's country; fall back to
+  // hardcoded values when the fetch hasn't completed or has failed.
+  const curriculums: readonly string[] =
+    pickerOptions?.curriculum_options ?? CURRICULUMS;
+  const levels: string[] =
+    pickerOptions?.level_options?.[curriculum]
+    ?? CURRICULUM_LEVELS[curriculum]
+    ?? CURRICULUM_LEVELS.ZIMSEC;
 
   // ── Message renderer ──────────────────────────────────────────────────────
   const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
@@ -652,13 +772,18 @@ export default function TeacherAssistantScreen() {
               </TouchableOpacity>
               {showCurrDrop && (
                 <View style={[s.dropdown, { zIndex: 200 }]}>
-                  {CURRICULUMS.map(c => (
+                  {curriculums.map(c => (
                     <TouchableOpacity
                       key={c}
                       style={[s.dropItem, c === curriculum && s.dropActive]}
                       onPress={() => {
                         setCurriculum(c);
-                        setLevel(DEFAULT_LEVEL[c] ?? CURRICULUM_LEVELS[c][0]);
+                        // Default to "All Levels" (first entry) when switching curriculum.
+                        const nextLevels =
+                          pickerOptions?.level_options?.[c]
+                          ?? CURRICULUM_LEVELS[c]
+                          ?? CURRICULUM_LEVELS.ZIMSEC;
+                        setLevel(DEFAULT_LEVEL[c] ?? nextLevels[0]);
                         setShowCurrDrop(false);
                       }}
                     >
@@ -789,7 +914,6 @@ export default function TeacherAssistantScreen() {
                   let action: AssistantActionType = 'chat';
                   if (q.includes('notes') || q.includes('prepare')) action = 'prepare_notes';
                   else if (q.includes('exam'))   action = 'exam_questions';
-                  else if (q.includes('performing') || q.includes('performance')) action = 'class_performance';
                   else if (q.includes('teaching') || q.includes('method')) action = 'teaching_methods';
                   sendMessage(input, action);
                 }}
@@ -859,6 +983,9 @@ export default function TeacherAssistantScreen() {
       {/* ── Chat History Drawer ── */}
       {showDrawer && (
         <Modal visible transparent animationType="none" onRequestClose={closeDrawer}>
+          {/* Re-seed the safe-area context — RN's Modal severs the parent
+              SafeAreaProvider, so without this SafeAreaView reads 0 insets. */}
+          <SafeAreaProvider initialMetrics={initialWindowMetrics}>
           {/* Backdrop */}
           <TouchableOpacity
             style={s.drawerBackdrop}
@@ -867,6 +994,7 @@ export default function TeacherAssistantScreen() {
           />
           {/* Slide-in panel */}
           <Animated.View style={[s.drawer, { transform: [{ translateX: drawerAnim }] }]}>
+            <SafeAreaView style={s.drawerSafeInner} edges={['top', 'bottom']} mode="margin">
             {/* Drawer header */}
             <View style={s.drawerHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -895,7 +1023,7 @@ export default function TeacherAssistantScreen() {
             <FlatList
               data={chatHistory.slice(0, MAX_DISPLAY)}
               keyExtractor={s => s.chat_id}
-              contentContainerStyle={{ paddingBottom: 32 }}
+              contentContainerStyle={{ paddingBottom: 24 }}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <Text style={s.drawerEmpty}>No recent chats</Text>
@@ -928,7 +1056,9 @@ export default function TeacherAssistantScreen() {
                 );
               }}
             />
+            </SafeAreaView>
           </Animated.View>
+          </SafeAreaProvider>
         </Modal>
       )}
     </View>
@@ -1015,6 +1145,7 @@ const s = StyleSheet.create({
 
   typingRow: { flexDirection: 'row', gap: 5, paddingHorizontal: 2, paddingVertical: 4 },
   dot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: AI.sub },
+  slowText:  { marginTop: 6, fontSize: 12, color: AI.sub, fontStyle: 'italic' },
 
   emptyCont: { flexGrow: 1, padding: 24 },
   emptyHero: { flex: 1, alignItems: 'center', justifyContent: 'center', width: '100%' },
@@ -1104,13 +1235,19 @@ const s = StyleSheet.create({
   drawer: {
     position: 'absolute', top: 0, bottom: 0, left: 0,
     width: SCREEN_WIDTH * 0.8,
+    // No backgroundColor / shadow here — those live on the inner SafeAreaView
+    // so the white panel itself shrinks to fit between the status bar and
+    // home indicator. The Animated.View is just a positioning frame.
+  },
+  drawerSafeInner: {
+    flex: 1,
     backgroundColor: AI.card,
     shadowColor: '#000', shadowOffset: { width: 4, height: 0 },
     shadowOpacity: 0.18, shadowRadius: 12, elevation: 12,
   },
   drawerHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingBottom: 16,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: AI.border,
   },
   drawerTitle: { fontSize: 17, fontWeight: '700', color: AI.text },

@@ -142,6 +142,61 @@ def _class_analytics_data(class_id: str) -> dict:
     submitting = len([s for s in student_data if s["submission_count"] > 0])
     sorted_students = sorted(student_data, key=lambda s: s["average_score"], reverse=True)
 
+    # Class-level topic weakness — pool every approved verdict across the class
+    # and group by question_text[:50]. Mirrors the per-student aggregation used
+    # by /analytics/student so the UI rows have the same shape.
+    class_topic_stats: dict[str, dict] = {}
+    for m in approved_marks:
+        m_ts = m.get("timestamp", "")
+        for v in m.get("verdicts", []):
+            qt = (v.get("question_text") or "").strip()[:50]
+            if not qt:
+                continue
+            entry = class_topic_stats.setdefault(qt, {
+                "topic": qt,
+                "attempts": 0,
+                "correct": 0,
+                "last_seen_at": "",
+            })
+            entry["attempts"] += 1
+            if v.get("verdict") == "correct":
+                entry["correct"] += 1
+            if m_ts and m_ts > entry["last_seen_at"]:
+                entry["last_seen_at"] = m_ts
+
+    class_weaknesses_aggregated = []
+    for entry in class_topic_stats.values():
+        if entry["attempts"] < 2:
+            continue
+        accuracy_pct = round(entry["correct"] / entry["attempts"] * 100)
+        class_weaknesses_aggregated.append({
+            "topic": entry["topic"],
+            "attempts": entry["attempts"],
+            "correct": entry["correct"],
+            "accuracy_pct": accuracy_pct,
+            "last_seen_at": entry["last_seen_at"] or None,
+        })
+    class_weaknesses_aggregated.sort(key=lambda e: (e["accuracy_pct"], -e["attempts"]))
+
+    # Recent scores — class average per homework, chronological. Used by the
+    # mini line chart on the AnalyticsScreen card. Group by answer_key_id,
+    # average the approved marks, sort by the latest mark's timestamp.
+    by_hw: dict[str, list] = defaultdict(list)
+    for m in approved_marks:
+        ak_id = m.get("answer_key_id", "")
+        if ak_id:
+            by_hw[ak_id].append(m)
+
+    hw_points: list[tuple[str, float]] = []
+    for ak_id, ms in by_hw.items():
+        scores = [float(m.get("percentage", 0)) for m in ms]
+        if not scores:
+            continue
+        latest_ts = max((m.get("timestamp", "") or "") for m in ms)
+        hw_points.append((latest_ts, round(sum(scores) / len(scores), 1)))
+    hw_points.sort(key=lambda p: p[0])
+    recent_scores = [p[1] for p in hw_points[-8:]]
+
     return {
         "has_data": True,
         "limited_data": graded_count < 3,
@@ -158,6 +213,8 @@ def _class_analytics_data(class_id: str) -> dict:
             s for s in sorted_students
             if s["average_score"] < 50 and not s.get("no_submissions")
         ],
+        "class_weaknesses_aggregated": class_weaknesses_aggregated,
+        "recent_scores": recent_scores,
     }
 
 
@@ -223,6 +280,9 @@ def analytics_classes():
                 _trend([s["average_score"] for s in data.get("students", []) if s.get("submission_count", 0) > 0])
                 if data["has_data"] else "stable"
             ),
+            "recent_scores": data.get("recent_scores", []),
+            "class_weaknesses_aggregated": data.get("class_weaknesses_aggregated", []),
+            "students": data.get("students", []),
         })
 
     logger.info("Analytics/classes: teacher_id=%s → %d classes", teacher_id, len(summaries))

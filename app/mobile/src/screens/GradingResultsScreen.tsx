@@ -371,13 +371,15 @@ export default function GradingResultsScreen() {
   return (
     <ScreenContainer scroll={false}>
     <View style={styles.flex}>
-      {/* Header */}
+      {/* Header — back button + title block side-by-side */}
       <View style={styles.header}>
-        <BackButton style={{ marginBottom: 8 }} />
-        <Text style={styles.heading}>
-          {isClassView ? 'Homework' : (answer_key_title ?? '')}
-        </Text>
-        <Text style={styles.subheading}>{t('grading_results')}</Text>
+        <BackButton />
+        <View style={styles.headerTitleBlock}>
+          <Text style={styles.heading}>
+            {isClassView ? 'Homework' : (answer_key_title ?? '')}
+          </Text>
+          <Text style={styles.subheading}>{t('grading_results')}</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -420,9 +422,13 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: COLORS.white, paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 16, paddingBottom: 20,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
+  headerTitleBlock: { flex: 1 },
   backText: { fontSize: 14, color: COLORS.teal500, marginBottom: 10 },
   heading: { fontSize: 20, fontWeight: 'bold', color: COLORS.text },
   subheading: { fontSize: 13, color: COLORS.gray500, marginTop: 2 },

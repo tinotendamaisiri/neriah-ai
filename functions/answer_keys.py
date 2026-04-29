@@ -289,24 +289,39 @@ def list_answer_keys():
             upsert("answer_keys", key["id"], {"open_for_submission": False})
             key["open_for_submission"] = False
 
-    # Enrich each homework with submission/graded/pending counts in one batch query.
+    # Enrich each homework with submission counts in one batch query.
+    #
+    # Three counts are exposed:
+    #   - submission_count : every student submission, regardless of state.
+    #   - graded_count     : AI has run grading (status in {graded, approved}
+    #                        OR approved=True). Includes pending teacher review.
+    #                        Kept for backwards compatibility.
+    #   - approved_count   : teacher has explicitly approved (approved=True
+    #                        OR status='approved'). Drives the homework
+    #                        "Graded" badge — see HomeworkListScreen.getStatus.
+    #   - pending_count    : neither AI- nor teacher- finished.
     all_subs = query("student_submissions", [("class_id", "==", class_id)])
     sub_counts: dict[str, dict] = {}
+    EMPTY = {"submission_count": 0, "graded_count": 0, "approved_count": 0, "pending_count": 0}
     for sub in all_subs:
         ak_id = sub.get("answer_key_id", "")
         if not ak_id:
             continue
         if ak_id not in sub_counts:
-            sub_counts[ak_id] = {"submission_count": 0, "graded_count": 0, "pending_count": 0}
+            sub_counts[ak_id] = dict(EMPTY)
         sub_counts[ak_id]["submission_count"] += 1
         status = sub.get("status", "")
-        if status in ("graded", "approved") or sub.get("approved"):
+        is_approved = bool(sub.get("approved")) or status == "approved"
+        is_ai_graded_or_approved = is_approved or status == "graded"
+        if is_ai_graded_or_approved:
             sub_counts[ak_id]["graded_count"] += 1
         else:
             sub_counts[ak_id]["pending_count"] += 1
+        if is_approved:
+            sub_counts[ak_id]["approved_count"] += 1
 
     for key in results:
-        counts = sub_counts.get(key["id"], {"submission_count": 0, "graded_count": 0, "pending_count": 0})
+        counts = sub_counts.get(key["id"], dict(EMPTY))
         key.update(counts)
 
     return jsonify(results), 200

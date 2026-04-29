@@ -135,11 +135,19 @@ export interface Mark {
   max_score: number;
   percentage?: number;
   marked_image_url: string;
+  /** All annotated pages (teacher-visible output), in order. Backend
+   *  returns these on get_mark. Mobile uses them to show the same
+   *  document UI in GradingDetail as in the post-scan MarkResult flow. */
+  annotated_urls?: string[];
+  /** All submitted pages (originals), in order. Used as a fallback
+   *  when annotated_urls hasn't been populated yet. */
+  page_urls?: string[];
   source: 'teacher_scan' | 'student_submission';
   approved: boolean;
   approved_at?: string;
   feedback?: string;
   verdicts: GradingVerdict[];
+  manually_edited?: boolean;
   timestamp: string;
 }
 
@@ -315,6 +323,16 @@ export interface StudentSubmission {
   marked_image_url?: string;
 }
 
+/** Per-class summary student row (lightweight — for inline expansion). */
+export interface ClassSummaryStudent {
+  student_id: string;
+  name: string;
+  average_score: number;
+  submission_count: number;
+  trend: 'up' | 'down' | 'stable';
+  no_submissions?: boolean;
+}
+
 /** Teacher analytics: per-class summary card (GET /api/analytics/classes) */
 export interface ClassAnalyticsSummary {
   class_id: string;
@@ -322,10 +340,23 @@ export interface ClassAnalyticsSummary {
   education_level: string;
   subject?: string;
   total_students: number;
+  homework_count: number;
   total_submissions: number;
   average_score: number;
   recent_trend: 'up' | 'down' | 'stable';
+  recent_scores?: number[];
+  class_weaknesses_aggregated?: AggregatedWeakness[];
+  students?: ClassSummaryStudent[];
   last_activity?: string;
+}
+
+/** Topic-aggregated weakness — shared between per-student and per-class analytics. */
+export interface AggregatedWeakness {
+  topic: string;
+  attempts: number;
+  correct: number;
+  accuracy_pct: number;
+  last_seen_at?: string | null;
 }
 
 /** Teacher analytics: full class breakdown (GET /api/analytics/class/{class_id}) */
@@ -333,6 +364,7 @@ export interface ClassAnalyticsDetail {
   class_id: string;
   class_name: string;
   total_students: number;
+  homework_count?: number;
   summary: {
     average_score: number;
     total_submissions: number;
@@ -342,13 +374,15 @@ export interface ClassAnalyticsDetail {
   score_distribution: Array<{ range: string; count: number }>;
   performance_over_time: Array<{ homework_title: string; date: string; average_score: number }>;
   students: Array<{
-    id: string;
+    student_id: string;
     name: string;
     register_number?: string;
     average_score: number;
-    submissions_count: number;
+    submission_count: number;
     trend: 'up' | 'down' | 'stable';
+    no_submissions?: boolean;
   }>;
+  class_weaknesses_aggregated?: AggregatedWeakness[];
 }
 
 /** Teacher analytics: student breakdown (GET /api/analytics/student/{student_id}) */

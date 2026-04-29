@@ -29,6 +29,7 @@ type FilterTab = 'all' | 'graded' | 'pending';
 type HomeworkItem = AnswerKey & {
   submission_count: number;
   graded_count: number;
+  approved_count?: number;   // backend may not yet ship this on cached items
   pending_count: number;
 };
 
@@ -48,10 +49,19 @@ function isOverdue(due?: string | null): boolean {
   try { return new Date(due) < new Date(); } catch { return false; }
 }
 
+/**
+ * A homework is classified as "graded" only when it has at least one
+ * submission AND every submission has been approved by the teacher.
+ * Past-due-with-no-submissions stays pending — there's nothing to grade.
+ *
+ * Falls back to graded_count when approved_count isn't present (older
+ * cached homework records from before the backend started shipping it).
+ */
 function getStatus(hw: HomeworkItem): 'graded' | 'pending' {
-  const gradedCount = hw.graded_count ?? 0;
-  const pastDue = isOverdue(hw.due_date);
-  return gradedCount > 0 || pastDue ? 'graded' : 'pending';
+  const submitted = hw.submission_count ?? 0;
+  if (submitted <= 0) return 'pending';
+  const approved = hw.approved_count ?? hw.graded_count ?? 0;
+  return approved >= submitted ? 'graded' : 'pending';
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -270,7 +280,7 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingBottom: 12,
+    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12,
     backgroundColor: COLORS.white,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },

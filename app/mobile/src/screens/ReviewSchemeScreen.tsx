@@ -319,10 +319,11 @@ export default function ReviewSchemeScreen() {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Header */}
-          <BackButton style={{ marginBottom: 12 }} />
-
-          <Text style={styles.heading}>Review Marking Scheme</Text>
+          {/* Header — back button + title side-by-side */}
+          <View style={styles.headerRow}>
+            <BackButton />
+            <Text style={[styles.heading, styles.headerTitleFlex]}>Review Marking Scheme</Text>
+          </View>
           <Text style={styles.subheading}>
             Gemma 4 generated this from your question paper. Review and confirm before accepting submissions.
           </Text>
@@ -402,7 +403,11 @@ const styles = StyleSheet.create({
   container: { flexGrow: 1, padding: 24, paddingBottom: 48 },
   back: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
-  heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 6,
+  },
+  headerTitleFlex: { flex: 1 },
+  heading: { fontSize: 24, fontWeight: 'bold', color: COLORS.text },
   subheading: { fontSize: 14, color: COLORS.gray500, lineHeight: 20, marginBottom: 20 },
   summaryRow: {
     backgroundColor: COLORS.teal50,

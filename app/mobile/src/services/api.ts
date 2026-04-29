@@ -229,6 +229,25 @@ export const registerPushToken = async (push_token: string): Promise<void> => {
   await client.post('/push/register', { push_token });
 };
 
+// ── Curriculum picker options (teacher only) ──────────────────────────────────
+
+export interface CurriculumOptions {
+  country:             string;
+  default_curriculum:  string;
+  curriculum_options:  string[];
+  level_options:       Record<string, string[]>;
+}
+
+/**
+ * Fetch the curriculum + level picker config for the authenticated teacher.
+ * Country is derived server-side from the teacher's phone number / school
+ * document, so the picker reflects what the teacher actually teaches.
+ */
+export const getCurriculumOptions = async (): Promise<CurriculumOptions> => {
+  const res: AxiosResponse<CurriculumOptions> = await client.get('/curriculum/options');
+  return res.data;
+};
+
 // ── Classes ───────────────────────────────────────────────────────────────────
 
 export const listClasses = async (): Promise<Class[]> =>
@@ -669,15 +688,19 @@ export const getAnalytics = async (params: {
   return res.data;
 };
 
-export const getClassesAnalytics = async (): Promise<ClassAnalyticsSummary[]> => {
-  const res = await client.get('/analytics/classes');
-  return res.data;
-};
+// Cached so class weak topics survive an offline session — withCache returns
+// the stale snapshot only when the device is genuinely offline.
+export const getClassesAnalytics = (): Promise<ClassAnalyticsSummary[]> =>
+  withCache('analytics:classes', async () => {
+    const res = await client.get('/analytics/classes');
+    return res.data;
+  });
 
-export const getClassAnalytics = async (class_id: string): Promise<ClassAnalyticsDetail> => {
-  const res = await client.get(`/analytics/class/${class_id}`);
-  return res.data;
-};
+export const getClassAnalytics = (class_id: string): Promise<ClassAnalyticsDetail> =>
+  withCache(`analytics:class:${class_id}`, async () => {
+    const res = await client.get(`/analytics/class/${class_id}`);
+    return res.data;
+  });
 
 export const getTeacherStudentAnalytics = async (
   student_id: string,
@@ -1114,7 +1137,8 @@ export const teacherAssistantChat = async (params: {
   file_data?:       string;
   media_type?:      'image' | 'pdf' | 'word';
 }): Promise<AssistantResponse> => {
-  const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params);
+  // LLM generation + Cloud Function cold start can exceed the default 35s.
+  const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params, { timeout: 90000 });
   return res.data;
 };
 

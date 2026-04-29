@@ -461,3 +461,62 @@ export function buildGradingPrompt(
     schema,
   ].filter(Boolean).join('\n');
 }
+
+/**
+ * Action types the on-device assistant supports. Matches the cloud
+ * AssistantActionType minus 'class_performance' (data-aware, removed).
+ */
+export type AssistantOnDeviceActionType =
+  | 'chat'
+  | 'prepare_notes'
+  | 'teaching_methods'
+  | 'exam_questions';
+
+/**
+ * Build the teaching-assistant prompt for the on-device E2B model.
+ *
+ * Mirrors functions/teacher_assistant.py system prompt but condensed for
+ * the smaller context window. Each action type tweaks the closing
+ * instruction so output matches what teachers expect from the cloud
+ * version.
+ *
+ * No DB context is injected — class weak topics live in the analytics
+ * cache and aren't pulled into the assistant when offline.
+ */
+export function buildAssistantPrompt(
+  action: AssistantOnDeviceActionType,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userMessage: string,
+  userContext?: OnDeviceUserContext,
+): string {
+  const contextBlock = userContext ? serializeUserContext(userContext) : '';
+
+  const baseSystem =
+    'You are Neriah, an AI teaching assistant for African school teachers. ' +
+    'Be practical, concise, and curriculum-aware. Use simple language. ' +
+    'Refuse medical and legal advice — redirect to a qualified professional. ' +
+    'If asked about self-harm or crisis, respond with empathy and recommend a local helpline.';
+
+  const actionInstruction: Record<AssistantOnDeviceActionType, string> = {
+    chat:
+      'Respond conversationally to the teacher\'s question. Keep replies under 200 words unless they explicitly ask for more.',
+    prepare_notes:
+      'Produce concise lesson notes the teacher can copy into a notebook. ' +
+      'Structure: Topic, Objectives (3 bullets), Key concepts (3-5 bullets), Worked example, Quick check question. ' +
+      'Plain text only.',
+    teaching_methods:
+      'Suggest 3-5 practical teaching methods or activities for the topic the teacher described. ' +
+      'For each: name, what students do, materials needed, ~time. Plain text bullets.',
+    exam_questions:
+      'Generate exam-style questions for the topic the teacher described. ' +
+      'Mix difficulty: 2 easy, 2 medium, 1 hard by default. Number them. ' +
+      'Include marks for each. Plain text only — no answers unless explicitly asked.',
+  };
+
+  const turns = history
+    .slice(-6)
+    .map(m => `${m.role === 'user' ? 'Teacher' : 'Neriah'}: ${m.content}`)
+    .join('\n');
+
+  return `${contextBlock}${baseSystem}\n\n${actionInstruction[action]}\n\n${turns ? turns + '\n' : ''}Teacher: ${userMessage}\nNeriah:`;
+}

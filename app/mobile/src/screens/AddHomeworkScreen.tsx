@@ -513,9 +513,13 @@ export default function AddHomeworkScreen() {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          <BackButton style={{ marginBottom: 12 }} />
-
-          <Text style={styles.heading}>Add Homework</Text>
+          {/* Header — back button + title side-by-side */}
+          <View style={styles.headerRow}>
+            <BackButton />
+            <View style={styles.headerTitleBlock}>
+              <Text style={styles.heading}>Add Homework</Text>
+            </View>
+          </View>
           <Text style={styles.subheading}>
             Upload the homework paper and Neriah will generate the marking scheme for you.
           </Text>
@@ -889,7 +893,11 @@ const styles = StyleSheet.create({
   container: { flexGrow: 1, padding: 24 },
   back: { marginBottom: 24 },
   backText: { fontSize: 16, color: COLORS.gray500 },
-  heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text, marginBottom: 6 },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 6,
+  },
+  headerTitleBlock: { flex: 1 },
+  heading: { fontSize: 26, fontWeight: 'bold', color: COLORS.text },
   subheading: { fontSize: 14, color: COLORS.gray500, marginBottom: 28 },
   form: { gap: 8 },
   label: { fontSize: 14, fontWeight: '600', color: COLORS.gray900, marginTop: 8 },

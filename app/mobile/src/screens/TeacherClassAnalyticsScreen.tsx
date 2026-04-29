@@ -6,20 +6,16 @@
 
 import React, { useCallback, useState } from 'react';
 import {
-  Alert,
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Dimensions,
-  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { BarChart, LineChart } from 'react-native-chart-kit';
 
 import { getClassAnalytics, listAnswerKeys } from '../services/api';
 import type { AnswerKey } from '../types';
@@ -31,24 +27,17 @@ import type { ClassAnalyticsDetail, RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TeacherClassAnalytics'>;
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CHART_WIDTH = SCREEN_WIDTH - 32;
-
-const chartConfig = {
-  backgroundColor: COLORS.white,
-  backgroundGradientFrom: COLORS.white,
-  backgroundGradientTo: COLORS.white,
-  color: (opacity = 1) => `rgba(13, 115, 119, ${opacity})`,
-  decimalPlaces: 0,
-  labelColor: () => COLORS.gray500,
-  propsForDots: { r: '4', strokeWidth: '2', stroke: COLORS.teal500 },
-};
-
 function rankColor(rank: number, total: number): string {
   const pct = rank / total;
   if (pct <= 0.25) return COLORS.teal500;
   if (pct <= 0.75) return COLORS.warning;
   return COLORS.error;
+}
+
+function accuracyColor(pct: number): string {
+  if (pct < 40) return COLORS.error;
+  if (pct < 70) return COLORS.warning;
+  return COLORS.teal500;
 }
 
 function trendArrow(trend: 'up' | 'down' | 'stable'): string {
@@ -61,11 +50,6 @@ function trendColor(trend: 'up' | 'down' | 'stable'): string {
   if (trend === 'up') return COLORS.success;
   if (trend === 'down') return COLORS.error;
   return COLORS.gray500;
-}
-
-function mean(arr: number[]): number {
-  if (!arr.length) return 0;
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
 export default function TeacherClassAnalyticsScreen({ route }: Props) {
@@ -123,21 +107,8 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
 
   // Null-safe destructure — API may return partial data
   const summary = data.summary ?? { class_average: 0, highest_score: 0, lowest_score: 0, total_submissions: 0, graded_submissions: 0, total_students: 0 };
-  const score_distribution = data.score_distribution ?? {};
   const performance_over_time = data.performance_over_time ?? [];
   const students = data.students ?? [];
-
-  // ── Score distribution bar chart data ────────────────────────────────────────
-  const distKeys = ['0-20', '21-40', '41-60', '61-80', '81-100'] as const;
-  const distAsObj = score_distribution as unknown as Record<string, number>;
-  const distValues = distKeys.map((k) => distAsObj[k] ?? 0);
-  const hasDistData = (summary.total_submissions ?? 0) > 0;
-
-  // ── Performance over time line chart ─────────────────────────────────────────
-  const hasPotData = performance_over_time.length >= 2;
-  const potSlice = performance_over_time.slice(-8);
-  const potLabels = potSlice.map((e) => (e?.homework_title ?? '').substring(0, 6));
-  const potValues = potSlice.map((e) => e?.average_score ?? 0);
 
   // ── AI Insights ───────────────────────────────────────────────────────────────
   const showInsights = (summary.total_submissions ?? 0) >= 10;
@@ -180,141 +151,87 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
     }
   }
 
-  const improvPct = summary.improvement_pct;
-
   return (
     <ScreenContainer scroll={false}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <BackButton style={{ marginBottom: 8 }} />
+        <BackButton variant="onTeal" />
         <Text style={styles.heading} numberOfLines={2}>{class_name}</Text>
       </View>
 
-      {/* Summary cards */}
-      <Text style={styles.sectionTitle}>{t('class_summary')}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.summaryScroll}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{(summary.total_submissions ?? 0) > 0 ? `${summary.average_score ?? 0}%` : '—'}</Text>
-          <Text style={styles.summaryLabel}>{t('avg_score')}</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{summary.total_submissions ?? 0}</Text>
-          <Text style={styles.summaryLabel}>{t('submissions_label')}</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{(summary.total_submissions ?? 0) > 0 ? `${summary.completion_rate ?? 0}%` : '—'}</Text>
-          <Text style={styles.summaryLabel}>{t('completion_rate')}</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text
-            style={[
-              styles.summaryValue,
-              {
-                color:
-                  improvPct === null || improvPct === undefined
-                    ? COLORS.gray500
-                    : improvPct > 0
-                    ? COLORS.success
-                    : improvPct < 0
-                    ? COLORS.error
-                    : COLORS.gray500,
-              },
-            ]}
-          >
-            {improvPct === null || improvPct === undefined
-              ? '—'
-              : `${improvPct > 0 ? '+' : ''}${improvPct}%`}
-          </Text>
-          <Text style={styles.summaryLabel}>{t('improvement')}</Text>
-        </View>
-      </ScrollView>
-
-      {/* Score Distribution */}
-      <Text style={styles.sectionTitle}>{t('score_distribution')}</Text>
-      {hasDistData ? (
-        <BarChart
-          data={{
-            labels: ['0-20', '21-40', '41-60', '61-80', '81-100'],
-            datasets: [{ data: distValues }],
-          }}
-          width={CHART_WIDTH}
-          height={200}
-          chartConfig={chartConfig}
-          style={styles.chart}
-          showValuesOnTopOfBars
-          withInnerLines={false}
-          yAxisLabel=""
-          yAxisSuffix=""
-        />
-      ) : (
-        <View style={styles.noDataBox}>
-          <Text style={styles.noDataText}>{t('no_chart_data')}</Text>
-        </View>
+      {/* Class Weak Topics — aggregated across all students.
+          Per-student weakness is on TeacherStudentAnalyticsScreen. */}
+      {(data.class_weaknesses_aggregated?.length ?? 0) > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>Class weak topics</Text>
+          <View style={styles.weakTopicsCard}>
+            {(data.class_weaknesses_aggregated ?? []).slice(0, 5).map((w, i) => (
+              <View
+                key={`${w.topic}-${i}`}
+                style={[
+                  styles.weakTopicRow,
+                  i === Math.min(4, (data.class_weaknesses_aggregated?.length ?? 0) - 1) && styles.weakTopicRowLast,
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.weakTopicText} numberOfLines={2}>{w.topic}</Text>
+                  <Text style={styles.weakTopicMeta}>
+                    {w.attempts} attempt{w.attempts === 1 ? '' : 's'} across the class
+                  </Text>
+                </View>
+                <Text style={[styles.weakTopicAccuracy, { color: accuracyColor(w.accuracy_pct) }]}>
+                  {w.accuracy_pct}%
+                </Text>
+              </View>
+            ))}
+          </View>
+        </>
       )}
 
-      {/* Performance Over Time */}
-      <Text style={styles.sectionTitle}>{t('perf_over_time')}</Text>
-      {hasPotData ? (
-        <LineChart
-          data={{
-            labels: potLabels,
-            datasets: [{ data: potValues }],
-          }}
-          width={CHART_WIDTH}
-          height={200}
-          chartConfig={chartConfig}
-          bezier
-          style={styles.chart}
-        />
-      ) : (
-        <View style={styles.noDataBox}>
-          <Text style={styles.noDataText}>{t('no_chart_data')}</Text>
-        </View>
-      )}
-
-      {/* Homework filter dropdown */}
+      {/* Homeworks in this class — tap any to drill into per-homework analytics */}
       {homeworks.length > 0 && (
-        <TouchableOpacity
-          style={styles.homeworkPicker}
-          onPress={() => {
-            const options = [
-              { text: 'All Homework', onPress: () => {} },
-              ...homeworks.map(hw => ({
-                text: hw.title || hw.subject || 'Homework',
-                onPress: () => navigation.navigate('HomeworkAnalytics', {
-                  homework_id: hw.id,
-                  homework_title: hw.title || hw.subject || 'Homework',
-                  class_id,
-                  class_name,
-                }),
-              })),
-              { text: 'Cancel', style: 'cancel' as const },
-            ];
-            Alert.alert('View Homework Analytics', 'Select a homework to see detailed analytics', options);
-          }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="document-text-outline" size={16} color={COLORS.teal500} />
-          <Text style={styles.homeworkPickerText}>Homework ({homeworks.length})</Text>
-          <Ionicons name="chevron-down" size={14} color={COLORS.teal500} />
-        </TouchableOpacity>
+        <>
+          <Text style={styles.sectionTitle}>Homeworks ({homeworks.length})</Text>
+          {homeworks.map((hw) => (
+            <TouchableOpacity
+              key={hw.id}
+              style={styles.homeworkRow}
+              activeOpacity={0.7}
+              onPress={() => navigation.navigate('HomeworkAnalytics', {
+                homework_id: hw.id,
+                homework_title: hw.title || hw.subject || 'Homework',
+                class_id,
+                class_name,
+              })}
+            >
+              <Ionicons name="document-text-outline" size={18} color={COLORS.teal500} style={{ marginRight: 10 }} />
+              <View style={styles.hwInfo}>
+                <Text style={styles.hwTitle} numberOfLines={1}>{hw.title || hw.subject || 'Homework'}</Text>
+                {hw.subject ? <Text style={styles.hwSub}>{hw.subject}</Text> : null}
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={COLORS.gray200} />
+            </TouchableOpacity>
+          ))}
+        </>
       )}
 
-      {/* Student Rankings */}
+      {/* Student Rankings — tap a student to see their individual weaknesses + history */}
       <Text style={styles.sectionTitle}>{t('student_rankings')}</Text>
       {students.length === 0 ? (
         <View style={styles.noDataBox}>
           <Text style={styles.noDataText}>No students enrolled yet</Text>
         </View>
       ) : (
-        students.filter(Boolean).map((s, idx) => (
+        students.filter(Boolean).map((s: any, idx: number) => {
+          const sid = s.student_id ?? s.id;
+          return (
           <TouchableOpacity
-            key={s.id ?? idx}
+            key={sid ?? idx}
             style={styles.studentRow}
             onPress={() =>
-              s.id ? navigation.navigate('TeacherStudentAnalytics', {
-                student_id: s.id,
+              sid ? navigation.navigate('TeacherStudentAnalytics', {
+                student_id: sid,
                 student_name: s.name ?? 'Student',
                 class_id,
                 class_name,
@@ -332,7 +249,7 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
             <View style={styles.studentInfo}>
               <Text style={styles.studentName}>{s.name}</Text>
               <Text style={styles.studentSub}>
-                {s.submissions_count} {t('submissions_label').toLowerCase()}
+                {s.submission_count ?? s.submissions_count ?? 0} {t('submissions_label').toLowerCase()}
               </Text>
             </View>
             <View style={styles.studentRight}>
@@ -349,7 +266,8 @@ export default function TeacherClassAnalyticsScreen({ route }: Props) {
               </Text>
             </View>
           </TouchableOpacity>
-        ))
+          );
+        })
       )}
 
       {/* AI Insights */}
@@ -425,8 +343,12 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: COLORS.teal500,
+    paddingTop: 12,
     paddingBottom: 16,
     paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   backBtn: {
     marginBottom: 8,
@@ -437,6 +359,7 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   heading: {
+    flex: 1,
     fontSize: 22,
     fontWeight: '700',
     color: COLORS.white,
@@ -448,40 +371,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 10,
     paddingHorizontal: 16,
-  },
-  summaryScroll: {
-    paddingLeft: 16,
-  },
-  summaryCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    marginRight: 10,
-    alignItems: 'center',
-    minWidth: 100,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
-  },
-  summaryValue: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: COLORS.teal500,
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: COLORS.gray500,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  chart: {
-    marginLeft: 16,
-    borderRadius: 10,
   },
   noDataBox: {
     marginHorizontal: 16,
@@ -566,12 +455,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 2,
   },
-  homeworkPicker: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: COLORS.teal50, borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16,
-  },
-  homeworkPickerText: { flex: 1, fontSize: 14, fontWeight: '600', color: COLORS.teal500 },
   homeworkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -586,5 +469,23 @@ const styles = StyleSheet.create({
   hwInfo: { flex: 1 },
   hwTitle: { fontSize: 14, fontWeight: '600', color: COLORS.text },
   hwSub: { fontSize: 11, color: COLORS.gray500, marginTop: 2 },
-  hwChevron: { fontSize: 20, color: COLORS.gray200, marginLeft: 8 },
+  weakTopicsCard: {
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  weakTopicRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.background,
+  },
+  weakTopicRowLast: { borderBottomWidth: 0 },
+  weakTopicText: { fontSize: 14, fontWeight: '600', color: COLORS.text },
+  weakTopicMeta: { fontSize: 11, color: COLORS.gray500, marginTop: 2 },
+  weakTopicAccuracy: { fontSize: 16, fontWeight: '700', marginLeft: 12 },
 });
