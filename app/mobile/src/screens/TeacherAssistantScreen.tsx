@@ -48,6 +48,7 @@ import {
   showUnavailableAlert,
 } from '../services/router';
 import type { AssistantOnDeviceActionType } from '../services/litert';
+import { detectCountryFromPhone } from '../utils/country';
 import InAppCamera from '../components/InAppCamera';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useAuth } from '../context/AuthContext';
@@ -619,6 +620,7 @@ export default function TeacherAssistantScreen() {
           {
             curriculum:      isGenericCurr ? undefined : curriculum,
             education_level: isAnyLevel    ? undefined : level,
+            country:         detectCountryFromPhone((user as any)?.phone),
           },
         );
 

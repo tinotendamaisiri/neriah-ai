@@ -242,11 +242,16 @@ export interface CurriculumOptions {
  * Fetch the curriculum + level picker config for the authenticated teacher.
  * Country is derived server-side from the teacher's phone number / school
  * document, so the picker reflects what the teacher actually teaches.
+ *
+ * Cached so the country-tailored picker survives an offline session — without
+ * this the offline assistant would fall back to the hardcoded ZIMSEC list and
+ * a Kenyan teacher would see the wrong levels.
  */
-export const getCurriculumOptions = async (): Promise<CurriculumOptions> => {
-  const res: AxiosResponse<CurriculumOptions> = await client.get('/curriculum/options');
-  return res.data;
-};
+export const getCurriculumOptions = (): Promise<CurriculumOptions> =>
+  withCache('curriculum:options', async () => {
+    const res: AxiosResponse<CurriculumOptions> = await client.get('/curriculum/options');
+    return res.data;
+  });
 
 // ── Classes ───────────────────────────────────────────────────────────────────
 

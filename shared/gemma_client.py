@@ -15,7 +15,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import random
 import re
+import time
 
 import google.auth
 import google.auth.transport.requests
@@ -48,6 +50,21 @@ def _get_vertex_token() -> str:
     return creds.token
 
 
+# How many times to retry a failing Vertex call before giving up. Vertex MaaS
+# models (Gemma 4 26B etc.) have aggressive per-minute rate caps that throttle
+# even isolated requests during cold periods, and the OpenAI-compat bridge
+# returns 429 transiently while the deployment scales up. Without retries a
+# single scan can surface "Grading service is at capacity" purely from a blip.
+_VERTEX_MAX_ATTEMPTS = 4
+
+# Status codes that are worth retrying — quota throttling + transient 5xx.
+_VERTEX_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# Cap server-suggested Retry-After at 30s so a long suggestion doesn't blow
+# the function timeout. Below this we honour the server hint exactly.
+_VERTEX_RETRY_AFTER_CAP_SECONDS = 30
+
+
 def _vertex_chat_completions(
     messages: list[dict],
     max_tokens: int | None = None,
@@ -55,7 +72,9 @@ def _vertex_chat_completions(
 ) -> str:
     """
     POST to the Vertex AI OpenAI-compatible chat completions endpoint.
-    Returns the assistant message content string. Raises on HTTP error.
+    Retries on 429 and 5xx with exponential backoff + jitter; honours the
+    Retry-After header when present (capped at 30s). Returns the assistant
+    message content string. Raises classified NeriahError on persistent error.
     """
     url = (
         f"https://aiplatform.googleapis.com/v1/projects/{settings.GCP_PROJECT_ID}"
@@ -72,8 +91,54 @@ def _vertex_chat_completions(
         "max_tokens": max_tokens if max_tokens is not None else settings.VERTEX_MAX_OUTPUT_TOKENS,
         "temperature": temperature if temperature is not None else settings.VERTEX_TEMPERATURE,
     }
+
+    last_exc: Exception | None = None
+    for attempt in range(_VERTEX_MAX_ATTEMPTS):
+        try:
+            response = requests.post(url, headers=headers, json=body, timeout=120)
+
+            # Retryable status codes — back off and try again before raising.
+            if response.status_code in _VERTEX_RETRY_STATUSES and attempt < _VERTEX_MAX_ATTEMPTS - 1:
+                # Honour Retry-After when the server gave one; otherwise
+                # exponential backoff with jitter (0.5s, 1s, 2s, 4s caps).
+                ra_raw = response.headers.get("Retry-After", "")
+                try:
+                    server_hint = float(ra_raw)
+                except ValueError:
+                    server_hint = 0.0
+                base = min(2 ** attempt * 0.5, 4.0)
+                wait = max(server_hint, base)
+                wait = min(wait, _VERTEX_RETRY_AFTER_CAP_SECONDS)
+                wait += random.uniform(0, 0.25)  # jitter
+                logger.warning(
+                    "[vertex] %d on attempt %d/%d — backing off %.2fs (retry-after=%r)",
+                    response.status_code, attempt + 1, _VERTEX_MAX_ATTEMPTS, wait, ra_raw,
+                )
+                time.sleep(wait)
+                continue
+
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            # Transient network blips — retry, don't surface as quota error.
+            last_exc = exc
+            if attempt < _VERTEX_MAX_ATTEMPTS - 1:
+                wait = min(2 ** attempt * 0.5, 4.0) + random.uniform(0, 0.25)
+                logger.warning(
+                    "[vertex] %s on attempt %d/%d — backing off %.2fs",
+                    type(exc).__name__, attempt + 1, _VERTEX_MAX_ATTEMPTS, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise
+
+    # All retries exhausted on a retryable status — re-issue once more so
+    # raise_for_status() turns it into a classified HTTPError for the caller.
     response = requests.post(url, headers=headers, json=body, timeout=120)
     response.raise_for_status()
+    if last_exc is not None:
+        raise last_exc
     return response.json()["choices"][0]["message"]["content"]
 
 
