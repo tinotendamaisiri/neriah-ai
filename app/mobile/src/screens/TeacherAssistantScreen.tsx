@@ -129,6 +129,28 @@ const MAX_DISPLAY     = 20;  // sessions shown in drawer
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
+// Strip the most common markdown emphasis marks the model leaks into chat
+// bubbles (bold, italic, code, headings, bullet asterisks). The chat UI
+// renders raw Text — markdown isn't parsed, so users see literal '**' chars.
+// Structured cards keep their data untouched; this only runs on the bubble
+// content string.
+function stripMarkdown(text: string): string {
+  if (!text) return text;
+  return text
+    // bold **x** or __x__
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1')
+    // italic *x* or _x_ — only when not part of a word (avoid mangling file_name etc.)
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?;:]|$)/g, '$1$2')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?;:]|$)/g, '$1$2')
+    // inline code `x`
+    .replace(/`([^`\n]+)`/g, '$1')
+    // ATX headings at line start: "# heading", "## heading", etc.
+    .replace(/^#{1,6}\s+/gm, '')
+    // leading bullet asterisks: "* item" → "• item"
+    .replace(/^\s*\*\s+/gm, '• ');
+}
+
 function makeId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -583,20 +605,27 @@ export default function TeacherAssistantScreen() {
           content: m.content,
         }));
 
+        // Treat "Generic" curriculum and "All Levels" the same way the
+        // backend does — as unspecified, so the on-device prompt's
+        // "let the teacher lead" rule kicks in instead of pinning the
+        // model to a fake default.
+        const isGenericCurr = !curriculum || curriculum.toLowerCase() === 'generic';
+        const isAnyLevel    = !level || level === ALL_LEVELS || ['all', 'any'].includes(level.toLowerCase());
+
         const responseText = await assistantOnDevice(
           onDeviceAction,
           onDeviceHistory,
           text.trim() || '(See attached file)',
           {
-            curriculum,
-            education_level: level === ALL_LEVELS ? undefined : level,
+            curriculum:      isGenericCurr ? undefined : curriculum,
+            education_level: isAnyLevel    ? undefined : level,
           },
         );
 
         const aiMsg: ChatMessage = {
           id:          makeId(),
           role:        'assistant',
-          content:     responseText,
+          content:     stripMarkdown(responseText),
           actionType:  forcedActionType ?? 'chat',
           timestamp:   new Date().toISOString(),
         };
@@ -639,7 +668,7 @@ export default function TeacherAssistantScreen() {
       const aiMsg: ChatMessage = {
         id:          makeId(),
         role:        'assistant',
-        content:     fallbackContent,
+        content:     stripMarkdown(fallbackContent),
         actionType:  res.action_type,
         structured:  isEmptyStructured ? undefined : structured,
         exportable:  res.exportable,
