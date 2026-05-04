@@ -25,8 +25,12 @@ export interface PlayLesson {
   grade: string | null;
   owner_id: string;
   question_count: number;
-  /** True when the generator could not reach the 70-question minimum. */
+  /** True when the generator could not reach the 70-question minimum.
+   *  Auto-expand makes this practically always false on fresh lessons. */
   is_draft?: boolean;
+  /** True when the generator auto-augmented broader-topic questions
+   *  because the supplied notes were too sparse for a full bank. */
+  was_expanded?: boolean;
   /** ISO timestamp. */
   created_at: string;
   shared_with_class: boolean;
@@ -64,7 +68,7 @@ export type PlayStackParamList = {
   PlayBuild: undefined;
   PlayBuildProgress: { taskId: string };
   PlayNotEnough: { lessonId: string };
-  PlayPreview: { lessonId: string };
+  PlayPreview: { lessonId: string; wasExpanded?: boolean };
   PlayGame: { lessonId: string; format: GameFormat };
   PlaySessionEnd: { sessionResult: SessionResult; lessonId: string };
   PlayShare: { lessonId: string };

@@ -192,11 +192,14 @@ export default function PlayBuildProgressScreen() {
             clearPersistedProgress(taskId),
             clearFormSnapshot(taskId),
           ]);
-          if (lesson.is_draft) {
-            navigation.replace('PlayNotEnough', { lessonId: lesson.id });
-          } else {
-            navigation.replace('PlayPreview', { lessonId: lesson.id });
-          }
+          // Auto-expand fills any gap server-side, so the lesson is never
+          // a draft on first create. Always go to preview; the preview
+          // screen surfaces a one-time notice when the bank was expanded
+          // with broader-topic questions.
+          navigation.replace('PlayPreview', {
+            lessonId: lesson.id,
+            wasExpanded: !!lesson.was_expanded,
+          });
         } catch (uploadErr) {
           trackError('play.lesson.create.upload_failed', uploadErr, { taskId });
           // We still keep the persisted record so retry works on next

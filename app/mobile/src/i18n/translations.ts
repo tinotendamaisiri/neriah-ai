@@ -303,6 +303,8 @@ export const translations = {
 
     // Preview
     play_preview_pick_a_game: 'Pick a game',
+    play_preview_expanded_title: 'We added more questions',
+    play_preview_expanded_body: 'Your notes were brief, so we filled the game with related questions on the same topic. You can play right away.',
     play_preview_best_score: 'Best score',
     play_preview_sessions_played: 'Sessions',
     play_preview_questions: 'Questions',
@@ -631,6 +633,8 @@ export const translations = {
     play_notenough_append_submit: 'Wedzera notsi',
 
     play_preview_pick_a_game: 'Sarudza mutambo',
+    play_preview_expanded_title: 'Tawedzera mibvunzo',
+    play_preview_expanded_body: 'Notsi dzako dzanga shoma, saka tazadza mutambo nemibvunzo yakaenderana nemusoro mumwe chete. Unogona kutamba izvozvi.',
     play_preview_best_score: 'Mamakisi epamusoro',
     play_preview_sessions_played: 'Zvitambisani',
     play_preview_questions: 'Mibvunzo',
@@ -956,6 +960,8 @@ export const translations = {
     play_notenough_append_submit: 'Engeza amanothi',
 
     play_preview_pick_a_game: 'Khetha umdlalo',
+    play_preview_expanded_title: 'Sengeze imibuzo',
+    play_preview_expanded_body: 'Amanothi akho abemafutshane, sigcwalise umdlalo ngemibuzo ehlobene nesihloko esifanayo. Ungadlala manje.',
     play_preview_best_score: 'Amakhasi aphezulu',
     play_preview_sessions_played: 'Imidlalo',
     play_preview_questions: 'Imibuzo',

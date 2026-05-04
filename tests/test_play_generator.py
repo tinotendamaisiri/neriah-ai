@@ -63,7 +63,7 @@ def test_position_randomization_uniform():
         return_value=[],  # disable semantic-dup checks
     ):
         from shared.play_generator import generate_lesson_questions
-        out, count = generate_lesson_questions(
+        out, count, _was_expanded = generate_lesson_questions(
             "Photosynthesis is the process by which plants convert light into energy.",
             target=100,
             minimum=70,
@@ -98,7 +98,7 @@ def test_dedup_rejects_exact_match():
         return_value=[],
     ):
         from shared.play_generator import generate_lesson_questions
-        out, count = generate_lesson_questions(
+        out, count, _was_expanded = generate_lesson_questions(
             "Test source content covering basic arithmetic and geography.",
             target=10,
             minimum=5,
@@ -125,7 +125,7 @@ def test_dedup_rejects_semantic_match():
         return_value=[1.0, 0.0, 0.0],
     ):
         from shared.play_generator import generate_lesson_questions
-        out, count = generate_lesson_questions(
+        out, count, _was_expanded = generate_lesson_questions(
             "Some source content for the test that's reasonably long.",
             target=10,
             minimum=5,
@@ -153,7 +153,7 @@ def test_validation_caps_lengths():
         return_value=[],
     ):
         from shared.play_generator import generate_lesson_questions
-        out, count = generate_lesson_questions(
+        out, count, _was_expanded = generate_lesson_questions(
             "Source content for the truncation test that's reasonably long.",
             target=5,
             minimum=1,
@@ -182,7 +182,7 @@ def test_minimum_threshold():
         return_value=[],
     ):
         from shared.play_generator import generate_lesson_questions
-        out, count = generate_lesson_questions(
+        out, count, _was_expanded = generate_lesson_questions(
             "Short source body for the threshold test.",
             target=100,
             minimum=70,

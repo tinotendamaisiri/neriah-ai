@@ -81,9 +81,12 @@ export interface OfflineGenResult {
   questions: PlayQuestion[];
   count: number;
   /** True when we hit the configured stall ceiling rather than the
-   *  TARGET_QUESTION_COUNT. The caller can use this to route to the
-   *  PlayNotEnough fallback when count < MIN_QUESTION_COUNT. */
+   *  TARGET_QUESTION_COUNT. */
   stalled: boolean;
+  /** True when the generator auto-augmented broader-topic batches because
+   *  the supplied notes were too sparse. Mirrors the backend
+   *  `was_expanded` field so the preview surface can show a single notice. */
+  wasExpanded: boolean;
 }
 
 /**
@@ -120,6 +123,8 @@ export async function generateLessonOnDevice(
 
   let consecutiveStalls = 0;
   let batchIndex = 0;
+  let expandMode = false;
+  let countWhenExpandStarted = 0;
 
   while (accumulated.length < TARGET_QUESTION_COUNT) {
     if (opts.signal?.aborted) {
@@ -127,7 +132,21 @@ export async function generateLessonOnDevice(
       break;
     }
     if (consecutiveStalls >= MAX_STALL_BATCHES) {
-      break;
+      // First wall: switch to broader-topic mode and keep going. One
+      // generation = one finished lesson — we never punt the student to a
+      // separate "not enough content" screen.
+      if (!expandMode) {
+        expandMode = true;
+        countWhenExpandStarted = accumulated.length;
+        consecutiveStalls = 0;
+        track('play.lesson.create.auto_expand', {
+          path: 'on-device',
+          have: accumulated.length,
+          target: TARGET_QUESTION_COUNT,
+        });
+      } else {
+        break;
+      }
     }
 
     let batch: PlayQuestion[];
@@ -139,6 +158,7 @@ export async function generateLessonOnDevice(
         source_content: opts.source_content,
         existing: accumulated,
         batchIndex,
+        expandMode,
       });
     } catch (err) {
       trackError('play.lesson.create.failed', err, {
@@ -197,6 +217,7 @@ export async function generateLessonOnDevice(
   );
 
   const stalled = consecutiveStalls >= MAX_STALL_BATCHES && finalised.length < TARGET_QUESTION_COUNT;
+  const wasExpanded = expandMode && finalised.length > countWhenExpandStarted;
 
   track(
     'play.lesson.create.success',
@@ -204,12 +225,13 @@ export async function generateLessonOnDevice(
       path: 'on-device',
       count: finalised.length,
       stalled,
+      was_expanded: wasExpanded,
       latency_ms: Date.now() - startedAt,
     },
     { surface: 'play' },
   );
 
-  return { questions: finalised, count: finalised.length, stalled };
+  return { questions: finalised, count: finalised.length, stalled, wasExpanded };
 }
 
 // ── Internal: rehydrate a previously-persisted run ───────────────────────────
@@ -257,6 +279,9 @@ interface BatchInput {
   source_content: string;
   existing: PlayQuestion[];
   batchIndex: number;
+  /** When true, prompt the model to draw on broader related concepts of
+   *  the same topic instead of strictly grounding in the supplied notes. */
+  expandMode?: boolean;
 }
 
 /**
@@ -277,13 +302,19 @@ function buildBatchPrompt(input: BatchInput): string {
     : '';
 
   const subjectLine = input.subject ? `Subject: ${input.subject}` : '';
-  const gradeLine = input.grade ? `Grade: ${input.grade}` : '';
+  const gradeLine = input.grade ? `Level: ${input.grade}` : '';
+
+  const scopeLine = input.expandMode
+    ? "The notes below have been exhausted. Generate broader related-concept questions on the SAME topic and level — real-world applications, common misconceptions, related sub-topics."
+    : "Generate questions grounded in the source notes below.";
 
   return [
     'You generate multiple-choice quiz questions for African school students.',
     `Lesson title: ${input.title}`,
     subjectLine,
     gradeLine,
+    '',
+    scopeLine,
     '',
     'Source notes:',
     sourceCapped + trailing,

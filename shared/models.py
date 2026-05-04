@@ -317,6 +317,7 @@ class PlayLesson(BaseModel):
     questions: list[PlayQuestion] = []
     question_count: int
     is_draft: bool = False
+    was_expanded: bool = False  # generator auto-augmented broader-topic content
     created_at: str = Field(default_factory=lambda: _now().isoformat())
     shared_with_class: bool = False
     allow_copying: bool = False

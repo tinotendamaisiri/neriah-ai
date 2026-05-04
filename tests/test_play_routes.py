@@ -129,7 +129,7 @@ class TestCreateLesson:
         # ── Stage 1: OWNER creates lesson ────────────────────────────────────
         with patch(
             "shared.play_generator.generate_lesson_questions",
-            return_value=(generated, 75),
+            return_value=(generated, 75, False),
         ), patch(
             "functions.play.get_doc",
             side_effect=lambda c, d: owner_student if (c, d) == ("students", OWNER_ID) else None,

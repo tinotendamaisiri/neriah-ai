@@ -65,25 +65,39 @@ def generate_lesson_questions(
     minimum: int = 70,
     existing_questions: Optional[list[PlayQuestion]] = None,
     use_on_device: bool = False,
-) -> tuple[list[PlayQuestion], int]:
+    topic_hint: Optional[str] = None,
+    auto_expand: bool = True,
+) -> tuple[list[PlayQuestion], int, bool]:
     """Generate a bank of ``target`` unique MCQs from ``source_content``.
+
+    When the source content is sparse and Gemma starts producing low-yield
+    batches before reaching ``target``, the generator automatically switches
+    to broader-topic mode and keeps batching using ``topic_hint`` (title /
+    subject / level) as the anchor. The student is no longer prompted to
+    "expand" — one POST always returns a full lesson.
 
     Args:
         source_content:     Free-form study material the questions cover.
         target:             Goal size of the bank. Defaults to 100.
-        minimum:            Minimum count below which the lesson stays
-                            ``is_draft=True``. Used by callers to decide
-                            whether to flip the draft flag — the generator
-                            itself returns whatever it produced.
+        minimum:            Legacy parameter — the route handler used to
+                            flip ``is_draft`` below this. Kept in the
+                            signature for back-compat; no longer affects
+                            generation since auto-expand fills any gap.
         existing_questions: Already-saved questions (e.g. on /expand and
                             /append calls). New questions are dedup'd
                             against these too.
         use_on_device:      Reserved for mobile clients that run Gemma 4
                             E2B locally via LiteRT-LM. Always raises
                             ``NotImplementedError`` on the backend.
+        topic_hint:         Free-form anchor (e.g. "Photosynthesis · Science
+                            · Form 3") used to seed broader-topic batches
+                            when the user's source content is exhausted.
+        auto_expand:        When True (default), low-yield batches trigger
+                            broader-topic generation rather than stopping.
 
     Returns:
-        ``(questions, count)``. ``count == len(questions)``.
+        ``(questions, count, was_expanded)``. ``was_expanded`` is True iff
+        broader-topic batches contributed at least one question.
     """
     if use_on_device:
         raise NotImplementedError(
@@ -92,7 +106,7 @@ def generate_lesson_questions(
 
     source_content = (source_content or "").strip()
     if not source_content:
-        return [], 0
+        return [], 0, False
 
     accumulated: list[PlayQuestion] = list(existing_questions or [])
 
@@ -110,6 +124,8 @@ def generate_lesson_questions(
 
     consecutive_low_yield = 0
     batch_n = 0
+    expand_mode = False
+    accumulated_count_when_expand_started = 0
 
     while batch_n < _MAX_BATCHES and len(accumulated) < target:
         batch_n += 1
@@ -120,6 +136,8 @@ def generate_lesson_questions(
                 source_content=source_content,
                 already_covered_prompts=[q.prompt for q in accumulated],
                 requested=request_n,
+                topic_hint=topic_hint,
+                expand_mode=expand_mode,
             )
         except Exception as exc:
             logger.exception("[play] batch %d Gemma call failed", batch_n)
@@ -200,6 +218,24 @@ def generate_lesson_questions(
             consecutive_low_yield = 0
 
         if consecutive_low_yield >= _LOW_YIELD_BATCHES_BEFORE_STOP:
+            # First time we hit the wall: switch to broader-topic mode and
+            # keep going. The student should not have to confirm — one POST
+            # is one finished lesson.
+            if auto_expand and not expand_mode and len(accumulated) < target:
+                expand_mode = True
+                accumulated_count_when_expand_started = len(accumulated)
+                consecutive_low_yield = 0
+                log_event(
+                    "play.generation.auto_expand.start",
+                    "info",
+                    payload={
+                        "batch_n": batch_n,
+                        "have": len(accumulated),
+                        "target": target,
+                    },
+                    surface="play",
+                )
+                continue
             logger.info(
                 "[play] stopping after %d batches: %d consecutive low-yield rounds (have %d)",
                 batch_n, consecutive_low_yield, len(accumulated),
@@ -212,9 +248,12 @@ def generate_lesson_questions(
         accumulated = accumulated[:target]
 
     randomised = _position_randomise(accumulated)
-    _ = minimum  # passed in by callers but the draft-flag decision belongs
-                 # to the route handler — kept in the signature for clarity.
-    return randomised, len(randomised)
+    _ = minimum  # passed in by callers; auto-expand makes the draft flag
+                 # almost always False — kept for back-compat callers.
+    was_expanded = (
+        expand_mode and len(accumulated) > accumulated_count_when_expand_started
+    )
+    return randomised, len(randomised), was_expanded
 
 
 # ─── Gemma prompt construction ────────────────────────────────────────────────
@@ -224,8 +263,16 @@ def _ask_gemma_for_batch(
     source_content: str,
     already_covered_prompts: Sequence[str],
     requested: int,
+    topic_hint: Optional[str] = None,
+    expand_mode: bool = False,
 ) -> str:
-    """Build the Gemma 4 prompt and return the raw assistant text."""
+    """Build the Gemma 4 prompt and return the raw assistant text.
+
+    ``expand_mode`` switches the prompt from "questions strictly grounded in
+    the supplied notes" to "questions on the broader topic, anchored by the
+    notes + topic_hint". Used when the source content has been exhausted but
+    we still need to reach the question target.
+    """
     # Truncate the already-covered list aggressively — we only need enough
     # context for the model to avoid the most-recent overlap. Sending the
     # full 90-prompt list every time wastes context tokens and isn't
@@ -243,7 +290,23 @@ def _ask_gemma_for_batch(
         "no commentary."
     )
 
-    user = f"""Generate {requested} fresh multiple-choice questions covering the study material below.
+    if expand_mode:
+        anchor = (topic_hint or "").strip() or "the same topic as the study material"
+        scope_block = (
+            f"The student's notes below have been exhausted. Generate questions "
+            f"covering broader related concepts, real-world applications, and "
+            f"common misconceptions for the topic: {anchor}. Stay within the "
+            f"educational level implied by the notes — do not jump grades."
+        )
+    else:
+        scope_block = (
+            "Generate questions strictly grounded in the study material below. "
+            "Do not introduce facts that aren't supported by the notes."
+        )
+
+    user = f"""Generate {requested} fresh multiple-choice questions.
+
+{scope_block}
 
 REQUIREMENTS:
 - Each question's "prompt" MUST be 80 characters or fewer.

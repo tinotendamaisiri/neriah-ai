@@ -154,12 +154,21 @@ def play_create_lesson():
     # Load student to populate class_ids if the lesson is later shared.
     student = get_doc("students", student_id) or {}
 
+    topic_hint = " · ".join(
+        part for part in (
+            title,
+            subject if isinstance(subject, str) else None,
+            grade if isinstance(grade, str) else None,
+        ) if part
+    )
+
     from shared.play_generator import generate_lesson_questions
     try:
-        questions, count = generate_lesson_questions(
+        questions, count, was_expanded = generate_lesson_questions(
             source_content=source_content,
             target=100,
             minimum=70,
+            topic_hint=topic_hint or None,
         )
     except NotImplementedError:
         # Should never happen — backend never sets use_on_device=True.
@@ -175,8 +184,9 @@ def play_create_lesson():
             "error": "We couldn't extract any questions from that content. Try adding more detail or pasting longer notes."
         }), 503
 
-    is_draft = count < 70
-
+    # Auto-expand fills any gap in one pass, so the lesson is never a draft
+    # at create time. The minimum threshold is kept on the model for legacy
+    # rows but no longer drives a re-prompt on the student.
     lesson = PlayLesson(
         title=title,
         subject=subject if isinstance(subject, str) and subject.strip() else None,
@@ -186,7 +196,8 @@ def play_create_lesson():
         source_content=source_content,
         questions=questions,
         question_count=count,
-        is_draft=is_draft,
+        is_draft=False,
+        was_expanded=was_expanded,
     )
     upsert("play_lessons", lesson.id, lesson.model_dump())
 
@@ -417,13 +428,22 @@ def play_lesson_expand(lesson_id: str):
         "\n\nGenerate questions covering broader related concepts and edge cases."
     )
 
+    topic_hint = " · ".join(
+        part for part in (
+            lesson.get("title"),
+            lesson.get("subject"),
+            lesson.get("grade"),
+        ) if part
+    )
+
     from shared.play_generator import generate_lesson_questions
     try:
-        new_bank, new_count = generate_lesson_questions(
+        new_bank, new_count, _was_expanded = generate_lesson_questions(
             source_content=base_content + expansion_hint,
             target=100,
             minimum=70,
             existing_questions=current_questions,
+            topic_hint=topic_hint or None,
         )
     except Exception:
         logger.exception("[play] expand failed for lesson=%s", lesson_id)
@@ -478,13 +498,22 @@ def play_lesson_append(lesson_id: str):
 
     current_questions = _coerce_questions(lesson.get("questions"))
 
+    topic_hint = " · ".join(
+        part for part in (
+            lesson.get("title"),
+            lesson.get("subject"),
+            lesson.get("grade"),
+        ) if part
+    )
+
     from shared.play_generator import generate_lesson_questions
     try:
-        new_bank, new_count = generate_lesson_questions(
+        new_bank, new_count, _was_expanded = generate_lesson_questions(
             source_content=combined,
             target=100,
             minimum=70,
             existing_questions=current_questions,
+            topic_hint=topic_hint or None,
         )
     except Exception:
         logger.exception("[play] append failed for lesson=%s", lesson_id)

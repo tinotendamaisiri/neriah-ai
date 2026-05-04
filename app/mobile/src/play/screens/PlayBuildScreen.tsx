@@ -231,13 +231,15 @@ export default function PlayBuildScreen() {
           path: 'cloud',
           lesson_id: lesson.id,
           count: lesson.question_count,
-          is_draft: !!lesson.is_draft,
+          was_expanded: !!lesson.was_expanded,
         });
-        if (lesson.is_draft) {
-          navigation.replace('PlayNotEnough', { lessonId: lesson.id });
-        } else {
-          navigation.replace('PlayPreview', { lessonId: lesson.id });
-        }
+        // Single-pass flow: auto-expand handled gaps server-side. Always
+        // go straight to preview; the preview shows a one-time toast when
+        // was_expanded so the student knows we added related questions.
+        navigation.replace('PlayPreview', {
+          lessonId: lesson.id,
+          wasExpanded: !!lesson.was_expanded,
+        });
       } catch (err) {
         trackError('play.lesson.create.failed', err, { path: 'cloud' });
         const message =

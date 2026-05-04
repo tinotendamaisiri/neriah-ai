@@ -51,7 +51,7 @@ const FORMATS: FormatRow[] = [
 export default function PlayPreviewScreen() {
   const navigation = useNavigation<Nav>();
   const routeParams = useRoute<R>();
-  const { lessonId } = routeParams.params;
+  const { lessonId, wasExpanded } = routeParams.params;
   const { t } = useLanguage();
   const { user } = useAuth();
 
@@ -62,6 +62,19 @@ export default function PlayPreviewScreen() {
   useEffect(() => {
     trackScreen('PlayPreview');
   }, []);
+
+  // One-time notice when the generator auto-expanded broader-topic
+  // questions because the student's notes were too sparse for a full bank.
+  // Fires once per navigation; consumed via setParams so re-focusing doesn't
+  // re-trigger.
+  useEffect(() => {
+    if (!wasExpanded) return;
+    Alert.alert(
+      t('play_preview_expanded_title'),
+      t('play_preview_expanded_body'),
+    );
+    navigation.setParams({ wasExpanded: false } as Partial<R['params']>);
+  }, [wasExpanded, navigation, t]);
 
   const load = useCallback(async () => {
     try {
