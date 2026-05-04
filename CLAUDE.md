@@ -518,80 +518,97 @@ Schema for every event: `{id, timestamp, source, surface, event_type, severity, 
 
 ### 4.8 Environment Variables
 
-Set in Cloud Functions runtime (via Cloud Build) or Secret Manager. Names reflect the *current* code — `.env.example` is partly stale.
+`cloudbuild.yaml` is the source of truth — every deploy re-asserts the full env+secret config via `--set-env-vars` (full replacement) and `--set-secrets`. Verify the live state with:
+
+```bash
+gcloud run services describe neriah-grading --region=us-central1 \
+  --project=neriah-ai-492302 --format=yaml | yq '.spec.template.spec.containers[0].env'
+```
+
+#### Plain env vars (set via `--set-env-vars`)
+
+These are non-credential identifiers that can safely live in source control.
 
 ```
 # GCP core
 GCP_PROJECT_ID=neriah-ai-492302
 GCP_REGION=us-central1
-NERIAH_ENV=prod | dev | demo            # demo accepts OTP "1234"
-
-# Firestore
-FIRESTORE_DATABASE_ID=(default)         # demo uses a separate DB id
+ENVIRONMENT=production                  # 'production' | 'dev' | 'demo'
+LOG_EXECUTION_ID=true
 
 # Cloud Storage
 GCS_BUCKET_SCANS=neriah-scans
 GCS_BUCKET_MARKED=neriah-marked
 GCS_BUCKET_SUBMISSIONS=neriah-submissions
 
-# Vertex AI
+# Inference
+INFERENCE_BACKEND=vertex                # 'vertex' (cloud) | 'ollama' (dev fallback)
+
+# Dev bypass — set by ALLOW_BYPASS=true; matched against caller country/phone
+# so the listed phone(s) can use OTP "000000" without burning Twilio quota
+ALLOW_BYPASS=true
+DEV_BYPASS_COUNTRY=+263
+DEV_BYPASS_PHONES=+263779929952
+
+# Outbound numbers / addresses (public identifiers)
+TWILIO_PHONE_NUMBER=+15186083556
+RESEND_FROM_ADDRESS=mark@send.neriah.ai
+
+# Supabase + Upstash (URLs only; keys/tokens are in Secret Manager)
+SUPABASE_URL=https://pxhwfuhflthnakqyotdx.supabase.co
+UPSTASH_REDIS_REST_URL=https://valid-lamb-102065.upstash.io
+```
+
+#### Secret-backed env vars (set via `--set-secrets`)
+
+Each binds the env var to a Secret Manager secret of the same name (`:latest` version). The runtime SA `neriah-ai-sa` resolves them at container start.
+
+```
+APP_JWT_SECRET            ← APP_JWT_SECRET            (JWT signing key, 365-day sessions)
+TWILIO_AUTH_TOKEN         ← TWILIO_AUTH_TOKEN         (Twilio API auth)
+TWILIO_ACCOUNT_SID        ← TWILIO_ACCOUNT_SID        (Twilio account ID)
+TWILIO_VERIFY_SID         ← TWILIO_VERIFY_SID         (Twilio Verify service ID)
+WHATSAPP_PHONE_NUMBER_ID  ← WHATSAPP_PHONE_NUMBER_ID  (Meta phone-number resource ID)
+SUPABASE_ANON_KEY         ← SUPABASE_ANON_KEY         (anon JWT — public-by-design but JWT-shaped, kept in SM so the YAML stays scanner-clean)
+KEEP_ALIVE_SECRET         ← KEEP_ALIVE_SECRET         (gates /internal/keep-alive)
+UPSTASH_REDIS_REST_TOKEN  ← UPSTASH_REDIS_REST_TOKEN  (Upstash REST bearer)
+ADMIN_API_KEY             ← ADMIN_API_KEY             (Bearer for /api/admin/*)
+RESEND_API_KEY            ← RESEND_API_KEY            (Resend send token)
+WHATSAPP_ACCESS_TOKEN     ← WHATSAPP_ACCESS_TOKEN     (Meta Cloud API)
+WHATSAPP_APP_SECRET       ← WHATSAPP_APP_SECRET       (Meta webhook signature)
+WHATSAPP_VERIFY_TOKEN     ← WHATSAPP_VERIFY_TOKEN     (Meta webhook verify)
+```
+
+Why so many identifiers in Secret Manager? Twilio SIDs and the Supabase anon key are not strictly secret, but GitHub secret scanning flags JWT-shaped values and Twilio SIDs in committed files. Routing them through Secret Manager keeps `cloudbuild.yaml` scanner-clean and gives us a rotation path that doesn't require a CI edit.
+
+`ZOHO_IMAP_PASSWORD` also exists in Secret Manager but is consumed by the separate `email_poller` Pub/Sub function, not `neriah-grading`.
+
+#### Auxiliary code constants
+
+A few names referenced in the codebase are not currently set in the live runtime — they fall back to in-code defaults. List them here so they're not forgotten when productionising:
+
+```
+NERIAH_ENV=prod | dev | demo            # alias for ENVIRONMENT; demo accepts OTP "1234"
+FIRESTORE_DATABASE_ID=(default)         # demo uses a separate DB id
 VERTEX_LOCATION=us-central1
 VERTEX_TEXT_MODEL=gemini-1.5-pro
 VERTEX_VISION_MODEL=gemini-1.5-pro
 VERTEX_EMBED_MODEL=text-embedding-004
-
-# Document AI
+VERTEX_PRICE_IN_PER_M=0.30              # cost telemetry
+VERTEX_PRICE_OUT_PER_M=0.60
 DOCAI_PROCESSOR_ID=...
-
-# WhatsApp
-WHATSAPP_VERIFY_TOKEN=...               # Secret Manager
-WHATSAPP_ACCESS_TOKEN=...               # Secret Manager
-WHATSAPP_PHONE_NUMBER_ID=...            # Secret Manager
-WHATSAPP_TEMPLATE_PENDING=true          # bypasses verify with "000000" while pending
-
-# App auth
-APP_JWT_SECRET=...                      # Secret Manager
 JWT_EXPIRE_DAYS=365
-
-# Twilio
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_PHONE_NUMBER=+15186083556
-TWILIO_VERIFY_SID=...
-
-# Email — Resend (outbound)
-RESEND_API_KEY=...
 RESEND_FROM=Neriah <noreply@send.neriah.africa>
 RESEND_NOTIFY_EMAIL=admin@neriah.ai
-
-# Email — Zoho IMAP (inbound)
 ZOHO_IMAP_HOST=imap.zoho.com
 ZOHO_IMAP_USER=mark@neriah.ai
-ZOHO_IMAP_APP_PASSWORD=...              # Secret Manager
-
-# Inference fallbacks
-OLLAMA_BASE_URL=http://localhost:11434  # dev only
-
-# Admin
-ADMIN_API_KEY=...                       # Bearer key on every /admin/* backend endpoint; mirrored on the website's Vercel env
-
-# Observability + cost tracking
-VERTEX_PRICE_IN_PER_M=0.30              # USD per 1M input tokens (used to compute cost_usd on vertex.call.success events)
-VERTEX_PRICE_OUT_PER_M=0.60             # USD per 1M output tokens
-
-# Training-data archive
+WHATSAPP_TEMPLATE_PENDING=true          # bypasses verify with "000000" while pending
 GCS_BUCKET_TRAINING=neriah-training-data
-COLLECT_TRAINING_DATA=true              # set false to disable globally (e.g. on staging)
-
-# Supabase keep-alive (Cloud Run + Cloud Scheduler)
-SUPABASE_URL=https://pxhwfuhflthnakqyotdx.supabase.co
-SUPABASE_ANON_KEY=...
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
-KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-alive-secret` header
+COLLECT_TRAINING_DATA=true
+OLLAMA_BASE_URL=http://localhost:11434  # dev only
 ```
 
-**Runtime service account:** `neriah-ai-sa@neriah-ai-492302.iam.gserviceaccount.com` (pinned via `--service-account` in `cloudbuild.yaml`). Roles: `roles/aiplatform.user`, `roles/aiplatform.endpointUser`, `roles/serviceusage.serviceUsageConsumer`, `roles/datastore.user`, `roles/storage.objectAdmin` (on `gs://neriah-training-data` plus the regular buckets), `roles/secretmanager.secretAccessor`, `roles/cloudfunctions.developer`, `roles/iam.serviceAccountTokenCreator` (self-impersonation — needed for the Vertex MaaS token mint workaround in `shared/gemma_client._get_vertex_token`; see § 9.5).
+**Runtime service account:** `neriah-ai-sa@neriah-ai-492302.iam.gserviceaccount.com` (pinned via `--service-account` in `cloudbuild.yaml`). Roles: `roles/aiplatform.user`, `roles/aiplatform.endpointUser`, `roles/serviceusage.serviceUsageConsumer`, `roles/datastore.user`, `roles/storage.objectAdmin` (on `gs://neriah-training-data` plus the regular buckets), `roles/secretmanager.secretAccessor` (project-wide — covers all 9 attached secrets without per-secret grants), `roles/cloudfunctions.developer`, `roles/iam.serviceAccountTokenCreator` (self-impersonation — needed for the Vertex MaaS token mint workaround in `shared/gemma_client._get_vertex_token`; see § 9.5).
 
 ### 4.9 Backend Architecture Decisions
 
@@ -1141,7 +1158,7 @@ Reference: `~/Desktop/gemmaplay/frontend/src/scenes/`. Four-teal answer palette 
 - [ ] Migrate `functionality_audit_report.md` to current state (or delete)
 - [ ] Phase 3 monitoring: Slack alerts on critical errors, WebSocket live tail (replace 5 s polling), session replay
 - [ ] Migrate existing `Pressable` / `TouchableOpacity` callsites to `TrackedPressable` for full tap coverage (component is shipped, migration is incremental)
-- [ ] `cloudbuild.yaml` cleanup: switch from `--set-env-vars` (which would wipe live config) to `--update-env-vars` + `--set-secrets` referencing only secrets that exist (today's deploys use `gcloud functions deploy` directly to avoid this; cloudbuild path is stale)
+- [x] ~~`cloudbuild.yaml` cleanup~~ — done 2026-05-04 PM. cloudbuild.yaml now lists every env var explicitly (full replacement is safe because the file is the source of truth) and uses `--set-secrets` for all 9 secret-backed env vars. Five new Secret Manager secrets created from previously-plaintext values: `APP_JWT_SECRET`, `TWILIO_AUTH_TOKEN`, `KEEP_ALIVE_SECRET`, `UPSTASH_REDIS_REST_TOKEN`, `ADMIN_API_KEY`. Verify with `gcloud builds submit --config cloudbuild.yaml`.
 - [ ] **Neriah Play — confirm picker bug.** No AppState/persistence/auto-nav code exists in `src/play`; the user-reported "exit on picker auto-routes into a game" cannot fire from the current code. A 400 ms post-focus tap suppression has been added defensively. If the report recurs, we need a steps-to-repro to track it down.
 - [ ] **Neriah Play — leaderboards / class score wall.** `play_sessions` already captures everything needed; just needs an aggregation view and a screen.
 - [ ] **Neriah Play — share-to-class polish.** Sharing toggles work but the UI on `PlayShareScreen` could surface the receiving classroom roster preview.
