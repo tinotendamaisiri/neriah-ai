@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _now() -> datetime:
@@ -245,3 +245,116 @@ class ImageQualityResult(BaseModel):
     suggestion: str
 
     model_config = {"populate_by_name": True}
+
+
+# ─── Neriah Play models ───────────────────────────────────────────────────────
+
+class PlayQuestion(BaseModel):
+    """A single multiple-choice question used by the Play arcade modes.
+
+    Constraints (validated below):
+      - prompt:  ≤ 80 characters (longer prompts overflow the in-game cards
+                 across all four formats: lane runner, stacker, blaster, snake).
+      - options: exactly 4 entries, each ≤ 25 characters.
+      - correct: integer index in [0, 3] pointing into ``options``.
+    """
+
+    prompt: str
+    options: list[str]
+    correct: int
+
+    @field_validator("prompt")
+    @classmethod
+    def _prompt_under_80(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("prompt must not be empty")
+        if len(v) > 80:
+            raise ValueError(f"prompt must be ≤ 80 characters, got {len(v)}")
+        return v
+
+    @field_validator("options")
+    @classmethod
+    def _exactly_four_options(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list) or len(v) != 4:
+            raise ValueError("options must be a list of exactly 4 strings")
+        cleaned: list[str] = []
+        for i, opt in enumerate(v):
+            opt = (opt or "").strip()
+            if not opt:
+                raise ValueError(f"options[{i}] must not be empty")
+            if len(opt) > 25:
+                raise ValueError(
+                    f"options[{i}] must be ≤ 25 characters, got {len(opt)}"
+                )
+            cleaned.append(opt)
+        return cleaned
+
+    @field_validator("correct")
+    @classmethod
+    def _correct_index(cls, v: int) -> int:
+        if not isinstance(v, int) or v < 0 or v > 3:
+            raise ValueError("correct must be an integer in [0, 3]")
+        return v
+
+
+class PlayLesson(BaseModel):
+    """A bank of MCQs generated from teacher- or student-supplied source
+    content. Owned by a student; can be optionally shared with their class.
+
+    ``is_draft`` is True when the generator returned fewer than 70 unique
+    questions — the student can call /expand or /append to top up the bank
+    before the lesson exits draft state.
+    """
+
+    id: str = Field(default_factory=_uid)
+    title: str
+    subject: Optional[str] = None
+    grade: Optional[str] = None
+    owner_id: str
+    owner_role: str = "student"
+    source_content: str
+    questions: list[PlayQuestion] = []
+    question_count: int
+    is_draft: bool = False
+    created_at: str = Field(default_factory=lambda: _now().isoformat())
+    shared_with_class: bool = False
+    allow_copying: bool = False
+    class_id: Optional[str] = None
+
+
+class PlaySession(BaseModel):
+    """Outcome of a single Play attempt by a student against a lesson.
+
+    ``game_format`` is the arcade mode the student chose. ``end_reason``
+    distinguishes a natural loss from completing the bank or quitting early
+    so leaderboards / completion analytics stay clean.
+    """
+
+    id: str = Field(default_factory=_uid)
+    lesson_id: str
+    player_id: str
+    game_format: str
+    started_at: str
+    ended_at: str
+    duration_seconds: int
+    final_score: int
+    questions_attempted: int
+    questions_correct: int
+    end_reason: str
+
+    @field_validator("game_format")
+    @classmethod
+    def _valid_format(cls, v: str) -> str:
+        allowed = {"lane_runner", "stacker", "blaster", "snake"}
+        if v not in allowed:
+            raise ValueError(f"game_format must be one of {sorted(allowed)}")
+        return v
+
+    @field_validator("end_reason")
+    @classmethod
+    def _valid_end_reason(cls, v: str) -> str:
+        allowed = {"loss_condition", "completed", "quit"}
+        if v not in allowed:
+            raise ValueError(f"end_reason must be one of {sorted(allowed)}")
+        return v

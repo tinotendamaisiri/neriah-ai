@@ -33,6 +33,7 @@ from functions.events import events_bp
 from functions.keep_alive import keep_alive_bp
 from functions.mark import mark_bp
 from functions.training_admin import training_admin_bp
+from functions.play import play_bp
 from functions.push import push_bp
 from functions.schools import schools_bp
 from functions.students import students_bp
@@ -133,6 +134,7 @@ app.register_blueprint(answer_keys_bp, url_prefix=_API)
 app.register_blueprint(homework_bp,    url_prefix=_API)
 app.register_blueprint(submissions_bp, url_prefix=_API)
 app.register_blueprint(mark_bp,        url_prefix=_API)
+app.register_blueprint(play_bp,        url_prefix=_API)
 app.register_blueprint(push_bp,        url_prefix=_API)
 app.register_blueprint(schools_bp,     url_prefix=_API)
 app.register_blueprint(suggestions_bp, url_prefix=_API)

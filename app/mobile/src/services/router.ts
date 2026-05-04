@@ -38,7 +38,13 @@ import { track } from './analytics';
 export type AIRoute = 'cloud' | 'on-device' | 'unavailable';
 
 /** Which kind of AI operation is being requested. */
-export type AIRequestType = 'grading' | 'tutoring' | 'scheme' | 'teacher_assistant';
+export type AIRequestType =
+  | 'grading'
+  | 'tutoring'
+  | 'scheme'
+  | 'teacher_assistant'
+  /** Play lesson generation (Gemma 4 emits MCQ batches from notes/OCR). */
+  | 'play_lesson_gen';
 
 /** Message shown when no route is available. */
 export const CONNECT_TO_CONTINUE = 'Connect to continue';

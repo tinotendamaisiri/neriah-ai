@@ -85,7 +85,12 @@ export const USER_STORAGE_KEY = 'neriah_user';
 
 // ── Axios instance ────────────────────────────────────────────────────────────
 
-const client: AxiosInstance = axios.create({
+// Exported so peripheral surfaces (Play, future tutor extras) can issue calls
+// through the same instance — keeping JWT injection, route-key tracing, and
+// the offline error mapping all in one place. New top-level modules should
+// add their own typed helpers in their own file rather than reaching into the
+// raw client; this export exists for those helpers, not for screen code.
+export const client: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 35000, // marking pipeline can take ~20s
   headers: { 'Content-Type': 'application/json' },
