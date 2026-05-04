@@ -40,10 +40,22 @@ export const MIN_QUESTION_COUNT = 70;
  *  enough to run within the on-device latency budget. */
 const BATCH_SIZE = 10;
 
-/** How many consecutive low-yield batches we tolerate before stopping. A
- *  "low-yield" batch is one that produces <2 unique new questions after
- *  dedup. Three in a row means the model is exhausted on this topic. */
-const MAX_STALL_BATCHES = 3;
+/** How many consecutive low-yield batches we tolerate before escalating to
+ *  the next tier. A "low-yield" batch is one that produces <2 unique new
+ *  questions after dedup. */
+const MAX_STALL_BATCHES_PER_TIER = 3;
+
+/** How many consecutive zero-yield batches we tolerate at the top tier
+ *  before giving up. Zero-yield = literally nothing parsed or every row
+ *  rejected by dedup. */
+const MAX_ZERO_BATCHES_AT_TOP_TIER = 4;
+
+/** Cap on total batches to keep wall-clock bounded on slow phones. */
+const MAX_TOTAL_BATCHES = 30;
+
+const TIER_GROUNDED = 0;
+const TIER_EXPAND = 1;
+const TIER_FUNDAMENTALS = 2;
 
 const PROMPT_MAX_CHARS = 80;
 const OPTION_MAX_CHARS = 25;
@@ -122,29 +134,37 @@ export async function generateLessonOnDevice(
   const accumulated: PlayQuestion[] = [...seed];
 
   let consecutiveStalls = 0;
+  let consecutiveZero = 0;
   let batchIndex = 0;
-  let expandMode = false;
-  let countWhenExpandStarted = 0;
+  let tier = TIER_GROUNDED;
+  let countWhenExpandStarted: number | null = null;
 
-  while (accumulated.length < TARGET_QUESTION_COUNT) {
+  while (accumulated.length < TARGET_QUESTION_COUNT && batchIndex < MAX_TOTAL_BATCHES) {
     if (opts.signal?.aborted) {
       track('play.lesson.create.cancelled', { path: 'on-device', count: accumulated.length });
       break;
     }
-    if (consecutiveStalls >= MAX_STALL_BATCHES) {
-      // First wall: switch to broader-topic mode and keep going. One
-      // generation = one finished lesson — we never punt the student to a
-      // separate "not enough content" screen.
-      if (!expandMode) {
-        expandMode = true;
-        countWhenExpandStarted = accumulated.length;
+
+    if (consecutiveStalls >= MAX_STALL_BATCHES_PER_TIER) {
+      if (tier < TIER_FUNDAMENTALS) {
+        // Climb to the next tier. The fundamentals tier draws on
+        // topic + level alone, so it can keep producing material until
+        // we hit the question target. One generation = one finished
+        // lesson — we never punt to a separate "not enough" screen.
+        tier += 1;
+        if (tier === TIER_EXPAND && countWhenExpandStarted === null) {
+          countWhenExpandStarted = accumulated.length;
+        }
         consecutiveStalls = 0;
-        track('play.lesson.create.auto_expand', {
+        track('play.lesson.create.tier_escalate', {
           path: 'on-device',
+          to_tier: tier,
           have: accumulated.length,
           target: TARGET_QUESTION_COUNT,
         });
-      } else {
+      } else if (consecutiveZero >= MAX_ZERO_BATCHES_AT_TOP_TIER) {
+        // At the top tier and the model is producing literally nothing.
+        // Stop here — caller still has whatever we accumulated.
         break;
       }
     }
@@ -158,7 +178,7 @@ export async function generateLessonOnDevice(
         source_content: opts.source_content,
         existing: accumulated,
         batchIndex,
-        expandMode,
+        tier,
       });
     } catch (err) {
       trackError('play.lesson.create.failed', err, {
@@ -177,6 +197,11 @@ export async function generateLessonOnDevice(
     }
 
     const newOnes = dedupQuestions(batch, accumulated);
+    if (newOnes.length === 0) {
+      consecutiveZero += 1;
+    } else {
+      consecutiveZero = 0;
+    }
     if (newOnes.length < 2) {
       consecutiveStalls += 1;
       opts.onStallHint?.(consecutiveStalls);
@@ -216,8 +241,9 @@ export async function generateLessonOnDevice(
     accumulated.slice(0, TARGET_QUESTION_COUNT).map(sanitiseQuestion),
   );
 
-  const stalled = consecutiveStalls >= MAX_STALL_BATCHES && finalised.length < TARGET_QUESTION_COUNT;
-  const wasExpanded = expandMode && finalised.length > countWhenExpandStarted;
+  const stalled = batchIndex >= MAX_TOTAL_BATCHES && finalised.length < TARGET_QUESTION_COUNT;
+  const wasExpanded =
+    countWhenExpandStarted !== null && finalised.length > countWhenExpandStarted;
 
   track(
     'play.lesson.create.success',
@@ -279,9 +305,11 @@ interface BatchInput {
   source_content: string;
   existing: PlayQuestion[];
   batchIndex: number;
-  /** When true, prompt the model to draw on broader related concepts of
-   *  the same topic instead of strictly grounding in the supplied notes. */
-  expandMode?: boolean;
+  /** Escalation tier that controls how the prompt scopes generation:
+   *    0 (grounded)     — strictly within the source notes
+   *    1 (expand)       — broader related concepts of the same topic
+   *    2 (fundamentals) — open-ended review at the student's level */
+  tier: number;
 }
 
 /**
@@ -304,9 +332,21 @@ function buildBatchPrompt(input: BatchInput): string {
   const subjectLine = input.subject ? `Subject: ${input.subject}` : '';
   const gradeLine = input.grade ? `Level: ${input.grade}` : '';
 
-  const scopeLine = input.expandMode
-    ? "The notes below have been exhausted. Generate broader related-concept questions on the SAME topic and level — real-world applications, common misconceptions, related sub-topics."
-    : "Generate questions grounded in the source notes below.";
+  let scopeLine: string;
+  if (input.tier >= TIER_FUNDAMENTALS) {
+    scopeLine =
+      `You MUST output ${BATCH_SIZE} review questions on the topic "${input.title}". ` +
+      'Cover core definitions, worked examples, applications, and common ' +
+      'misconceptions a student at this level would meet. The notes below are flavour ' +
+      'only — do not limit yourself to them. Stay at the implied level.';
+  } else if (input.tier >= TIER_EXPAND) {
+    scopeLine =
+      'The notes below have been exhausted. Generate broader related-concept ' +
+      'questions on the SAME topic and level — real-world applications, common ' +
+      'misconceptions, related sub-topics.';
+  } else {
+    scopeLine = 'Generate questions grounded in the source notes below.';
+  }
 
   return [
     'You generate multiple-choice quiz questions for African school students.',

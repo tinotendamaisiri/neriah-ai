@@ -47,14 +47,27 @@ logger = logging.getLogger(__name__)
 
 # ─── Tunables ─────────────────────────────────────────────────────────────────
 
-_BATCH_SIZE = 25
-_MAX_BATCHES = 12              # hard upper bound on Gemma calls per generation
-_LOW_YIELD_BATCHES_BEFORE_STOP = 3
+_BATCH_SIZE = 30               # 30 keeps each call comfortably under max_tokens
+_MAX_BATCHES = 20              # hard upper bound on Gemma calls per generation
+_LOW_YIELD_BATCHES_BEFORE_ESCALATE = 3
+_ZERO_YIELD_BATCHES_BEFORE_STOP = 4
 _LOW_YIELD_THRESHOLD = 5       # fewer than this many uniques per batch = "low yield"
 _SEMANTIC_DUP_COSINE = 0.85    # cosine ≥ threshold → treated as a duplicate
 
+_GEMMA_MAX_TOKENS = 6144
+
 _PROMPT_MAX_CHARS = 80
 _OPTION_MAX_CHARS = 25
+
+# Escalation tiers driving the generator prompt. We climb tiers when the
+# previous tier stops yielding fresh questions; tier 0 is "stay grounded
+# in the student's notes", tier 2 is "produce review questions on the
+# topic / level alone". The strictness contract — every lesson lands at
+# the target count — depends on the highest tier being able to fill any
+# gap.
+_TIER_GROUNDED = 0
+_TIER_EXPAND = 1
+_TIER_FUNDAMENTALS = 2
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -123,13 +136,16 @@ def generate_lesson_questions(
             seen_embeddings.append(emb)
 
     consecutive_low_yield = 0
+    consecutive_zero_yield = 0
     batch_n = 0
-    expand_mode = False
-    accumulated_count_when_expand_started = 0
+    tier = _TIER_GROUNDED
+    accumulated_count_when_expand_started: Optional[int] = None
 
     while batch_n < _MAX_BATCHES and len(accumulated) < target:
         batch_n += 1
-        request_n = min(_BATCH_SIZE, target - len(accumulated) + 5)
+        # Always ask for at least the full batch size — undersizing the
+        # request lets dedup eat us back below target on the last batch.
+        request_n = max(_BATCH_SIZE, target - len(accumulated))
 
         try:
             raw = _ask_gemma_for_batch(
@@ -137,7 +153,7 @@ def generate_lesson_questions(
                 already_covered_prompts=[q.prompt for q in accumulated],
                 requested=request_n,
                 topic_hint=topic_hint,
-                expand_mode=expand_mode,
+                tier=tier,
             )
         except Exception as exc:
             logger.exception("[play] batch %d Gemma call failed", batch_n)
@@ -149,11 +165,15 @@ def generate_lesson_questions(
                     "requested": request_n,
                     "total_so_far": len(accumulated),
                     "error_type": type(exc).__name__,
+                    "tier": tier,
                 },
                 surface="play",
             )
+            consecutive_zero_yield += 1
             consecutive_low_yield += 1
-            if consecutive_low_yield >= _LOW_YIELD_BATCHES_BEFORE_STOP:
+            if consecutive_zero_yield >= _ZERO_YIELD_BATCHES_BEFORE_STOP:
+                # Repeated hard failures — the model is unreachable. Stop
+                # rather than burn the rest of the batch budget.
                 break
             continue
 
@@ -208,39 +228,56 @@ def generate_lesson_questions(
                 "total_so_far": len(accumulated),
                 "dedup_rejects": dedup_rejects,
                 "validation_rejects": validation_rejects,
+                "tier": tier,
             },
             surface="play",
         )
+
+        if added_this_batch == 0:
+            consecutive_zero_yield += 1
+        else:
+            consecutive_zero_yield = 0
 
         if added_this_batch < _LOW_YIELD_THRESHOLD:
             consecutive_low_yield += 1
         else:
             consecutive_low_yield = 0
 
-        if consecutive_low_yield >= _LOW_YIELD_BATCHES_BEFORE_STOP:
-            # First time we hit the wall: switch to broader-topic mode and
-            # keep going. The student should not have to confirm — one POST
-            # is one finished lesson.
-            if auto_expand and not expand_mode and len(accumulated) < target:
-                expand_mode = True
-                accumulated_count_when_expand_started = len(accumulated)
+        # Tier escalation. Climb a tier whenever the current one stalls
+        # *and* we still need more questions to hit the target. This is
+        # what makes "always 100" workable: notes-grounded → broader topic
+        # → fundamentals of the subject at the level. The fundamentals
+        # tier is open-ended and should never run out of material.
+        if (
+            consecutive_low_yield >= _LOW_YIELD_BATCHES_BEFORE_ESCALATE
+            and len(accumulated) < target
+        ):
+            if auto_expand and tier < _TIER_FUNDAMENTALS:
+                tier += 1
+                if tier == _TIER_EXPAND and accumulated_count_when_expand_started is None:
+                    accumulated_count_when_expand_started = len(accumulated)
                 consecutive_low_yield = 0
                 log_event(
-                    "play.generation.auto_expand.start",
+                    "play.generation.tier_escalate",
                     "info",
                     payload={
                         "batch_n": batch_n,
+                        "to_tier": tier,
                         "have": len(accumulated),
                         "target": target,
                     },
                     surface="play",
                 )
                 continue
-            logger.info(
-                "[play] stopping after %d batches: %d consecutive low-yield rounds (have %d)",
-                batch_n, consecutive_low_yield, len(accumulated),
-            )
-            break
+            # Already at the highest tier and still stalling — only stop
+            # when the model is producing literally zero, otherwise keep
+            # squeezing batches until the budget is exhausted.
+            if consecutive_zero_yield >= _ZERO_YIELD_BATCHES_BEFORE_STOP:
+                logger.info(
+                    "[play] stopping at top tier after %d batches: %d zero-yield rounds (have %d)",
+                    batch_n, consecutive_zero_yield, len(accumulated),
+                )
+                break
 
     # Trim to target if we overshot, then position-randomise the
     # correct-answer index so it's roughly uniform over A/B/C/D.
@@ -251,7 +288,8 @@ def generate_lesson_questions(
     _ = minimum  # passed in by callers; auto-expand makes the draft flag
                  # almost always False — kept for back-compat callers.
     was_expanded = (
-        expand_mode and len(accumulated) > accumulated_count_when_expand_started
+        accumulated_count_when_expand_started is not None
+        and len(accumulated) > accumulated_count_when_expand_started
     )
     return randomised, len(randomised), was_expanded
 
@@ -264,14 +302,19 @@ def _ask_gemma_for_batch(
     already_covered_prompts: Sequence[str],
     requested: int,
     topic_hint: Optional[str] = None,
-    expand_mode: bool = False,
+    tier: int = _TIER_GROUNDED,
 ) -> str:
     """Build the Gemma 4 prompt and return the raw assistant text.
 
-    ``expand_mode`` switches the prompt from "questions strictly grounded in
-    the supplied notes" to "questions on the broader topic, anchored by the
-    notes + topic_hint". Used when the source content has been exhausted but
-    we still need to reach the question target.
+    ``tier`` controls scope:
+      0 (grounded)     — questions strictly from the supplied notes.
+      1 (expand)       — broader related concepts of the same topic.
+      2 (fundamentals) — open-ended review at the student's level using
+                         topic_hint as the anchor; the notes are kept for
+                         flavour but no longer constrain the questions.
+
+    Higher tiers are how we keep the contract that one /play/lessons POST
+    always returns 100 questions even when the source notes are thin.
     """
     # Truncate the already-covered list aggressively — we only need enough
     # context for the model to avoid the most-recent overlap. Sending the
@@ -283,6 +326,8 @@ def _ask_gemma_for_batch(
         if recent else "(none yet — this is the first batch)"
     )
 
+    anchor = (topic_hint or "").strip() or "the same topic as the study material"
+
     system = (
         "You are an expert quiz writer for the Neriah Play game. "
         "You produce high-quality, age-appropriate multiple-choice "
@@ -290,8 +335,15 @@ def _ask_gemma_for_batch(
         "no commentary."
     )
 
-    if expand_mode:
-        anchor = (topic_hint or "").strip() or "the same topic as the study material"
+    if tier >= _TIER_FUNDAMENTALS:
+        scope_block = (
+            f"You MUST produce exactly {requested} fresh review questions on "
+            f"the topic: {anchor}. Cover core definitions, worked examples, "
+            f"applications, and common misconceptions a student at this level "
+            f"would meet. The notes below are kept only as flavour — do not "
+            f"limit yourself to them. Do not jump above the implied level."
+        )
+    elif tier >= _TIER_EXPAND:
         scope_block = (
             f"The student's notes below have been exhausted. Generate questions "
             f"covering broader related concepts, real-world applications, and "
@@ -309,6 +361,7 @@ def _ask_gemma_for_batch(
 {scope_block}
 
 REQUIREMENTS:
+- Output EXACTLY {requested} questions — never fewer.
 - Each question's "prompt" MUST be 80 characters or fewer.
 - Each option in "options" MUST be 25 characters or fewer.
 - Provide EXACTLY 4 options per question.
@@ -333,8 +386,8 @@ STUDY MATERIAL:
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    # Generation needs enough room for ~25 questions at ~120 tokens each.
-    return _vertex_chat_completions(messages, max_tokens=4096, temperature=0.7)
+    # 30 questions at ~120 tokens each + JSON overhead → 6 KB room.
+    return _vertex_chat_completions(messages, max_tokens=_GEMMA_MAX_TOKENS, temperature=0.7)
 
 
 def _parse_questions_json(raw: str) -> list[dict]:
