@@ -1,13 +1,23 @@
 // src/play/runtime/scenes/SnakeScene.tsx
 //
-// Classic snake on a 12×16 grid. Head is amber, body is teal-500. Four
-// food tiles labeled A/B/C/D are placed at random non-occupied cells in
-// their locked teal colours. Swipe up/down/left/right to set direction
-// (the snake auto-moves on a timer scaled by speedMultiplier). Eating
-// the correct food: +2, body grows +1, food respawns. Wrong food: tail
-// shrinks. Wall or self collision: instant loss.
+// Classic snake on a 12×16 grid. Head is amber with two white eye dots,
+// body is teal with a darker tail-end gradient. Four food tiles labelled
+// A/B/C/D sit on free cells in their locked four-teal colours.
+//
+// Visual treatment ported from GemmaPlay's SnakeKnowledgeScene:
+//   - Rounded body / head cells with a faint white inset stroke.
+//   - Two-eye head detail (amber tile + white sclera + dark pupils).
+//   - Smooth ~150 ms cell-to-cell tween (interpolated between the
+//     previous and current snake position each frame).
+//   - Food tiles drawn as rounded rects with the four-teal palette and
+//     a white inset border so the letter chip reads cleanly.
+//
+// Game rules: swipe to change direction (the snake auto-moves on a
+// timer scaled by speedMultiplier). Eating a food fires onAnswer; the
+// engine ticks correct/wrong → grow / shrink. Wall or self collision,
+// or shrinking past length 1, ends the run.
 
-import { Canvas, Rect } from '@shopify/react-native-skia';
+import { Canvas, Circle, Group, Rect, RoundedRect } from '@shopify/react-native-skia';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
@@ -15,6 +25,8 @@ import {
   GestureDetector,
 } from 'react-native-gesture-handler';
 import type { AnswerLetter, SceneProps } from '../types';
+
+// ── Tunables ────────────────────────────────────────────────────────────────
 
 const COLS = 12;
 const ROWS = 16;
@@ -31,27 +43,20 @@ const TEXT_COLORS: Record<AnswerLetter, string> = {
   C: '#FFFFFF',
   D: '#085041',
 };
-const HEAD_COLOR = '#F5A623'; // amber
-const BODY_COLOR = '#0D7377'; // teal500
+const HEAD_COLOR = '#F5A623';
+const BODY_LIGHT = '#0D7377';
+const BODY_DARK = '#04342C';
 
-const BASE_TICK_SECONDS = 0.32; // base snake step
+const BASE_TICK_SECONDS = 0.32;     // 320 ms base step → ~150 ms at 2× speed
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 
-interface Cell {
-  c: number;
-  r: number;
-}
-
-interface FoodTile extends Cell {
-  letter: AnswerLetter;
-}
+interface Cell { c: number; r: number; }
+interface FoodTile extends Cell { letter: AnswerLetter; }
 
 interface SnakeProps extends SceneProps {
   loseSignal?: boolean;
-  /** Engine ticks this when an answer was wrong → tail shrinks. */
   wrongAnswerTick?: number;
-  /** Engine ticks this when an answer was correct → body grows. */
   correctAnswerTick?: number;
 }
 
@@ -67,15 +72,16 @@ const SnakeScene: React.FC<SnakeProps> = ({
   wrongAnswerTick,
   correctAnswerTick,
 }) => {
-  const cellW = width / COLS;
-  const cellH = height / ROWS;
-  const cellSize = Math.min(cellW, cellH);
+  // ── Geometry ──────────────────────────────────────────────────────────────
+  const cellSize = Math.min(width / COLS, height / ROWS);
   const gridW = cellSize * COLS;
   const gridH = cellSize * ROWS;
   const offX = (width - gridW) / 2;
   const offY = (height - gridH) / 2;
+  const cellPad = Math.max(1, cellSize * 0.06);
+  const cellRadius = Math.max(2, cellSize * 0.22);
 
-  // Initial snake: length 4 going right at center
+  // ── Initial state ─────────────────────────────────────────────────────────
   const initialSnake: Cell[] = useMemo(
     () =>
       Array.from({ length: 4 }).map((_, i) => ({
@@ -86,6 +92,8 @@ const SnakeScene: React.FC<SnakeProps> = ({
   );
 
   const [snake, setSnake] = useState<Cell[]>(initialSnake);
+  const [prevSnake, setPrevSnake] = useState<Cell[]>(initialSnake);
+  const [tickProgress, setTickProgress] = useState<number>(1);
   const [dir, setDir] = useState<Direction>('right');
   const [foods, setFoods] = useState<FoodTile[]>(() =>
     placeFoods(initialSnake),
@@ -94,6 +102,7 @@ const SnakeScene: React.FC<SnakeProps> = ({
   const [pendingShrink, setPendingShrink] = useState<number>(0);
 
   const snakeRef = useRef<Cell[]>(snake);
+  const prevSnakeRef = useRef<Cell[]>(initialSnake);
   const dirRef = useRef<Direction>(dir);
   const foodsRef = useRef<FoodTile[]>(foods);
   const lossFiredRef = useRef<boolean>(false);
@@ -109,12 +118,12 @@ const SnakeScene: React.FC<SnakeProps> = ({
   pendingGrowRef.current = pendingGrow;
   pendingShrinkRef.current = pendingShrink;
 
-  // HUD: length
+  // HUD: snake length
   useEffect(() => {
     onHudHintsChange?.({ lengthRemaining: snake.length });
   }, [snake.length, onHudHintsChange]);
 
-  // Wrong answer → schedule shrink
+  // Wrong → schedule shrink
   const lastWrongRef = useRef<number | undefined>(wrongAnswerTick);
   useEffect(() => {
     if (
@@ -126,7 +135,7 @@ const SnakeScene: React.FC<SnakeProps> = ({
     }
   }, [wrongAnswerTick]);
 
-  // Correct answer → schedule grow
+  // Correct → schedule grow
   const lastCorrectRef = useRef<number | undefined>(correctAnswerTick);
   useEffect(() => {
     if (
@@ -145,7 +154,7 @@ const SnakeScene: React.FC<SnakeProps> = ({
     }
   }, [loseSignal, onLoss]);
 
-  // Swipe gestures
+  // ── Gesture: swipe to change direction ────────────────────────────────────
   const pan = useMemo(
     () =>
       Gesture.Pan().onEnd((e) => {
@@ -173,27 +182,11 @@ const SnakeScene: React.FC<SnakeProps> = ({
     [],
   );
 
-  // Tick loop
+  // ── Tick loop with smooth interpolation ───────────────────────────────────
   useEffect(() => {
     let raf: number | null = null;
     let last = Date.now();
     let acc = 0;
-
-    const loop = () => {
-      const now = Date.now();
-      const dt = (now - last) / 1000;
-      last = now;
-      if (!pausedRef.current && !lossFiredRef.current) {
-        acc += dt;
-        const tick = BASE_TICK_SECONDS / Math.max(0.5, speedRef.current);
-        while (acc >= tick) {
-          acc -= tick;
-          stepOnce();
-          if (lossFiredRef.current) break;
-        }
-      }
-      raf = requestAnimationFrame(loop);
-    };
 
     const stepOnce = () => {
       const head = snakeRef.current[0];
@@ -206,7 +199,7 @@ const SnakeScene: React.FC<SnakeProps> = ({
         }
         return;
       }
-      // Self collision (against any segment except the tail since it moves)
+      // Self collision (not against the moving tail)
       const willGrow = pendingGrowRef.current > 0;
       const body = willGrow
         ? snakeRef.current
@@ -219,23 +212,27 @@ const SnakeScene: React.FC<SnakeProps> = ({
         return;
       }
 
-      // Food check
+      // Food pickup
       const foodHit = foodsRef.current.find(
         (f) => f.c === next.c && f.r === next.r,
       );
       if (foodHit) {
         onAnswer(foodHit.letter);
-        // Respawn that food at a new spot
         const newFoods = foodsRef.current.map((f) =>
           f.letter === foodHit.letter
-            ? { ...f, ...randomFreeCell([next, ...snakeRef.current], foodsRef.current.filter((g) => g.letter !== f.letter)) }
+            ? {
+                ...f,
+                ...randomFreeCell(
+                  [next, ...snakeRef.current],
+                  foodsRef.current.filter((g) => g.letter !== f.letter),
+                ),
+              }
             : f,
         );
         foodsRef.current = newFoods;
         setFoods(newFoods);
       }
 
-      // Apply pending grow / shrink AFTER move
       let nextSnake: Cell[];
       if (pendingGrowRef.current > 0) {
         nextSnake = [next, ...snakeRef.current];
@@ -244,14 +241,12 @@ const SnakeScene: React.FC<SnakeProps> = ({
       } else {
         nextSnake = [next, ...snakeRef.current.slice(0, -1)];
       }
-      // Apply queued shrinks (one tail segment per pending shrink)
       while (pendingShrinkRef.current > 0 && nextSnake.length > 1) {
         nextSnake = nextSnake.slice(0, -1);
         pendingShrinkRef.current = pendingShrinkRef.current - 1;
       }
       setPendingShrink(pendingShrinkRef.current);
 
-      // Length-zero loss
       if (nextSnake.length <= 1 && pendingShrinkRef.current > 0) {
         if (!lossFiredRef.current) {
           lossFiredRef.current = true;
@@ -259,8 +254,30 @@ const SnakeScene: React.FC<SnakeProps> = ({
         }
       }
 
+      // Save previous frame for the visual lerp.
+      prevSnakeRef.current = snakeRef.current;
+      setPrevSnake(snakeRef.current);
       snakeRef.current = nextSnake;
       setSnake(nextSnake);
+      setTickProgress(0);
+    };
+
+    const loop = () => {
+      const now = Date.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      if (!pausedRef.current && !lossFiredRef.current) {
+        acc += dt;
+        const tick = BASE_TICK_SECONDS / Math.max(0.5, speedRef.current);
+        // Tick progress for smooth tween between cells.
+        setTickProgress(Math.min(1, acc / tick));
+        while (acc >= tick) {
+          acc -= tick;
+          stepOnce();
+          if (lossFiredRef.current) break;
+        }
+      }
+      raf = requestAnimationFrame(loop);
     };
 
     raf = requestAnimationFrame(loop);
@@ -270,13 +287,27 @@ const SnakeScene: React.FC<SnakeProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Render
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  // Per-segment interpolated screen position. If the previous frame had a
+  // shorter body (we just grew), the new tail simply starts at the new
+  // tail's grid cell.
+  const segmentScreen = (segIdx: number, current: Cell[], prev: Cell[]) => {
+    const cur = current[segIdx];
+    const prv = prev[segIdx] ?? cur;
+    const t = tickProgress;
+    const cx = offX + (prv.c + (cur.c - prv.c) * t) * cellSize;
+    const cy = offY + (prv.r + (cur.r - prv.r) * t) * cellSize;
+    return { x: cx + cellPad, y: cy + cellPad };
+  };
+
   return (
     <View style={[styles.root, { width, height }]}>
       <GestureDetector gesture={pan}>
         <View style={[StyleSheet.absoluteFill]}>
           <Canvas style={{ width, height }}>
-            <Rect x={0} y={0} width={width} height={height} color="#04342C" />
+            {/* Backdrop */}
+            <Rect x={0} y={0} width={width} height={height} color="#04141C" />
 
             {/* Grid background */}
             <Rect
@@ -284,48 +315,113 @@ const SnakeScene: React.FC<SnakeProps> = ({
               y={offY}
               width={gridW}
               height={gridH}
-              color="rgba(8,80,65,0.6)"
+              color="rgba(8,80,65,0.5)"
             />
 
-            {/* Snake body */}
-            {snake.slice(1).map((seg, i) => (
-              <Rect
-                key={`b${i}`}
-                x={offX + seg.c * cellSize + 1}
-                y={offY + seg.r * cellSize + 1}
-                width={cellSize - 2}
-                height={cellSize - 2}
-                color={BODY_COLOR}
-              />
-            ))}
-            {/* Snake head */}
-            {snake[0] ? (
-              <Rect
-                x={offX + snake[0].c * cellSize + 1}
-                y={offY + snake[0].r * cellSize + 1}
-                width={cellSize - 2}
-                height={cellSize - 2}
-                color={HEAD_COLOR}
-              />
-            ) : null}
+            {/* Body segments — drawn back-to-front so head sits on top.
+                Per-segment colour interpolates from light teal at the
+                head end to dark teal at the tail end. */}
+            {snake.slice(1).map((_seg, i) => {
+              const pos = segmentScreen(i + 1, snake, prevSnake);
+              const t = i / Math.max(1, snake.length - 2);
+              const fill = lerpHex(BODY_LIGHT, BODY_DARK, t);
+              return (
+                <Group key={`b-${i}`}>
+                  <RoundedRect
+                    x={pos.x}
+                    y={pos.y}
+                    width={cellSize - cellPad * 2}
+                    height={cellSize - cellPad * 2}
+                    r={cellRadius}
+                    color={fill}
+                  />
+                  <RoundedRect
+                    x={pos.x}
+                    y={pos.y}
+                    width={cellSize - cellPad * 2}
+                    height={cellSize - cellPad * 2}
+                    r={cellRadius}
+                    color="rgba(255,255,255,0.18)"
+                    style="stroke"
+                    strokeWidth={1}
+                  />
+                </Group>
+              );
+            })}
 
-            {/* Food backgrounds */}
+            {/* Head — amber tile + two white eyes + dark pupils */}
+            {snake[0] ? (() => {
+              const pos = segmentScreen(0, snake, prevSnake);
+              const inner = cellSize - cellPad * 2;
+              const eyeR = inner * 0.12;
+              const pupilR = eyeR * 0.55;
+              return (
+                <Group>
+                  <RoundedRect
+                    x={pos.x}
+                    y={pos.y}
+                    width={inner}
+                    height={inner}
+                    r={cellRadius}
+                    color={HEAD_COLOR}
+                  />
+                  <Circle
+                    cx={pos.x + inner * 0.32}
+                    cy={pos.y + inner * 0.32}
+                    r={eyeR}
+                    color="#FFFFFF"
+                  />
+                  <Circle
+                    cx={pos.x + inner * 0.68}
+                    cy={pos.y + inner * 0.32}
+                    r={eyeR}
+                    color="#FFFFFF"
+                  />
+                  <Circle
+                    cx={pos.x + inner * 0.32}
+                    cy={pos.y + inner * 0.32}
+                    r={pupilR}
+                    color="#0F172A"
+                  />
+                  <Circle
+                    cx={pos.x + inner * 0.68}
+                    cy={pos.y + inner * 0.32}
+                    r={pupilR}
+                    color="#0F172A"
+                  />
+                </Group>
+              );
+            })() : null}
+
+            {/* Food tiles */}
             {foods.map((f) => (
-              <Rect
-                key={`f${f.letter}`}
-                x={offX + f.c * cellSize + 1}
-                y={offY + f.r * cellSize + 1}
-                width={cellSize - 2}
-                height={cellSize - 2}
-                color={COLORS_BY_LETTER[f.letter]}
-              />
+              <Group key={`f-${f.letter}`}>
+                <RoundedRect
+                  x={offX + f.c * cellSize + cellPad}
+                  y={offY + f.r * cellSize + cellPad}
+                  width={cellSize - cellPad * 2}
+                  height={cellSize - cellPad * 2}
+                  r={cellRadius}
+                  color={COLORS_BY_LETTER[f.letter]}
+                />
+                <RoundedRect
+                  x={offX + f.c * cellSize + cellPad}
+                  y={offY + f.r * cellSize + cellPad}
+                  width={cellSize - cellPad * 2}
+                  height={cellSize - cellPad * 2}
+                  r={cellRadius}
+                  color="rgba(255,255,255,0.65)"
+                  style="stroke"
+                  strokeWidth={1.4}
+                />
+              </Group>
             ))}
           </Canvas>
 
-          {/* Food letter overlay (RN text on top of canvas) */}
+          {/* Food letter overlay (RN text on top of canvas for crisp text) */}
           {foods.map((f) => (
             <View
-              key={`l${f.letter}`}
+              key={`l-${f.letter}`}
               pointerEvents="none"
               style={[
                 styles.foodLabel,
@@ -358,14 +454,10 @@ const SnakeScene: React.FC<SnakeProps> = ({
 
 function applyDir(c: Cell, d: Direction): Cell {
   switch (d) {
-    case 'up':
-      return { c: c.c, r: c.r - 1 };
-    case 'down':
-      return { c: c.c, r: c.r + 1 };
-    case 'left':
-      return { c: c.c - 1, r: c.r };
-    case 'right':
-      return { c: c.c + 1, r: c.r };
+    case 'up':    return { c: c.c,     r: c.r - 1 };
+    case 'down':  return { c: c.c,     r: c.r + 1 };
+    case 'left':  return { c: c.c - 1, r: c.r };
+    case 'right': return { c: c.c + 1, r: c.r };
   }
 }
 
@@ -392,6 +484,21 @@ function randomFreeCell(occ: Cell[], extra: Cell[]): Cell {
     }
   }
   return { c: 0, r: 0 };
+}
+
+// Linearly interpolate two #RRGGBB hex colours.
+function lerpHex(a: string, b: string, t: number): string {
+  const ar = parseInt(a.slice(1, 3), 16);
+  const ag = parseInt(a.slice(3, 5), 16);
+  const ab = parseInt(a.slice(5, 7), 16);
+  const br = parseInt(b.slice(1, 3), 16);
+  const bg = parseInt(b.slice(3, 5), 16);
+  const bb = parseInt(b.slice(5, 7), 16);
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  const hex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(bl)}`;
 }
 
 const styles = StyleSheet.create({

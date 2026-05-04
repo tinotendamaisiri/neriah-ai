@@ -1,30 +1,43 @@
 // src/play/runtime/scenes/StackerScene.tsx
 //
-// 8-cell wide × 12-cell tall grid. The bottom row is split into 4 bins
-// (A/B/C/D, each 2 cells wide). A teal block falls from the top, the
-// player taps a bin to steer the block toward it; when the block lands
-// in whatever bin is closest, the lane is emitted as the answer.
+// Tetris-style answer stacker. The playfield is an 8×12 cell grid drawn
+// as faint slate cells. A chunky rounded teal block falls from the top
+// and the player drags left-right to steer it across four answer bins
+// (A/B/C/D, four-teal palette) anchored at the bottom.
 //
-// Wrong answer → the bin row pushes up by 1 cell. Loss when the bin
-// row reaches the question banner zone (top of canvas).
+// Game rules ported from GemmaPlay's TetrisAnswerScene:
+//   - Block lands → onAnswer fires for the bin it touched. The block
+//     vanishes (we never stack — every question is its own block).
+//   - Wrong answer → the entire bin row pushes UP by one cell (smooth
+//     ~200 ms tween). Loss when the bin row rises within two cells of
+//     the question banner zone.
+//
+// The visual treatment matches GemmaPlay:
+//   - Decorative 8×12 grid cells with subtle separators and a darker
+//     fill so the whole playfield reads as a Tetris well.
+//   - Falling block is a 3-layer composite (shadow + body + highlight)
+//     for a chunky arcade feel.
+//   - Bins are white-rounded, letter-stamped, with the four-teal border
+//     colour that matches the AnswerGrid HUD palette.
 
-import { Canvas, Rect } from '@shopify/react-native-skia';
-import React, { useEffect, useRef, useState } from 'react';
-import { PanResponder, StyleSheet, Text, View } from 'react-native';
+import { Canvas, Group, Rect, RoundedRect } from '@shopify/react-native-skia';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, PanResponder, StyleSheet, Text, View } from 'react-native';
 import type { AnswerLetter, SceneProps } from '../types';
+
+// ── Tunables ────────────────────────────────────────────────────────────────
 
 const COLS = 8;
 const ROWS = 12;
 const BIN_LETTERS: AnswerLetter[] = ['A', 'B', 'C', 'D'];
-const BIN_COLORS = ['#0D7377', '#085041', '#3AAFA9', '#9FE1CB'];
-const BIN_TEXT_COLORS = ['#FFFFFF', '#FFFFFF', '#FFFFFF', '#085041'];
+const BIN_BORDERS = ['#0D7377', '#085041', '#3AAFA9', '#9FE1CB'];
 
-const BLOCK_FALL_SECONDS = 3.0; // base fall time top→bottom
+const BLOCK_FALL_SECONDS = 3.0;     // base fall time top→bottom of playfield
+const BIN_RISE_TWEEN_MS = 220;      // bin-row push-up animation
+const COL_COUNT = 4;                // four answer bins, each spans 2 grid cells
 
 interface StackerProps extends SceneProps {
-  /** Engine-driven kill switch. */
   loseSignal?: boolean;
-  /** Engine signals "wrong answer just submitted" so we bump the bin row up. */
   wrongAnswerTick?: number;
 }
 
@@ -40,10 +53,14 @@ const StackerScene: React.FC<StackerProps> = ({
   wrongAnswerTick,
 }) => {
   const cellH = height / ROWS;
+  const cellW = width / COLS;
 
+  // ── Block + bin state ─────────────────────────────────────────────────────
   const [blockX, setBlockX] = useState<number>(width / 2);
-  const [blockY, setBlockY] = useState<number>(0); // 0..1
+  const [blockY, setBlockY] = useState<number>(0); // 0..1 (fraction of playfield)
   const [binOffset, setBinOffset] = useState<number>(0);
+  const binOffsetAnim = useRef(new Animated.Value(0)).current;
+  const [animatedBinOffset, setAnimatedBinOffset] = useState<number>(0);
 
   const targetXRef = useRef<number>(width / 2);
   const blockYRef = useRef<number>(0);
@@ -56,12 +73,12 @@ const StackerScene: React.FC<StackerProps> = ({
   pausedRef.current = paused;
   widthRef.current = width;
 
-  // HUD hints
+  // Plumb the rising bin-row offset to the HUD so it can show "Bins +N".
   useEffect(() => {
     onHudHintsChange?.({ binRowOffset: binOffset });
   }, [binOffset, onHudHintsChange]);
 
-  // Wrong answer → push bins up
+  // ── Wrong-answer push-up (animated) ───────────────────────────────────────
   const lastWrongRef = useRef<number | undefined>(wrongAnswerTick);
   useEffect(() => {
     if (
@@ -69,16 +86,32 @@ const StackerScene: React.FC<StackerProps> = ({
       wrongAnswerTick !== lastWrongRef.current
     ) {
       lastWrongRef.current = wrongAnswerTick;
-      setBinOffset((b) => {
-        const next = b + 1;
-        if (next * cellH >= height - cellH * 2 && !lossFiredRef.current) {
+      setBinOffset((prev) => {
+        const next = prev + 1;
+        Animated.timing(binOffsetAnim, {
+          toValue: next,
+          duration: BIN_RISE_TWEEN_MS,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }).start();
+        // Loss when the bin row reaches within 2 cells of the top — same
+        // as GemmaPlay's BIN_ROW_LIMIT (GRID_ROWS - 2).
+        if (next >= ROWS - 2 && !lossFiredRef.current) {
           lossFiredRef.current = true;
           onLoss('bins_overflow');
         }
         return next;
       });
     }
-  }, [wrongAnswerTick, cellH, height, onLoss]);
+  }, [wrongAnswerTick, onLoss, binOffsetAnim]);
+
+  // Subscribe the JS-side animated value into state so Skia re-renders.
+  useEffect(() => {
+    const id = binOffsetAnim.addListener(({ value }) => {
+      setAnimatedBinOffset(value);
+    });
+    return () => binOffsetAnim.removeListener(id);
+  }, [binOffsetAnim]);
 
   useEffect(() => {
     if (loseSignal && !lossFiredRef.current) {
@@ -87,7 +120,7 @@ const StackerScene: React.FC<StackerProps> = ({
     }
   }, [loseSignal, onLoss]);
 
-  // Game loop
+  // ── Game loop ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let raf: number | null = null;
     let last = Date.now();
@@ -101,7 +134,8 @@ const StackerScene: React.FC<StackerProps> = ({
         const fallRate = 1 / (BLOCK_FALL_SECONDS / Math.max(0.5, speedRef.current));
         let nextY = blockYRef.current + fallRate * dt;
 
-        const steerSpeed = widthRef.current * 1.5;
+        // Steer toward the player's drag X (smooth chase rather than snap).
+        const steerSpeed = widthRef.current * 1.6;
         const dx = targetXRef.current - blockXRef.current;
         const move = Math.sign(dx) * Math.min(Math.abs(dx), steerSpeed * dt);
         const nextX = blockXRef.current + move;
@@ -131,6 +165,7 @@ const StackerScene: React.FC<StackerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Drag input ────────────────────────────────────────────────────────────
   const responder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -144,52 +179,128 @@ const StackerScene: React.FC<StackerProps> = ({
     }),
   ).current;
 
-  const binTop = height - cellH - cellH * binOffset;
-  const blockSize = cellH * 0.9;
-  const blockPxY = blockY * (binTop - blockSize);
+  // ── Geometry ──────────────────────────────────────────────────────────────
+  const binTop = height - cellH - cellH * animatedBinOffset;
+  const blockSize = Math.min(cellW, cellH) * 0.92;
+  const blockRadius = Math.max(2, blockSize * 0.18);
+  const blockPxY = blockY * (binTop - blockSize) + blockSize / 2;
+  const binW = width / COL_COUNT;
+
+  // Decorative grid cells (8 cols × 12 rows). Drawn faintly so the
+  // playfield reads as a stacker well without competing with the block.
+  const gridCells = useMemo(() => {
+    const cells: { x: number; y: number; w: number; h: number; key: string }[] = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        cells.push({
+          x: c * cellW + 2,
+          y: r * cellH + 2,
+          w: cellW - 4,
+          h: cellH - 4,
+          key: `g-${r}-${c}`,
+        });
+      }
+    }
+    return cells;
+  }, [cellW, cellH]);
 
   return (
     <View style={[styles.root, { width, height }]} {...responder.panHandlers}>
       <Canvas style={{ width, height }}>
-        <Rect x={0} y={0} width={width} height={height} color="#04342C" />
-        {BIN_COLORS.map((c, i) => (
-          <Rect
-            key={i}
-            x={i * (width / 4)}
-            y={binTop}
-            width={width / 4}
-            height={cellH}
-            color={c}
+        {/* Playfield background */}
+        <Rect x={0} y={0} width={width} height={height} color="#0F1B17" />
+
+        {/* Decorative grid cells */}
+        {gridCells.map((c) => (
+          <RoundedRect
+            key={c.key}
+            x={c.x}
+            y={c.y}
+            width={c.w}
+            height={c.h}
+            r={3}
+            color="rgba(255,255,255,0.04)"
           />
         ))}
-        <Rect
-          x={blockX - blockSize / 2}
-          y={blockPxY}
-          width={blockSize}
-          height={blockSize}
-          color="#3AAFA9"
-        />
-        <Rect
-          x={blockX - blockSize / 2}
-          y={blockPxY}
-          width={blockSize}
-          height={blockSize}
-          color="rgba(255,255,255,0.18)"
-        />
+
+        {/* Bins (one row, four cells, with the lettered four-teal borders) */}
+        {BIN_BORDERS.map((borderColor, i) => (
+          <Group key={`bin-${i}`}>
+            {/* Bin fill */}
+            <RoundedRect
+              x={i * binW + 4}
+              y={binTop + 3}
+              width={binW - 8}
+              height={cellH - 6}
+              r={6}
+              color="#FFFFFF"
+            />
+            {/* Bin border (matching the answer letter teal) — drawn as a
+                slightly larger rounded rect underneath so the white fill
+                shows a coloured ring. */}
+            <RoundedRect
+              x={i * binW + 2}
+              y={binTop + 1}
+              width={binW - 4}
+              height={cellH - 2}
+              r={8}
+              color={borderColor}
+              opacity={0.35}
+            />
+          </Group>
+        ))}
+
+        {/* Falling block — chunky 3-layer composite */}
+        <Group transform={[{ translateX: blockX }, { translateY: blockPxY }]}>
+          {/* Shadow */}
+          <RoundedRect
+            x={-blockSize / 2 + 2}
+            y={-blockSize / 2 + 3}
+            width={blockSize}
+            height={blockSize}
+            r={blockRadius}
+            color="rgba(0,0,0,0.32)"
+          />
+          {/* Body */}
+          <RoundedRect
+            x={-blockSize / 2}
+            y={-blockSize / 2}
+            width={blockSize}
+            height={blockSize}
+            r={blockRadius}
+            color="#0D7377"
+          />
+          {/* Body stroke */}
+          <RoundedRect
+            x={-blockSize / 2}
+            y={-blockSize / 2}
+            width={blockSize}
+            height={blockSize}
+            r={blockRadius}
+            color="rgba(255,255,255,0.35)"
+            style="stroke"
+            strokeWidth={1.5}
+          />
+          {/* Top-left highlight */}
+          <RoundedRect
+            x={-blockSize / 2 + 4}
+            y={-blockSize / 2 + 4}
+            width={blockSize / 2 - 2}
+            height={blockSize / 4 - 1}
+            r={Math.max(1, blockRadius - 3)}
+            color="rgba(255,255,255,0.35)"
+          />
+        </Group>
       </Canvas>
 
+      {/* Bin labels (RN Text overlay so the letters render crisp) */}
       <View
         pointerEvents="none"
         style={[styles.binLabelRow, { top: binTop, height: cellH }]}
       >
         {BIN_LETTERS.map((letter, i) => (
           <View key={letter} style={styles.binLabelCell}>
-            <Text
-              style={[
-                styles.binLabelText,
-                { color: BIN_TEXT_COLORS[i] },
-              ]}
-            >
+            <Text style={[styles.binLabelText, { color: BIN_BORDERS[i] }]}>
               {letter}
             </Text>
           </View>
@@ -200,8 +311,8 @@ const StackerScene: React.FC<StackerProps> = ({
 };
 
 function pickBin(blockX: number, width: number): number {
-  const idx = Math.floor(blockX / (width / 4));
-  return Math.max(0, Math.min(3, idx));
+  const idx = Math.floor(blockX / (width / COL_COUNT));
+  return Math.max(0, Math.min(COL_COUNT - 1, idx));
 }
 
 function clampX(x: number, width: number): number {
@@ -225,7 +336,7 @@ const styles = StyleSheet.create({
   },
   binLabelText: {
     fontFamily: 'Georgia',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
   },
 });

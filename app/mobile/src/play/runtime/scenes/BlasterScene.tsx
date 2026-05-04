@@ -1,18 +1,33 @@
 // src/play/runtime/scenes/BlasterScene.tsx
 //
-// Starfield gameplay. A small triangular ship sits at the bottom centre.
-// Four invaders labeled A/B/C/D in their locked teal colours descend
-// from the top with a slow side-to-side oscillation. The player taps an
-// invader to shoot it; that letter becomes the answer.
+// Pixel-art space-shooter answer scene. A chunky retro ship at the bottom
+// centre, four invader sprites descending from the top with A/B/C/D
+// labels overlaid, a two-layer parallax starfield, and a health bar
+// instead of hearts.
 //
-// Health: 4 segments. Each wrong shot drains one segment. Two correct
-// in a row regenerates one. Health zero or any invader reaching the
-// bottom triggers loss.
+// Game rules ported from GemmaPlay's ShooterAnswerScene:
+//   - The player taps an invader to shoot it; that letter becomes the
+//     answer. Wrong shots still resolve (the engine handles the score)
+//     and the invader respawns at the top so the wave keeps moving.
+//   - Health bar drains when an invader breaches the bottom; regen of
+//     +1 segment fires every 2 consecutive correct answers (max 4).
+//   - Loss when health hits 0 or any invader reaches y=1.
+//
+// Visual treatment:
+//   - Ship + invaders rendered as pixel-art via per-pixel Skia Rects
+//     (3 px per "pixel"). Patterns match GemmaPlay's silhouettes; colours
+//     swapped to Neriah's teal + amber palette.
+//   - Two-layer starfield: slow distant stars (small + faded) plus
+//     faster near stars (larger + brighter) → parallax sense of motion.
+//   - Health bar slot at top of canvas; segment colour goes green →
+//     amber → red as health depletes (matches GemmaPlay thresholds).
 
-import { Canvas, Circle, Path, Rect, Skia } from '@shopify/react-native-skia';
-import React, { useEffect, useRef, useState } from 'react';
+import { Canvas, Group, Rect, RoundedRect, Skia, Path } from '@shopify/react-native-skia';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AnswerLetter, SceneProps } from '../types';
+
+// ── Tunables ────────────────────────────────────────────────────────────────
 
 const LETTERS: AnswerLetter[] = ['A', 'B', 'C', 'D'];
 const COLORS_BY_LETTER: Record<AnswerLetter, string> = {
@@ -28,16 +43,44 @@ const TEXT_COLORS: Record<AnswerLetter, string> = {
   D: '#085041',
 };
 
-const STAR_COUNT = 24;
-const INVADER_BASE_FALL = 0.012; // fraction of height per second base
+const STARS_FAR_COUNT = 28;
+const STARS_NEAR_COUNT = 12;
+const INVADER_BASE_FALL = 0.012; // fraction of height per second
 const HEALTH_MAX = 4;
-const INVADER_SIZE_RATIO = 0.16; // of canvas width
+const INVADER_SIZE_RATIO = 0.18; // of canvas width
+
+// Pixel-art patterns (M = main, A = accent, X = invader body, . = empty)
+const SHIP_PIXELS = [
+  '......A......',
+  '.....AMA.....',
+  '....MMMMM....',
+  '..MMMMMMMMM..',
+  '.MMMMMMMMMMM.',
+  'MMMMMMMMMMMMM',
+  'MMM.MMMMM.MMM',
+  'MM.........MM',
+];
+const ENEMY_PIXELS = [
+  'X........X',
+  '.X......X.',
+  '.XXXXXXXX.',
+  'XX.XXXX.XX',
+  'XXXXXXXXXX',
+  'X.XXXXXX.X',
+  'X.X....X.X',
+  '..XX..XX..',
+];
+
+const SHIP_COLS = SHIP_PIXELS[0].length;
+const SHIP_ROWS = SHIP_PIXELS.length;
+const ENEMY_COLS = ENEMY_PIXELS[0].length;
+const ENEMY_ROWS = ENEMY_PIXELS.length;
 
 interface Invader {
   letter: AnswerLetter;
-  x: number; // 0..1 — relative center x
-  y: number; // 0..1 — relative center y
-  baseX: number; // anchor x for oscillation
+  x: number;
+  y: number;
+  baseX: number;
   oscPhase: number;
 }
 
@@ -46,13 +89,12 @@ interface Star {
   y: number;
   speed: number;
   size: number;
+  bright: boolean;
 }
 
 interface BlasterProps extends SceneProps {
   loseSignal?: boolean;
-  /** Engine ticks this when an answer was wrong → drain health. */
   wrongAnswerTick?: number;
-  /** Engine ticks this when an answer was correct → maybe regen. */
   correctAnswerTick?: number;
 }
 
@@ -68,12 +110,13 @@ const BlasterScene: React.FC<BlasterProps> = ({
   wrongAnswerTick,
   correctAnswerTick,
 }) => {
-  const [invaders, setInvaders] = useState<Invader[]>(() =>
-    seedInvaders(),
+  const [invaders, setInvaders] = useState<Invader[]>(() => seedInvaders());
+  const [stars, setStars] = useState<Star[]>(() =>
+    [...seedStars(STARS_FAR_COUNT, false), ...seedStars(STARS_NEAR_COUNT, true)],
   );
-  const [stars, setStars] = useState<Star[]>(() => seedStars());
   const [health, setHealth] = useState<number>(HEALTH_MAX);
   const [streak, setStreak] = useState<number>(0);
+  const [shotFlashKey, setShotFlashKey] = useState<number>(0);
 
   const invadersRef = useRef<Invader[]>(invaders);
   const starsRef = useRef<Star[]>(stars);
@@ -93,7 +136,7 @@ const BlasterScene: React.FC<BlasterProps> = ({
     onHudHintsChange?.({ health });
   }, [health, onHudHintsChange]);
 
-  // Wrong answer → drain health
+  // Wrong → drain health
   const lastWrongRef = useRef<number | undefined>(wrongAnswerTick);
   useEffect(() => {
     if (
@@ -113,7 +156,7 @@ const BlasterScene: React.FC<BlasterProps> = ({
     }
   }, [wrongAnswerTick, onLoss]);
 
-  // Correct answer → bump streak; regen on every other one
+  // Correct → +1 segment per 2 corrects
   const lastCorrectRef = useRef<number | undefined>(correctAnswerTick);
   useEffect(() => {
     if (
@@ -152,6 +195,7 @@ const BlasterScene: React.FC<BlasterProps> = ({
       elapsed += dt;
 
       if (!pausedRef.current && !lossFiredRef.current) {
+        // Invader descent + side-to-side oscillation
         const fall = INVADER_BASE_FALL * Math.max(0.5, speedRef.current);
         const next = invadersRef.current.map((inv) => {
           const ny = inv.y + fall * dt;
@@ -159,7 +203,6 @@ const BlasterScene: React.FC<BlasterProps> = ({
           const nx = clamp01(inv.baseX + osc);
           return { ...inv, x: nx, y: ny };
         });
-        // Loss check — any invader past 0.92 (just above ship)
         if (next.some((i) => i.y >= 0.92)) {
           if (!lossFiredRef.current) {
             lossFiredRef.current = true;
@@ -169,16 +212,18 @@ const BlasterScene: React.FC<BlasterProps> = ({
         invadersRef.current = next;
         setInvaders(next);
 
-        // Drift stars downward
+        // Stars drift — far layer slow, near layer faster
         const sNext = starsRef.current.map((s) => {
-          const ny = s.y + s.speed * dt;
-          if (ny > 1)
+          const ny = s.y + s.speed * dt * (s.bright ? 1.6 : 1.0);
+          if (ny > 1) {
             return {
               x: Math.random(),
               y: 0,
               speed: s.speed,
               size: s.size,
+              bright: s.bright,
             };
+          }
           return { ...s, y: ny };
         });
         starsRef.current = sNext;
@@ -193,22 +238,20 @@ const BlasterScene: React.FC<BlasterProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Build ship triangle path
-  const shipPath = (() => {
-    const cx = width / 2;
-    const baseY = height - 30;
-    const p = Skia.Path.Make();
-    p.moveTo(cx, baseY - 22);
-    p.lineTo(cx - 14, baseY);
-    p.lineTo(cx + 14, baseY);
-    p.close();
-    return p;
-  })();
+  // ── Geometry / sprite scaling ─────────────────────────────────────────────
+  const shipPx = Math.max(2, Math.floor((width * 0.18) / SHIP_COLS));
+  const shipW = SHIP_COLS * shipPx;
+  const shipH = SHIP_ROWS * shipPx;
+  const shipX = width / 2 - shipW / 2;
+  const shipY = height - shipH - 12;
+
+  const invSize = width * INVADER_SIZE_RATIO;
+  const enemyPx = Math.max(2, Math.floor(invSize / ENEMY_COLS));
 
   const handleInvaderTap = (letter: AnswerLetter) => {
     if (pausedRef.current || lossFiredRef.current) return;
     onAnswer(letter);
-    // Respawn the invader at top after a tap
+    setShotFlashKey((k) => k + 1);
     invadersRef.current = invadersRef.current.map((inv) =>
       inv.letter === letter
         ? { ...inv, y: 0, baseX: Math.random() * 0.8 + 0.1 }
@@ -217,27 +260,94 @@ const BlasterScene: React.FC<BlasterProps> = ({
     setInvaders([...invadersRef.current]);
   };
 
-  const invSize = width * INVADER_SIZE_RATIO;
+  // Bullet path — short flash up from the ship after a tap.
+  const bulletPath = useMemo(() => {
+    const p = Skia.Path.Make();
+    const cx = width / 2;
+    p.moveTo(cx, shipY - 4);
+    p.lineTo(cx, shipY - 28);
+    return p;
+  }, [width, shipY]);
+
+  // ── Health bar geometry ──────────────────────────────────────────────────
+  const healthBarTop = 6;
+  const healthBarHeight = 10;
+  const healthBarPadding = 12;
+  const healthBarWidth = width - healthBarPadding * 2;
+  const healthRatio = health / HEALTH_MAX;
+  const healthFillWidth = healthBarWidth * healthRatio;
+  const healthColor =
+    healthRatio > 0.6 ? '#10B981' : healthRatio > 0.3 ? '#F59E0B' : '#EF4444';
 
   return (
     <View style={[styles.root, { width, height }]}>
       <Canvas style={{ width, height }}>
-        <Rect x={0} y={0} width={width} height={height} color="#04342C" />
-        {/* Stars */}
+        {/* Backdrop */}
+        <Rect x={0} y={0} width={width} height={height} color="#04141C" />
+
+        {/* Two-layer starfield */}
         {stars.map((s, i) => (
-          <Circle
+          <Rect
             key={i}
-            cx={s.x * width}
-            cy={s.y * height}
-            r={s.size}
-            color="rgba(255,255,255,0.6)"
+            x={s.x * width}
+            y={s.y * height}
+            width={s.size}
+            height={s.size}
+            color={s.bright ? 'rgba(255,255,255,0.95)' : 'rgba(148,163,184,0.55)'}
           />
         ))}
-        {/* Ship */}
-        <Path path={shipPath} color="#FFFFFF" />
+
+        {/* Health bar */}
+        <RoundedRect
+          x={healthBarPadding}
+          y={healthBarTop}
+          width={healthBarWidth}
+          height={healthBarHeight}
+          r={4}
+          color="rgba(15,23,42,0.85)"
+        />
+        {healthFillWidth > 0 ? (
+          <RoundedRect
+            x={healthBarPadding}
+            y={healthBarTop}
+            width={healthFillWidth}
+            height={healthBarHeight}
+            r={4}
+            color={healthColor}
+          />
+        ) : null}
+        <RoundedRect
+          x={healthBarPadding}
+          y={healthBarTop}
+          width={healthBarWidth}
+          height={healthBarHeight}
+          r={4}
+          color="rgba(255,255,255,0.18)"
+          style="stroke"
+          strokeWidth={1}
+        />
+
+        {/* Ship — pixel-art */}
+        <Group>
+          {pixelArt(SHIP_PIXELS, shipX, shipY, shipPx, {
+            M: '#0D7377',
+            A: '#F5A623',
+          })}
+        </Group>
+
+        {/* Bullet flash (briefly visible after a tap; key change forces redraw) */}
+        <Group key={shotFlashKey}>
+          <Path
+            path={bulletPath}
+            color="#9FE1CB"
+            style="stroke"
+            strokeWidth={3}
+          />
+        </Group>
       </Canvas>
 
-      {/* Invaders rendered as RN Pressables to preserve hit-test reliability */}
+      {/* Invaders rendered as Pressables with pixel-art inside so the
+          hit-test stays reliable while the visuals match GemmaPlay. */}
       {invaders.map((inv) => {
         const px = inv.x * width - invSize / 2;
         const py = inv.y * height - invSize / 2;
@@ -247,23 +357,24 @@ const BlasterScene: React.FC<BlasterProps> = ({
             onPress={() => handleInvaderTap(inv.letter)}
             style={[
               styles.invader,
-              {
-                left: px,
-                top: py,
-                width: invSize,
-                height: invSize,
-                backgroundColor: COLORS_BY_LETTER[inv.letter],
-              },
+              { left: px, top: py, width: invSize, height: invSize },
             ]}
           >
-            <Text
-              style={[
-                styles.invaderText,
-                { color: TEXT_COLORS[inv.letter] },
-              ]}
-            >
-              {inv.letter}
-            </Text>
+            <Canvas style={{ width: invSize, height: invSize }}>
+              {pixelArt(ENEMY_PIXELS, 0, 0, enemyPx, {
+                X: COLORS_BY_LETTER[inv.letter],
+              })}
+            </Canvas>
+            <View style={styles.invaderLabelWrap} pointerEvents="none">
+              <Text
+                style={[
+                  styles.invaderText,
+                  { color: TEXT_COLORS[inv.letter] },
+                ]}
+              >
+                {inv.letter}
+              </Text>
+            </View>
           </Pressable>
         );
       })}
@@ -271,24 +382,55 @@ const BlasterScene: React.FC<BlasterProps> = ({
   );
 };
 
+// ── Pixel-art helper: emits one Rect per "on" pixel in the pattern ───────────
+
+function pixelArt(
+  pattern: string[],
+  x: number,
+  y: number,
+  px: number,
+  colorByChar: Record<string, string>,
+): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  for (let r = 0; r < pattern.length; r++) {
+    for (let c = 0; c < pattern[r].length; c++) {
+      const ch = pattern[r][c];
+      const color = colorByChar[ch];
+      if (!color) continue;
+      out.push(
+        <Rect
+          key={`${r}-${c}`}
+          x={x + c * px}
+          y={y + r * px}
+          width={px}
+          height={px}
+          color={color}
+        />,
+      );
+    }
+  }
+  return out;
+}
+
 function seedInvaders(): Invader[] {
   return LETTERS.map((letter, i) => ({
     letter,
     baseX: 0.15 + i * 0.235,
     x: 0.15 + i * 0.235,
-    y: -0.05 - i * 0.1, // staggered start above the canvas
+    y: -0.05 - i * 0.1,
     oscPhase: Math.random() * Math.PI * 2,
   }));
 }
 
-function seedStars(): Star[] {
+function seedStars(count: number, bright: boolean): Star[] {
   const out: Star[] = [];
-  for (let i = 0; i < STAR_COUNT; i++) {
+  for (let i = 0; i < count; i++) {
     out.push({
       x: Math.random(),
       y: Math.random(),
-      speed: 0.04 + Math.random() * 0.06,
-      size: Math.random() < 0.7 ? 1 : 1.6,
+      speed: bright ? 0.08 + Math.random() * 0.05 : 0.03 + Math.random() * 0.03,
+      size: bright ? 2 : 1,
+      bright,
     });
   }
   return out;
@@ -304,13 +446,17 @@ const styles = StyleSheet.create({
   },
   invader: {
     position: 'absolute',
-    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  invaderLabelWrap: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
   },
   invaderText: {
     fontFamily: 'Georgia',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
   },
 });

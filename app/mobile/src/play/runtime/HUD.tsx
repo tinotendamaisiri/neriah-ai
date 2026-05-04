@@ -1,9 +1,13 @@
 // src/play/runtime/HUD.tsx
 //
-// Top status bar for the active game session. Shows:
+// Top status bar for the active game session. Layout matches GemmaPlay's
+// AnswerGridHUD treatment: small uppercase label above large value,
+// dedicated panels for score and question counter.
+//
+// Shows:
 //   - Game format title (left)
-//   - Score in amber (right, large)
-//   - Question N (under score)
+//   - Score panel (right, large amber number with SCORE label)
+//   - Question counter panel (left of score, with QUESTION label)
 //   - Pause button (top-right)
 //   - Optional health segments (Blaster) or length counter (Snake)
 //   - Optional bin-row offset hint (Stacker — small caption)
@@ -49,6 +53,7 @@ const HUD: React.FC<Props> = ({
 
   return (
     <View style={styles.bar}>
+      {/* Left: title + per-format status */}
       <View style={styles.leftCol}>
         <Text style={styles.title}>{FORMAT_TITLE[format]}</Text>
         {showHealth ? (
@@ -75,13 +80,20 @@ const HUD: React.FC<Props> = ({
         ) : null}
       </View>
 
-      <View style={styles.rightCol}>
-        <Text style={styles.score}>{score}</Text>
-        <Text style={styles.qIndex}>
-          Q {questionIndex + 1} / {total}
-        </Text>
+      {/* Question panel */}
+      <View style={styles.panel}>
+        <Text style={styles.panelLabel}>QUESTION</Text>
+        <Text style={styles.panelValue}>{questionIndex + 1}</Text>
+        <Text style={styles.panelDenom}>/ {total}</Text>
       </View>
 
+      {/* Score panel */}
+      <View style={styles.panel}>
+        <Text style={styles.panelLabel}>SCORE</Text>
+        <Text style={[styles.panelValue, styles.scoreValue]}>{score}</Text>
+      </View>
+
+      {/* Pause */}
       <TrackedPressable
         analyticsId="play.game.pause"
         onPress={onPause}
@@ -103,19 +115,16 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.teal500,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   leftCol: {
     flex: 1,
   },
-  rightCol: {
-    alignItems: 'flex-end',
-    marginRight: 12,
-  },
   title: {
     fontFamily: 'Georgia',
-    fontSize: 18,
+    fontSize: 16,
+    fontWeight: '700',
     color: COLORS.white,
   },
   hint: {
@@ -124,17 +133,36 @@ const styles = StyleSheet.create({
     color: COLORS.teal100,
     marginTop: 4,
   },
-  score: {
+  panel: {
+    backgroundColor: 'rgba(12, 18, 32, 0.4)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 8,
+    minWidth: 56,
+    alignItems: 'center',
+  },
+  panelLabel: {
     fontFamily: 'Georgia',
-    fontSize: 22,
+    fontSize: 9,
     fontWeight: '700',
+    color: COLORS.teal100,
+    letterSpacing: 0.6,
+  },
+  panelValue: {
+    fontFamily: 'Georgia',
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.white,
+    lineHeight: 22,
+  },
+  scoreValue: {
     color: COLORS.amber300,
   },
-  qIndex: {
+  panelDenom: {
     fontFamily: 'Georgia',
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.teal100,
-    marginTop: 2,
   },
   pauseBtn: {
     padding: 4,

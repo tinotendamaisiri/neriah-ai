@@ -2,6 +2,10 @@
 //
 // Full-screen pause modal. Renders only when `visible`. Resume returns to
 // play; Quit ends the session via the engine and routes to PlaySessionEnd.
+//
+// Visual treatment ported from GemmaPlay's PauseOverlay: dark slate scrim,
+// big bold "Paused" headline, two stacked CTAs (Resume primary teal,
+// Quit muted neutral).
 
 import React from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
@@ -23,33 +27,30 @@ const PauseOverlay: React.FC<Props> = ({ visible, onResume, onQuit }) => {
       onRequestClose={onResume}
     >
       <View style={styles.scrim}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Paused</Text>
-          <Text style={styles.body}>Take a breath. Pick up where you left off.</Text>
-          <View style={styles.btnRow}>
-            <TrackedPressable
-              analyticsId="play.game.pause.resume"
-              onPress={onResume}
-              style={({ pressed }) => [
-                styles.btn,
-                styles.btnPrimary,
-                { opacity: pressed ? 0.85 : 1 },
-              ]}
-            >
-              <Text style={styles.btnPrimaryText}>Resume</Text>
-            </TrackedPressable>
-            <TrackedPressable
-              analyticsId="play.game.pause.quit"
-              onPress={onQuit}
-              style={({ pressed }) => [
-                styles.btn,
-                styles.btnOutline,
-                { opacity: pressed ? 0.85 : 1 },
-              ]}
-            >
-              <Text style={styles.btnOutlineText}>Quit</Text>
-            </TrackedPressable>
-          </View>
+        <Text style={styles.title}>Paused</Text>
+        <View style={styles.buttonStack}>
+          <TrackedPressable
+            analyticsId="play.game.pause.resume"
+            onPress={onResume}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnPrimary,
+              { opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Text style={styles.btnPrimaryText}>Resume</Text>
+          </TrackedPressable>
+          <TrackedPressable
+            analyticsId="play.game.pause.quit"
+            onPress={onQuit}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnSecondary,
+              { opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Text style={styles.btnSecondaryText}>Quit to picker</Text>
+          </TrackedPressable>
         </View>
       </View>
     </Modal>
@@ -59,62 +60,45 @@ const PauseOverlay: React.FC<Props> = ({ visible, onResume, onQuit }) => {
 const styles = StyleSheet.create({
   scrim: {
     flex: 1,
-    backgroundColor: 'rgba(4, 52, 44, 0.7)',
+    backgroundColor: 'rgba(12, 18, 32, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 30,
   },
-  card: {
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    paddingVertical: 26,
-    paddingHorizontal: 24,
-    width: '100%',
-    maxWidth: 360,
-    alignItems: 'center',
-  },
   title: {
     fontFamily: 'Georgia',
-    fontSize: 24,
-    color: COLORS.teal700,
-    marginBottom: 8,
+    fontSize: 44,
+    fontWeight: '700',
+    color: '#F1F5F9',
+    marginBottom: 32,
   },
-  body: {
-    fontFamily: 'Georgia',
-    fontSize: 14,
-    color: COLORS.gray500,
-    textAlign: 'center',
-    marginBottom: 22,
-  },
-  btnRow: {
-    flexDirection: 'row',
+  buttonStack: {
     width: '100%',
-    justifyContent: 'space-between',
+    maxWidth: 280,
   },
   btn: {
-    flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
-    marginHorizontal: 4,
+    marginBottom: 12,
   },
   btnPrimary: {
     backgroundColor: COLORS.teal500,
   },
   btnPrimaryText: {
     fontFamily: 'Georgia',
-    fontSize: 16,
+    fontSize: 17,
+    fontWeight: '700',
     color: COLORS.white,
   },
-  btnOutline: {
-    borderWidth: 1.5,
-    borderColor: COLORS.teal500,
-    backgroundColor: 'transparent',
+  btnSecondary: {
+    backgroundColor: '#334155',
   },
-  btnOutlineText: {
+  btnSecondaryText: {
     fontFamily: 'Georgia',
     fontSize: 16,
-    color: COLORS.teal500,
+    fontWeight: '700',
+    color: COLORS.white,
   },
 });
 
