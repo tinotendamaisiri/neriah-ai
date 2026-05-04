@@ -15,6 +15,8 @@ import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import {
   getLiteRTState,
   generateResponse,
+  generateResponseWithImage,
+  isMultimodalSupported,
   buildGradingPrompt,
   buildTutorPrompt,
   buildAssistantPrompt,
@@ -27,7 +29,9 @@ import {
 export type { OnDeviceUserContext };
 import { enqueue } from './offlineQueue';
 import type { QueuedScan } from './offlineQueue';
-import { recognizePages } from './ocr';
+import { isOcrAvailable, recognizePages, recognizeTextInImage } from './ocr';
+import { extractAttachmentText } from './clientFileExtract';
+import { track } from './analytics';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,7 +91,10 @@ export function modelVariantForRequest(_requestType: AIRequestType): ModelVarian
  * @param requestType  Determines which model variant must be loaded for on-device.
  */
 export async function resolveRoute(requestType: AIRequestType): Promise<AIRoute> {
-  if (Platform.OS === 'web') return 'cloud';
+  if (Platform.OS === 'web') {
+    track('router.decision', { kind: requestType, route: 'cloud', reason: 'web_platform' }, { surface: 'router' });
+    return 'cloud';
+  }
 
   const netState = await NetInfo.fetch();
   // isInternetReachable can be null when unknown — treat null as reachable
@@ -99,7 +106,23 @@ export async function resolveRoute(requestType: AIRequestType): Promise<AIRoute>
   const needed = modelVariantForRequest(requestType);
   const modelLoaded = loadedModel === needed;
 
-  return routeRequest(isOnline, modelLoaded);
+  const route = routeRequest(isOnline, modelLoaded);
+  // Emit decision with the reason a dashboard would want to see — why
+  // we picked this route over the alternatives.
+  let reason: string;
+  if (route === 'cloud') {
+    reason = 'online';
+  } else if (route === 'on-device') {
+    reason = 'offline_with_model';
+  } else {
+    reason = isOnline ? 'unknown' : 'offline_no_model';
+  }
+  track(
+    'router.decision',
+    { kind: requestType, route, reason, is_online: isOnline, model_loaded: modelLoaded, model_variant: needed },
+    { surface: 'router' },
+  );
+  return route;
 }
 
 // ── Unavailable helpers ───────────────────────────────────────────────────────
@@ -335,7 +358,8 @@ export async function tutorOnDevice(
   onToken?: (partial: string) => void,
 ): Promise<string> {
   const prompt = buildTutorPrompt(history, userMessage, userContext);
-  return generateResponse(prompt, onToken);
+  const raw = await generateResponse(prompt, onToken);
+  return cleanLitertReply(raw);
 }
 
 /**
@@ -355,7 +379,242 @@ export async function assistantOnDevice(
   onToken?: (partial: string) => void,
 ): Promise<string> {
   const prompt = buildAssistantPrompt(action, history, userMessage, userContext);
-  return generateResponse(prompt, onToken);
+  const raw = await generateResponse(prompt, onToken);
+  return cleanLitertReply(raw);
+}
+
+// ── Multimodal counterparts (Gemma 4 vision) ─────────────────────────────────
+//
+// Same prompt builders as text-only, but dispatched via
+// generateResponseWithImage so the model attends to the image alongside the
+// templated chat. Caller must guard with isMultimodalSupported() — these
+// throw on iOS until the XCFramework rebuild lands.
+
+/**
+ * Vision-aware tutor turn. Same prompt template as tutorOnDevice; the image
+ * is delivered to the model as a parallel input.
+ */
+export async function tutorOnDeviceWithImage(
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userMessage: string,
+  imagePath: string,
+  userContext?: OnDeviceUserContext,
+): Promise<string> {
+  const prompt = buildTutorPrompt(history, userMessage, userContext);
+  const raw = await generateResponseWithImage(prompt, imagePath);
+  return cleanLitertReply(raw);
+}
+
+/**
+ * Vision-aware assistant turn. Same prompt template as assistantOnDevice;
+ * the image is delivered to the model as a parallel input.
+ */
+export async function assistantOnDeviceWithImage(
+  action: AssistantOnDeviceActionType,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userMessage: string,
+  imagePath: string,
+  userContext?: OnDeviceUserContext,
+): Promise<string> {
+  const prompt = buildAssistantPrompt(action, history, userMessage, userContext);
+  const raw = await generateResponseWithImage(prompt, imagePath);
+  return cleanLitertReply(raw);
+}
+
+/**
+ * Result of an offline image-to-text flow used by the tutor / assistant
+ * screens. `kind: 'replied'` means OCR extracted readable text and LiteRT
+ * produced an answer — show it directly. `kind: 'no_text'` means OCR
+ * returned nothing useful (object photo, blurry image, decorative meme)
+ * — caller should fall back to the offline queue. `kind: 'unavailable'`
+ * means the OCR module isn't linked at all (Expo Go) — caller should
+ * also fall back to the queue.
+ */
+export type OfflineImageResult =
+  | { kind: 'replied'; reply: string; extractedText: string }
+  | { kind: 'no_text' }
+  | { kind: 'unavailable' }
+  | { kind: 'extraction_error'; error: string }
+  | { kind: 'runner_error';     error: string };
+
+/** Minimum OCR'd characters we treat as "this image has readable content".
+ *  Below this we fall back to the offline queue rather than feeding the
+ *  model a 3-character snippet that produces a hallucinated answer. */
+const _OCR_MIN_USEFUL_CHARS = 12;
+
+/**
+ * Try to answer an image-attached message fully offline.
+ *
+ * Strategy:
+ *   1. If the loaded model supports multimodal (Gemma 4 vision) AND the
+ *      caller supplied a `multimodalRunner`, send the image directly to
+ *      the model — no OCR step. This is what handles photos of objects,
+ *      scenery, anything without readable text. Android does this today;
+ *      iOS will pick it up automatically once our XCFramework rebuild
+ *      links the vision ops.
+ *   2. Otherwise fall back to OCR + text-only LiteRT: extract text from
+ *      the image with ML Kit, fold it into the user's message, dispatch
+ *      via the text `runner`. Works for homework page photos and
+ *      anything text-bearing.
+ *   3. If neither path produces a reply, return one of the non-'replied'
+ *      result kinds so the caller can queue for cloud.
+ *
+ * `runner` is the text-only fallback path (tutorOnDevice / assistantOnDevice).
+ * `multimodalRunner` is the vision path (tutorOnDeviceWithImage etc.).
+ */
+export async function imageToOnDeviceReply(
+  imageUri: string,
+  userMessage: string,
+  runner: (combinedMessage: string) => Promise<string>,
+  multimodalRunner?: (msg: string, imagePath: string) => Promise<string>,
+): Promise<OfflineImageResult> {
+  // ── Vision path — preferred when the model + platform supports it ────────
+  if (multimodalRunner && isMultimodalSupported()) {
+    try {
+      const userText = userMessage?.trim() || 'Describe what you see in this image.';
+      const reply = await multimodalRunner(userText, imageUri);
+      return { kind: 'replied', reply, extractedText: '' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[router] multimodal LiteRT call failed, falling back to OCR:', msg);
+      // Fall through to OCR — gives us a second chance for text-bearing
+      // images even if the vision call had a transient error.
+    }
+  }
+
+  // ── OCR fallback path — used on iOS today, and on Android when the
+  //    vision call failed or the caller didn't provide a multimodalRunner.
+  if (!isOcrAvailable()) return { kind: 'unavailable' };
+
+  let extracted = '';
+  try {
+    extracted = await recognizeTextInImage(imageUri);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[ocr] image OCR threw:', msg);
+    return { kind: 'extraction_error', error: msg };
+  }
+
+  console.log(`[ocr] image OCR extracted ${extracted.length} chars`);
+
+  if (!extracted || extracted.length < _OCR_MIN_USEFUL_CHARS) {
+    return { kind: 'no_text' };
+  }
+
+  const capped = extracted.slice(0, 4000);
+  const trailing = extracted.length > 4000 ? '\n[...attachment truncated]' : '';
+
+  const combined = userMessage
+    ? `${userMessage}\n\n[Text extracted from the attached image]\n${capped}${trailing}`
+    : `Please help me with what's in this image.\n\n[Text extracted from the attached image]\n${capped}${trailing}`;
+
+  try {
+    const reply = await runner(combined);
+    return { kind: 'replied', reply, extractedText: extracted };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[router] LiteRT runner failed for image:', msg);
+    return { kind: 'runner_error', error: msg };
+  }
+}
+
+/**
+ * Try to answer a PDF/Word-attached message fully offline:
+ *   1. Extract text client-side via clientFileExtract.
+ *   2. If extraction yields substantial text, fold it into the user
+ *      message and call the supplied LiteRT runner.
+ *   3. Otherwise return 'no_text' so the caller can queue.
+ *
+ * Same shape as imageToOnDeviceReply so screens can use one pattern for
+ * all attachment types.
+ */
+export async function documentToOnDeviceReply(
+  base64: string,
+  mediaType: 'pdf' | 'word',
+  fileName: string,
+  userMessage: string,
+  runner: (combinedMessage: string) => Promise<string>,
+): Promise<OfflineImageResult> {
+  let extracted = '';
+  try {
+    extracted = await extractAttachmentText(base64, mediaType);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[clientFileExtract] ${mediaType} extraction threw:`, msg);
+    return { kind: 'extraction_error', error: msg };
+  }
+
+  console.log(`[clientFileExtract] ${mediaType} ${fileName}: extracted ${extracted.length} chars`);
+
+  if (!extracted || extracted.length < _OCR_MIN_USEFUL_CHARS) {
+    return { kind: 'no_text' };
+  }
+
+  const capped = extracted.slice(0, 4000);
+  const trailing = extracted.length > 4000 ? '\n[...attachment truncated]' : '';
+
+  const label = mediaType === 'pdf' ? 'PDF' : 'Word document';
+  const combined = userMessage
+    ? `${userMessage}\n\n[Text extracted from the attached ${label} "${fileName}"]\n${capped}${trailing}`
+    : `Please help me with the attached ${label}.\n\n[Text extracted from "${fileName}"]\n${capped}${trailing}`;
+
+  try {
+    const reply = await runner(combined);
+    return { kind: 'replied', reply, extractedText: extracted };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[router] LiteRT runner failed for ${mediaType}:`, msg);
+    return { kind: 'runner_error', error: msg };
+  }
+}
+
+/**
+ * Strip artefacts that LiteRT prompts can leak into the visible reply.
+ *
+ * The on-device prompts end with a speaker tag (e.g. "Neriah:" or
+ * "Teacher: ... \nNeriah:") to anchor the model's continuation. Gemma
+ * occasionally echoes the tag back at the start of the reply; users see
+ * "Neriah: Hello..." instead of "Hello...". It also sometimes generates
+ * a follow-up "Student:" turn that we want to truncate.
+ *
+ * Conservative: only strip well-known prefixes/suffixes, never modify
+ * the model's actual content.
+ */
+function cleanLitertReply(text: string): string {
+  if (!text) return text;
+  let cleaned = text;
+
+  // 1. Truncate at the first STOP token. Anything after a closing turn
+  //    is a hallucinated next turn that we don't want to show.
+  const firstStop = cleaned.search(/<\/?\s*(?:end_of_turn|eos|end)\b/i);
+  if (firstStop !== -1) cleaned = cleaned.slice(0, firstStop);
+
+  // 2. GLOBAL strip of every chat-template token, in any of the forms
+  //    Gemma can emit when its tokenizer didn't fold them into special
+  //    tokens at decode time:
+  //      <start_of_turn>     <end_of_turn>
+  //      </start_of_turn>    </end_of_turn>
+  //      <start_of_turn>user <start_of_turn>model
+  //      <bos> <eos>
+  //    Match literal angle-bracketed tokens and bare-tag variants, both
+  //    case-insensitive. A second pass handles role labels left behind
+  //    on their own line ("model\n" / "user\n").
+  cleaned = cleaned
+    .replace(/<\s*\/?\s*(?:start_of_turn|end_of_turn|bos|eos|sot|eot)(?:\s+[a-z]+)?\s*>/gi, '')
+    .replace(/<\s*\/?\s*(?:start_of_turn|end_of_turn|bos|eos|sot|eot)\b/gi, '')
+    .replace(/(?:^|\n)\s*(?:model|user|assistant)\s*\n/gi, '\n');
+
+  // 3. Strip leading speaker tags Gemma sometimes echoes ("Neriah:", "Tutor:").
+  cleaned = cleaned.replace(/^\s*(?:neriah|tutor|assistant|model)\s*:\s*/i, '');
+
+  // 4. Defensive: if a free-form "Student:" / "Teacher:" prefix slips in
+  //    from old-format history, cut at the first one.
+  const turnMatch = cleaned.match(/\n\s*(?:student|teacher|user)\s*:/i);
+  if (turnMatch && turnMatch.index !== undefined) {
+    cleaned = cleaned.slice(0, turnMatch.index);
+  }
+
+  return cleaned.trim();
 }
 
 // ── React hook ────────────────────────────────────────────────────────────────

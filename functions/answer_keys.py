@@ -27,6 +27,7 @@ from shared.gemma_client import (
 )
 from shared.router import AIRequestType, route_ai_request
 from shared.models import AnswerKey
+from shared.observability import instrument_route
 from shared.submission_codes import generate_unique_submission_code
 from shared.user_context import get_user_context
 from shared.weakness_tracker import update_student_weaknesses
@@ -264,6 +265,7 @@ def _questions_from_file(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @answer_keys_bp.get("/answer-keys")
+@instrument_route("answer_keys.list", "answer_keys")
 def list_answer_keys():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -328,6 +330,7 @@ def list_answer_keys():
 
 
 @answer_keys_bp.post("/answer-keys")
+@instrument_route("answer_keys.create", "answer_keys")
 def create_answer_key():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -536,6 +539,7 @@ def create_answer_key():
 
 
 @answer_keys_bp.put("/answer-keys/<key_id>")
+@instrument_route("answer_keys.update", "answer_keys")
 def update_answer_key(key_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -692,6 +696,7 @@ def update_answer_key(key_id: str):
 
 
 @answer_keys_bp.get("/answer-keys/<key_id>/questions")
+@instrument_route("answer_keys.questions", "answer_keys")
 def answer_key_questions(key_id: str):
     """
     Student-safe — return question texts and marks for an answer key.
@@ -732,6 +737,7 @@ def answer_key_questions(key_id: str):
 
 
 @answer_keys_bp.post("/answer-keys/<key_id>/close")
+@instrument_route("answer_keys.close", "answer_keys")
 def close_answer_key(key_id: str):
     """
     Close submissions for an answer key and trigger the Cloud Run batch grading job.
@@ -803,6 +809,7 @@ def _trigger_batch_grading_job(answer_key_id: str) -> None:
 
 
 @answer_keys_bp.delete("/answer-keys/<key_id>")
+@instrument_route("answer_keys.delete", "answer_keys")
 def delete_answer_key(key_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -821,6 +828,7 @@ def delete_answer_key(key_id: str):
 # ── Generate marking scheme from question paper image ─────────────────────────
 
 @answer_keys_bp.post("/answer-keys/generate")
+@instrument_route("answer_keys.generate", "answer_keys")
 def generate_answer_key_scheme():
     """
     POST /api/answer-keys/generate
@@ -883,6 +891,7 @@ _MEDIA_TYPE_SHORT_TO_EXT: dict[str, str] = {
 
 
 @homework_bp.post("/homework/generate-scheme")
+@instrument_route("homework.generate_scheme", "homework")
 def create_homework_with_scheme():
     """
     POST /api/homework/generate-scheme
@@ -1159,6 +1168,7 @@ def _download_image_from_url(url: str) -> bytes:
 
 
 @homework_bp.post("/homework/<homework_id>/generate-scheme")
+@instrument_route("homework.regenerate_scheme", "homework")
 def generate_scheme_from_homework(homework_id: str):
     """
     POST /api/homework/{homework_id}/generate-scheme
@@ -1210,6 +1220,7 @@ def generate_scheme_from_homework(homework_id: str):
 # ── POST /api/answer-keys/<key_id>/regenerate ────────────────────────────────
 
 @answer_keys_bp.post("/answer-keys/<key_id>/regenerate")
+@instrument_route("answer_keys.regenerate", "answer_keys")
 def regenerate_answer_key_scheme(key_id: str):
     """
     POST /api/answer-keys/{key_id}/regenerate
@@ -1320,6 +1331,7 @@ def regenerate_answer_key_scheme(key_id: str):
 # ── PATCH /api/homework/{id} ──────────────────────────────────────────────────
 
 @homework_bp.patch("/homework/<homework_id>")
+@instrument_route("homework.patch", "homework")
 def patch_homework(homework_id: str):
     """
     Update homework fields.
@@ -1350,6 +1362,7 @@ def patch_homework(homework_id: str):
 # ── POST /api/homework/{id}/grade-all ─────────────────────────────────────────
 
 @homework_bp.post("/homework/<homework_id>/grade-all")
+@instrument_route("homework.grade_all", "homework")
 def grade_all_submissions(homework_id: str):
     """
     Synchronous batch grading — grades every pending submission using Gemma 4.
@@ -1582,6 +1595,7 @@ def grade_all_submissions(homework_id: str):
 # ── POST /api/homework/{id}/approve-all ───────────────────────────────────────
 
 @homework_bp.post("/homework/<homework_id>/approve-all")
+@instrument_route("homework.approve_all", "homework")
 def approve_all_submissions(homework_id: str):
     """
     Batch-approve all graded submissions for a homework.

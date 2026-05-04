@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
 from shared.firestore_client import get_doc, upsert
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 push_bp = Blueprint("push", __name__)
@@ -21,6 +22,7 @@ _EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
 @push_bp.post("/push/register")
+@instrument_route("push.register", "push")
 def register_push_token():
     """Store the Expo push token for the authenticated teacher or student."""
     user_id, err = require_role(request, "teacher", "student")

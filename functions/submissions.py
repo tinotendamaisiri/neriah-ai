@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.config import settings
 from shared.firestore_client import delete_doc, get_doc, query, upsert
+from shared.observability import instrument_route
 from shared.training_data import collect_training_sample
 from shared.weakness_tracker import update_student_weaknesses
 
@@ -102,6 +103,7 @@ def _cascade_delete_submission(
 # ── GET /api/submissions ───────────────────────────────────────────────────────
 
 @submissions_bp.get("/submissions")
+@instrument_route("submissions.list", "submissions")
 def list_submissions():
     """
     List student submissions for a homework or class.
@@ -212,6 +214,7 @@ def list_submissions():
 # ── POST /api/submissions/<sub_id>/approve ────────────────────────────────────
 
 @submissions_bp.post("/submissions/<sub_id>/approve")
+@instrument_route("submissions.approve", "submissions")
 def approve_submission(sub_id: str):
     """
     Approve a graded submission, making the annotated result visible to the student.
@@ -394,6 +397,7 @@ def _dispatch_student_reply_secondary_channels(
 # ── POST /api/submissions/approve-bulk ───────────────────────────────────────
 
 @submissions_bp.post("/submissions/approve-bulk")
+@instrument_route("submissions.approve_bulk", "submissions")
 def approve_bulk_submissions():
     """
     Bulk-approve a list of graded submissions in a single call.
@@ -554,6 +558,7 @@ def approve_bulk_submissions():
 # ── PATCH /api/submissions/<sub_id>/override ──────────────────────────────────
 
 @submissions_bp.patch("/submissions/<sub_id>/override")
+@instrument_route("submissions.override", "submissions")
 def override_submission(sub_id: str):
     """
     Teacher override: update score and/or feedback on a graded submission.
@@ -638,6 +643,7 @@ def override_submission(sub_id: str):
 # ── DELETE /api/submissions/<sub_id> ──────────────────────────────────────────
 
 @submissions_bp.delete("/submissions/<sub_id>")
+@instrument_route("submissions.delete", "submissions")
 def delete_submission(sub_id: str):
     """Cascade-delete: mark doc + student_submissions row + annotated GCS blob.
     Weakness profile is intentionally NOT rolled back — out of scope."""
@@ -671,6 +677,7 @@ def delete_submission(sub_id: str):
 # ── DELETE /api/marks/<mark_id> ───────────────────────────────────────────────
 
 @submissions_bp.delete("/marks/<mark_id>")
+@instrument_route("marks.delete_cascade", "submissions")
 def delete_mark_cascade(mark_id: str):
     """Same cascade as DELETE /submissions/<id>, keyed by mark_id. Used by
     mobile callers that have the MarkResult payload but not the linked
@@ -714,6 +721,7 @@ def delete_mark_cascade(mark_id: str):
 # ── GET /api/assignments ─────────────────────────────────────────────────────
 
 @submissions_bp.get("/assignments")
+@instrument_route("assignments.list", "submissions")
 def student_assignments():
     """
     Student-facing — return open assignments (answer keys) for the student's class.
@@ -738,10 +746,23 @@ def student_assignments():
     if not class_id or class_id == "pending":
         return jsonify([]), 200
 
-    status = request.args.get("status", "open").strip().lower()
-    logger.debug("[assignments] student=%s class_id=%s status=%s", student_id, class_id, status)
+    status_filter = request.args.get("status", "open").strip().lower()
+    logger.info(
+        "[assignments] student=%s class_id=%s status_filter=%s",
+        student_id, class_id, status_filter,
+    )
 
     keys = query("answer_keys", [("class_id", "==", class_id)], order_by="created_at")
+
+    # Diagnostic: surface every answer-key state we found so a missing-count
+    # report can be debugged from the function logs without re-querying Firestore.
+    status_counts: dict[str, int] = {}
+    for k in keys:
+        status_counts[k.get("status") or "<none>"] = status_counts.get(k.get("status") or "<none>", 0) + 1
+    logger.info(
+        "[assignments] class_id=%s total_keys=%d statuses=%s",
+        class_id, len(keys), status_counts,
+    )
 
     # Check which answer keys this student has already submitted to
     student_subs = query("student_submissions", [
@@ -751,12 +772,22 @@ def student_assignments():
     submitted_key_ids = {s.get("answer_key_id") for s in student_subs}
 
     out = []
+    skipped_by_reason: dict[str, int] = {}
     for k in keys:
-        # Filter by open_for_submission unless status=all
-        if status == "open" and not k.get("open_for_submission", False):
+        key_status = (k.get("status") or "").lower()
+
+        # Always skip "draft" — these are teacher work-in-progress that hasn't
+        # been published yet. Including them would leak unfinished work.
+        if key_status == "draft":
+            skipped_by_reason["draft"] = skipped_by_reason.get("draft", 0) + 1
             continue
-        # Skip draft/pending_setup keys — students shouldn't see them
-        if k.get("status") in ("draft", "pending_setup"):
+
+        # Filter by open_for_submission ONLY when caller asked for "open".
+        # status=all should return everything else (including pending_setup
+        # so the student can see "Coming soon" homeworks the teacher has
+        # announced but not yet finished setting up).
+        if status_filter == "open" and not k.get("open_for_submission", False):
+            skipped_by_reason["closed_or_unopened"] = skipped_by_reason.get("closed_or_unopened", 0) + 1
             continue
 
         out.append({
@@ -767,11 +798,397 @@ def student_assignments():
             "education_level": k.get("education_level"),
             "due_date": k.get("due_date"),
             "open_for_submission": bool(k.get("open_for_submission", False)),
+            # Surface the answer-key lifecycle state so the client can render
+            # an appropriate badge: pending_setup → "Coming soon",
+            # closed → "Closed", open → submit button.
+            "status": k.get("status"),
             "created_at": k.get("created_at", ""),
             "has_pending_submission": k["id"] in submitted_key_ids,
         })
 
     # Most recent first
     out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    logger.info("[assignments] returning %d assignments for class_id=%s", len(out), class_id)
+    logger.info(
+        "[assignments] returning %d/%d for class_id=%s skipped=%s",
+        len(out), len(keys), class_id, skipped_by_reason,
+    )
     return jsonify(out), 200
+
+
+# ── POST /api/submissions/student ────────────────────────────────────────────
+
+@submissions_bp.post("/submissions/student")
+@instrument_route("submissions.student_create", "submissions")
+def student_create_submission():
+    """
+    Student-channel submission. Mobile uploads pages via multipart with
+    fields: student_id, class_id, answer_key_id, source, images[].
+
+    Mirrors the email_poller pipeline so the App channel produces the
+    same Mark + student_submissions shape as the WhatsApp/email channels:
+    grade immediately on intake; teacher must approve before the student
+    sees the result. Without this row the Results tab is permanently
+    empty for app-submitted homework.
+    """
+    student_id_jwt, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    student_id = (request.form.get("student_id") or "").strip()
+    class_id = (request.form.get("class_id") or "").strip()
+    answer_key_id = (request.form.get("answer_key_id") or "").strip()
+
+    if student_id and student_id != student_id_jwt:
+        return jsonify({"error": "forbidden"}), 403
+    student_id = student_id or student_id_jwt
+
+    if not class_id or not answer_key_id:
+        return jsonify({"error": "class_id and answer_key_id are required"}), 400
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    answer_key = get_doc("answer_keys", answer_key_id)
+    if not answer_key:
+        return jsonify({"error": "Answer key not found"}), 404
+    if answer_key.get("class_id") != class_id:
+        return jsonify({"error": "Answer key does not belong to this class"}), 400
+    if not answer_key.get("open_for_submission", False):
+        return jsonify({"error": "This homework is not currently accepting submissions."}), 400
+    if not answer_key.get("questions"):
+        return jsonify({"error": "Marking scheme not ready — please ask your teacher."}), 400
+
+    # One active submission per (student, answer_key). Mobile shows a
+    # "Withdraw and resubmit" UI on 409.
+    existing = query("student_submissions", [
+        ("student_id", "==", student_id),
+        ("answer_key_id", "==", answer_key_id),
+    ]) or []
+    if existing:
+        return jsonify({
+            "error": "You already have a submission for this assignment. Withdraw it first to resubmit."
+        }), 409
+
+    files = request.files.getlist("images")
+    if not files:
+        return jsonify({"error": "No pages attached"}), 400
+    if len(files) > 5:
+        return jsonify({"error": "You can submit between 1 and 5 pages."}), 400
+
+    pages_bytes: list[bytes] = []
+    for f in files:
+        data = f.read()
+        if data:
+            pages_bytes.append(data)
+    if not pages_bytes:
+        return jsonify({"error": "No pages attached"}), 400
+
+    from shared.orientation import normalize_to_upright
+    pages_bytes = [normalize_to_upright(p) for p in pages_bytes]
+
+    from shared.gemma_client import (
+        check_image_quality_strict,
+        grade_submission_strict_multi,
+    )
+    try:
+        quality = check_image_quality_strict(pages_bytes[0])
+    except Exception:
+        quality = None
+    if quality is not None and not quality.get("pass", True):
+        return jsonify({
+            "error": quality.get("suggestion") or quality.get("reason")
+                     or "First page is unreadable. Please retake the photo."
+        }), 422
+
+    education_level = answer_key.get("education_level") or "Form 4"
+    try:
+        raw_verdicts = grade_submission_strict_multi(
+            pages_bytes, answer_key, education_level,
+        )
+    except Exception:
+        logger.exception(
+            "student-app: grading failed for student=%s ak=%s",
+            student_id, answer_key_id,
+        )
+        return jsonify({
+            "error": "Grading temporarily failed. Please try again in a few minutes."
+        }), 503
+
+    # Cap awarded marks against the answer key + drop hallucinated questions.
+    questions = answer_key.get("questions", []) or []
+    max_per_q: dict[int, float] = {}
+    for q in questions:
+        try:
+            qn = int(q.get("question_number"))
+            max_per_q[qn] = float(q.get("marks", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    total_max = float(answer_key.get("total_marks") or sum(max_per_q.values()) or 1)
+
+    cleaned: list[dict] = []
+    for v in raw_verdicts:
+        if not isinstance(v, dict):
+            continue
+        try:
+            qn = int(v.get("question_number"))
+        except (TypeError, ValueError):
+            continue
+        if qn not in max_per_q:
+            continue
+        cap = max_per_q[qn]
+        try:
+            awarded = max(0.0, min(float(v.get("awarded_marks", 0) or 0), cap))
+        except (TypeError, ValueError):
+            awarded = 0.0
+        v["awarded_marks"] = awarded
+        v["max_marks"] = cap
+        v["page_index"] = int(v.get("page_index", 0) or 0)
+        cleaned.append(v)
+    cleaned.sort(key=lambda v: int(v["question_number"]))
+
+    score = min(sum(v["awarded_marks"] for v in cleaned), total_max)
+    percentage = round(score / total_max * 100, 1) if total_max else 0.0
+
+    from shared.annotator import annotate_pages
+    from shared.gcs_client import generate_signed_url, upload_bytes
+    from shared.models import GradingVerdict, Mark, MarkSource
+
+    verdicts_pydantic = [GradingVerdict(**v) for v in cleaned]
+    annotated_pages = annotate_pages(pages_bytes, cleaned)
+
+    import uuid as _uuid
+    mark_id = str(_uuid.uuid4())
+    page_urls: list[str] = []
+    annotated_urls: list[str] = []
+    for i, page_bytes in enumerate(pages_bytes):
+        orig_blob = f"submissions/{student_id}/{mark_id}/page_{i}.jpg"
+        upload_bytes(settings.GCS_BUCKET_SUBMISSIONS, orig_blob, page_bytes, public=False)
+        page_urls.append(generate_signed_url(
+            settings.GCS_BUCKET_SUBMISSIONS, orig_blob, expiry_minutes=60 * 24 * 7,
+        ))
+    for i, ann_bytes in enumerate(annotated_pages):
+        ann_blob = f"{mark_id}/annotated_{i}.jpg"
+        upload_bytes(settings.GCS_BUCKET_MARKED, ann_blob, ann_bytes, public=False)
+        annotated_urls.append(generate_signed_url(
+            settings.GCS_BUCKET_MARKED, ann_blob, expiry_minutes=60 * 24 * 7,
+        ))
+
+    mark = Mark(
+        id=mark_id,
+        student_id=student_id,
+        class_id=class_id,
+        answer_key_id=answer_key_id,
+        teacher_id=answer_key.get("teacher_id", ""),
+        score=score,
+        max_score=total_max,
+        percentage=percentage,
+        verdicts=verdicts_pydantic,
+        marked_image_url=annotated_urls[0] if annotated_urls else None,
+        source=MarkSource.STUDENT_SUBMISSION,
+        approved=False,
+        page_count=len(pages_bytes),
+        page_urls=page_urls,
+        annotated_urls=annotated_urls,
+    )
+    upsert("marks", mark.id, mark.model_dump())
+
+    sub_id = f"sub_{_uuid.uuid4().hex[:12]}"
+    now = _now_iso()
+    upsert("student_submissions", sub_id, {
+        "id": sub_id,
+        "student_id": student_id,
+        "class_id": class_id,
+        "answer_key_id": answer_key_id,
+        "teacher_id": answer_key.get("teacher_id", ""),
+        "mark_id": mark.id,
+        "status": "graded",
+        "source": MarkSource.STUDENT_SUBMISSION,
+        "image_urls": list(annotated_urls),
+        "submitted_at": now,
+        "graded_at": now,
+        "score": score,
+        "max_score": total_max,
+        "percentage": percentage,
+    })
+
+    return jsonify({"mark_id": mark.id}), 200
+
+
+# ── GET /api/submissions/student/<student_id> ────────────────────────────────
+
+@submissions_bp.get("/submissions/student/<student_id>")
+@instrument_route("submissions.student_list", "submissions")
+def student_submissions_list(student_id: str):
+    """
+    Student fetches their own submissions (pending + approved) for the
+    Results tab. Only the calling student may read their own list.
+
+    Status mapping (backend → FE): teacher must approve before a student
+    sees a grade, so only backend `approved` rows surface as `graded`;
+    everything else (pending, grading, graded[unapproved], error) is
+    rendered as `pending` so the student can still see and optionally
+    withdraw it.
+    """
+    req_student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    if req_student_id != student_id:
+        return jsonify({"error": "forbidden"}), 403
+
+    # Wrap in try/except so a missing index (or any other Firestore hiccup)
+    # on student_submissions does NOT take down the whole Results screen —
+    # the synthesised entries from approved_marks below are enough on their
+    # own to populate the screen with graded work. A 500 here was returning
+    # an empty Results tab even when the student had real graded marks.
+    try:
+        subs = query(
+            "student_submissions",
+            [("student_id", "==", student_id)],
+            order_by="submitted_at",
+            direction="DESCENDING",
+        )
+    except Exception:
+        logger.warning(
+            "submissions.student_list: student_submissions query failed for %s — "
+            "falling back to approved-marks only",
+            student_id,
+            exc_info=True,
+        )
+        subs = []
+
+    # Also pull every approved mark for this student. The student_submissions
+    # collection only has companion rows for the channels that explicitly
+    # write them (App, WhatsApp via the recently-added upsert, email_poller).
+    # Teacher-scan marks (`/api/mark` POST) and any pre-existing approved
+    # marks have no `student_submissions` row, so the Results tab would show
+    # them as missing even though the Home tab "Recent Feedback" surfaces
+    # them via `/marks/student/{id}`. Merging here keeps both views in sync
+    # without changing the writers.
+    approved_marks = query(
+        "marks",
+        [("student_id", "==", student_id), ("approved", "==", True)],
+        order_by="timestamp",
+        direction="DESCENDING",
+    )
+
+    ak_cache: dict[str, dict | None] = {}
+    mark_cache: dict[str, dict | None] = {}
+    out: list[dict] = []
+    seen_mark_ids: set[str] = set()
+
+    for sub in subs:
+        backend_status = (sub.get("status") or "").lower()
+        fe_status = "graded" if backend_status == "approved" else "pending"
+
+        ak_id = sub.get("answer_key_id", "")
+        if ak_id and ak_id not in ak_cache:
+            ak_cache[ak_id] = get_doc("answer_keys", ak_id)
+        ak = ak_cache.get(ak_id) or {}
+        title = ak.get("title") or ak.get("subject") or "Submission"
+
+        sub_mark_id = sub.get("mark_id", "")
+        if sub_mark_id:
+            seen_mark_ids.add(sub_mark_id)
+
+        item: dict = {
+            "mark_id": sub_mark_id,
+            "answer_key_id": ak_id,
+            "answer_key_title": title,
+            "status": fe_status,
+            "submitted_at": sub.get("submitted_at", ""),
+        }
+
+        if fe_status == "graded":
+            if sub_mark_id and sub_mark_id not in mark_cache:
+                mark_cache[sub_mark_id] = get_doc("marks", sub_mark_id)
+            mark = mark_cache.get(sub_mark_id) or {}
+            item["graded_at"] = sub.get("approved_at") or sub.get("graded_at")
+            item["score"] = mark.get("score", sub.get("score", 0))
+            item["max_score"] = mark.get("max_score", sub.get("max_score", 0))
+            pct = mark.get("percentage", sub.get("percentage"))
+            if pct is not None:
+                item["percentage"] = pct
+            marked_url = mark.get("marked_image_url")
+            if not marked_url:
+                annotated = mark.get("annotated_urls") or []
+                if annotated:
+                    marked_url = annotated[0]
+            if marked_url:
+                item["marked_image_url"] = marked_url
+
+        out.append(item)
+
+    # Synthesize a "graded" entry for every approved mark that isn't already
+    # represented by a student_submissions row.
+    for mark in approved_marks:
+        mid = mark.get("id") or mark.get("mark_id") or ""
+        if not mid or mid in seen_mark_ids:
+            continue
+        ak_id = mark.get("answer_key_id", "")
+        if ak_id and ak_id not in ak_cache:
+            ak_cache[ak_id] = get_doc("answer_keys", ak_id)
+        ak = ak_cache.get(ak_id) or {}
+        title = ak.get("title") or ak.get("subject") or "Submission"
+        item = {
+            "mark_id": mid,
+            "answer_key_id": ak_id,
+            "answer_key_title": title,
+            "status": "graded",
+            "submitted_at": mark.get("timestamp", ""),
+            "graded_at": mark.get("approved_at") or mark.get("timestamp", ""),
+            "score": mark.get("score", 0),
+            "max_score": mark.get("max_score", 0),
+        }
+        pct = mark.get("percentage")
+        if pct is not None:
+            item["percentage"] = pct
+        marked_url = mark.get("marked_image_url")
+        if not marked_url:
+            annotated = mark.get("annotated_urls") or []
+            if annotated:
+                marked_url = annotated[0]
+        if marked_url:
+            item["marked_image_url"] = marked_url
+        out.append(item)
+
+    # Sort merged list newest-first by whichever timestamp is present.
+    out.sort(key=lambda r: r.get("submitted_at") or "", reverse=True)
+
+    return jsonify(out), 200
+
+
+# ── DELETE /api/submissions/student/<mark_id> ────────────────────────────────
+
+@submissions_bp.delete("/submissions/student/<mark_id>")
+@instrument_route("submissions.student_withdraw", "submissions")
+def student_withdraw_submission(mark_id: str):
+    """
+    Student withdraws their own pending submission, keyed by mark_id
+    (the FE only carries the mark_id at this point). Cascade-deletes the
+    student_submissions row + linked mark via the shared helper.
+
+    Refuses if the teacher has already approved the grade — at that
+    point the student has feedback and withdrawal is no longer valid.
+    """
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    rows = query("student_submissions", [("mark_id", "==", mark_id)])
+    if not rows:
+        return jsonify({"error": "Submission not found"}), 404
+    sub = rows[0]
+
+    if sub.get("student_id") != student_id:
+        return jsonify({"error": "forbidden"}), 403
+
+    if (sub.get("status") or "").lower() == "approved":
+        return jsonify({"error": "Already graded — cannot withdraw"}), 403
+
+    sub_with_id = {**sub, "id": sub.get("id")}
+    cascades = _cascade_delete_submission(
+        sub_with_id, sub.get("teacher_id", "") or f"student:{student_id}",
+    )
+    return jsonify({"deleted": True, "mark_id": mark_id, "cascades": cascades}), 200

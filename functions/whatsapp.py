@@ -30,6 +30,7 @@ from shared.gemma_client import (
     student_tutor,
 )
 from shared.models import AnswerKey, Class, Mark, Session, Student, WhatsAppState
+from shared.observability import instrument_route
 from shared.submission_codes import generate_unique_submission_code
 from shared.whatsapp_client import download_media, send_image, send_text
 from functions.teacher_whatsapp import (
@@ -80,6 +81,7 @@ _SEED_SCHOOLS = [
 # ─── Webhook verification (GET) ───────────────────────────────────────────────
 
 @whatsapp_bp.get("/whatsapp")
+@instrument_route("whatsapp.verify", "whatsapp")
 def whatsapp_verify():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
@@ -93,6 +95,7 @@ def whatsapp_verify():
 # ─── Incoming message (POST) ──────────────────────────────────────────────────
 
 @whatsapp_bp.post("/whatsapp")
+@instrument_route("whatsapp.webhook", "whatsapp")
 def whatsapp_webhook():
     # ── HMAC signature verification ───────────────────────────────────────────
     # Verifies X-Hub-Signature-256 sent by Meta to reject spoofed webhook calls.
@@ -593,6 +596,29 @@ def _handle_student_submission(phone: str, student: dict, media_id: str):
         approved=False,
     )
     upsert("marks", mark.id, mark.model_dump())
+
+    # Companion student_submissions row so the teacher's review queue
+    # and the student's Results tab can find this submission. Without
+    # this, WhatsApp grades exist as orphan Mark docs that no list query
+    # ever returns.
+    sub_id = f"sub_{uuid.uuid4().hex[:12]}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    upsert("student_submissions", sub_id, {
+        "id": sub_id,
+        "student_id": student["id"],
+        "class_id": class_id,
+        "answer_key_id": answer_key["id"],
+        "teacher_id": answer_key.get("teacher_id", ""),
+        "mark_id": mark.id,
+        "status": "graded",
+        "source": "student_whatsapp",
+        "image_urls": [marked_url] if marked_url else [],
+        "submitted_at": now_iso,
+        "graded_at": now_iso,
+        "score": score,
+        "max_score": max_score,
+        "percentage": percentage,
+    })
 
     # The graded image used to be sent back to the student here, before
     # the teacher had even seen it. That violated the "teacher approves

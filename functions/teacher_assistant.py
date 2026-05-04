@@ -24,8 +24,6 @@ nothing consumes the structured output as a persistable artifact today.
 
 from __future__ import annotations
 
-import base64
-import io
 import json
 import logging
 import re
@@ -46,6 +44,7 @@ from shared.guardrails import (
     validate_input,
     validate_output,
 )
+from shared.observability import instrument_route
 from shared.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
@@ -213,6 +212,78 @@ _STRUCTURED_ACTIONS = frozenset(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _strip_code_fence(raw: str) -> str:
+    """Strip leading ```<lang> and trailing ``` from raw, if present.
+
+    Used as a defensive cleanup so the user never sees a literal code fence
+    in chat. Matches ```json, ```javascript, ```python, ```text, plain ```,
+    and the unfenced trailing ``` on the last line.
+    """
+    if not raw:
+        return raw
+    s = raw.strip()
+    s = re.sub(r"^```[a-zA-Z]*\s*\n?", "", s)
+    s = re.sub(r"\n?```\s*$", "", s)
+    return s.strip()
+
+
+def _json_to_plain_text(obj, depth: int = 0) -> str:
+    """Convert an arbitrary JSON-shaped value to readable plain text.
+
+    Used when a structured action returns valid JSON whose schema doesn't
+    match what the frontend renders — we still want the user to see the
+    content, just never as raw JSON. Keys are turned into Title Case
+    headings, lists become numbered, scalars stay inline.
+    """
+    indent = "  " * depth
+    out: list[str] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            label = str(k).replace("_", " ").strip()
+            label = label[:1].upper() + label[1:] if label else label
+            if isinstance(v, (dict, list)):
+                if v:  # skip empty containers entirely
+                    out.append(f"{indent}{label}:")
+                    out.append(_json_to_plain_text(v, depth + 1))
+            elif v not in (None, "", []):
+                out.append(f"{indent}{label}: {v}")
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj, 1):
+            if isinstance(item, (dict, list)):
+                out.append(f"{indent}{i}.")
+                out.append(_json_to_plain_text(item, depth + 1))
+            else:
+                out.append(f"{indent}{i}. {item}")
+    else:
+        out.append(f"{indent}{obj}")
+    return "\n".join(line for line in out if line.strip())
+
+
+def _sanitize_user_visible_text(raw: str) -> str:
+    """Final scrub before any text reaches the user-facing `response` field.
+
+    Strips code fences, attempts to flatten any leftover JSON object to
+    readable plain text, and falls back to the raw (fence-stripped) string
+    if it really is just prose. Guarantees the chat bubble never shows
+    a literal ```json ... ``` block.
+    """
+    s = _strip_code_fence(raw or "")
+    t = s.lstrip()
+    if t and t[0] in "{[":
+        try:
+            return _json_to_plain_text(json.loads(s))
+        except (json.JSONDecodeError, ValueError):
+            # Truncation repair — last `}` followed by `]}` close
+            if s and not s.rstrip().endswith("}"):
+                last = s.rfind("}")
+                if last > 0:
+                    try:
+                        return _json_to_plain_text(json.loads(s[:last + 1] + "]}"))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+    return s
+
+
 def _parse_json_response(raw: str, fallback: dict) -> dict | None:
     """Extract and parse JSON from model response (strips ``` fences).
 
@@ -226,9 +297,7 @@ def _parse_json_response(raw: str, fallback: dict) -> dict | None:
     """
     _ = fallback  # accepted for backwards compat, not used here
     try:
-        clean = re.sub(r"```(?:json)?", "", raw).strip()
-        if clean.endswith("```"):
-            clean = clean[:-3].strip()
+        clean = _strip_code_fence(raw)
         try:
             return json.loads(clean)
         except (json.JSONDecodeError, ValueError):
@@ -660,58 +729,30 @@ def _call_model(
     message: str,
     image_bytes: bytes | None = None,
 ) -> str:
-    """Call Vertex AI. Never raises."""
-    try:
-        from shared.gemma_client import chat  # noqa: PLC0415
-        return chat(system, history, message, image_bytes)
-    except Exception:
-        logger.exception("teacher_assistant: model call failed")
-        return ""
+    """Call Vertex AI. Raises on failure so the route can return a real
+    error to the client.
+
+    Previously this caught every exception and returned an empty string,
+    which the route shipped as `response: ""`. The mobile UI then rendered
+    an empty AI bubble — visually identical to a successful reply, except
+    blank. Users couldn't tell whether the model had nothing to say or
+    whether something had crashed. Letting the route's outer try/except
+    catch the failure surfaces a proper "Something went wrong" message.
+    """
+    from shared.gemma_client import chat  # noqa: PLC0415
+    return chat(system, history, message, image_bytes)
 
 
 def _extract_file_text(file_data: str, media_type: str) -> tuple[bytes | None, str]:
-    """
-    Decode a base64-encoded file attachment.
-    Returns (image_bytes, extracted_text).
-    - For images: returns (bytes, "")
-    - For PDF/Word: returns (None, extracted_text)
-    - On error: returns (None, "")
-    """
-    try:
-        raw = base64.b64decode(file_data)
-    except Exception:
-        logger.warning("teacher_assistant: could not decode file_data")
-        return None, ""
-
-    if media_type == "image":
-        return raw, ""
-
-    if media_type == "pdf":
-        try:
-            import pdfplumber  # noqa: PLC0415
-            with pdfplumber.open(io.BytesIO(raw)) as pdf:
-                pages = [p.extract_text() or "" for p in pdf.pages[:20]]
-            return None, "\n\n".join(p for p in pages if p).strip()
-        except Exception:
-            logger.warning("teacher_assistant: PDF text extraction failed")
-            return None, ""
-
-    if media_type == "word":
-        try:
-            import docx  # noqa: PLC0415
-            doc = docx.Document(io.BytesIO(raw))
-            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-            return None, text.strip()
-        except Exception:
-            logger.warning("teacher_assistant: Word text extraction failed")
-            return None, ""
-
-    return None, ""
+    """Thin wrapper kept for callers — delegates to shared.file_attachments."""
+    from shared.file_attachments import extract_file_text  # noqa: PLC0415
+    return extract_file_text(file_data, media_type)
 
 
 # ── POST /api/teacher/assistant ───────────────────────────────────────────────
 
 @teacher_assistant_bp.post("/teacher/assistant")
+@instrument_route("ta.chat", "teacher_assistant")
 def teacher_assistant():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -869,8 +910,17 @@ def teacher_assistant():
 
     # ── Call model ────────────────────────────────────────────────────────────
     _t0 = time.time()
-    raw_response = _call_model(system, chat_history, augmented_message, image_bytes)
-    _latency_ms  = int((time.time() - _t0) * 1000)
+    try:
+        raw_response = _call_model(system, chat_history, augmented_message, image_bytes)
+    except Exception:
+        logger.exception("teacher_assistant: model call failed")
+        # Surface a real error to the client. The mobile screen shows the
+        # `error` field as a "Something went wrong" bubble; a missing or
+        # empty `response` would render as a silent empty bubble instead.
+        return jsonify({
+            "error": "AI assistant is temporarily unavailable. Please try again.",
+        }), 503
+    _latency_ms = int((time.time() - _t0) * 1000)
 
     # ── Parse structured outputs ──────────────────────────────────────────────
     # When the model returns plain text (e.g. "What topic would you like?"),
@@ -923,7 +973,11 @@ def teacher_assistant():
     if structured is not None:
         resp["structured"] = structured
     else:
-        resp["response"] = safe_text or ""
+        # Final scrub: strip any leftover ```json fence and flatten any JSON
+        # blob the model returned despite being asked for plain text. The
+        # frontend only renders this string verbatim, so anything we don't
+        # clean up here ends up in the chat bubble as raw markup.
+        resp["response"] = _sanitize_user_visible_text(safe_text or "")
 
     # Exportable actions include a flag so the client shows the "Export" button
     if action_type in ("create_homework", "create_quiz"):

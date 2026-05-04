@@ -31,6 +31,7 @@
 
 import { Platform } from 'react-native';
 import { ensureModelDownloaded, type ModelVariant as _ModelVariant } from './modelManager';
+import { track, trackError } from './analytics';
 
 // ── Native module interface ───────────────────────────────────────────────────
 // Hand-typed minimal surface — matches the public API described in
@@ -56,6 +57,10 @@ interface LiteRTInstance {
     prompt: string,
     onToken: (token: string, done: boolean) => void,
   ): void;
+  // Multimodal — Gemma 4 sees the image and the prompt together.
+  // imagePath is an absolute file path (file:// URIs accepted on Android;
+  // iOS support pending until our XCFramework links the vision ops).
+  sendMessageWithImage(message: string, imagePath: string): Promise<string>;
   deleteModel(fileName: string): Promise<void>;
   close(): void;
 }
@@ -178,7 +183,10 @@ export async function loadModel(
 ): Promise<void> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
   const lib = getLib();
-  if (!lib) throw new Error('react-native-litert-lm native module not linked. Rebuild the app after installing the package.');
+  if (!lib) {
+    track('litert.module.unavailable', { reason: 'native_binding_missing', variant: model }, { surface: 'litert', severity: 'warn' });
+    throw new Error('react-native-litert-lm native module not linked. Rebuild the app after installing the package.');
+  }
   if (_state.loadedModel === model && _llm) return;
 
   // Join an in-flight load for the same variant instead of starting a
@@ -193,6 +201,9 @@ export async function loadModel(
     _state.progress = 0;
     _state.error = null;
     _notify();
+
+    const _loadStartedAt = Date.now();
+    track('litert.model.load.start', { variant: model }, { surface: 'litert' });
 
     try {
       // If a different variant is loaded, drop the old instance cleanly.
@@ -238,10 +249,19 @@ export async function loadModel(
       _llm = instance;
       _state.loadedModel = model;
       _state.progress = 100;
+      track(
+        'litert.model.load.success',
+        { variant: model },
+        { surface: 'litert', latency_ms: Date.now() - _loadStartedAt },
+      );
     } catch (err: any) {
       _state.error = err?.message ?? 'Unknown error loading model';
       _state.loadedModel = null;
       _llm = null;
+      trackError('litert.model.load.failed', err, {
+        variant: model,
+        latency_ms: Date.now() - _loadStartedAt,
+      });
       throw err;
     } finally {
       _state.isLoading = false;
@@ -307,8 +327,15 @@ export async function generateResponse(
   prompt: string,
   onToken?: (partial: string) => void,
 ): Promise<string> {
-  if (!getLib()) throw new Error('react-native-litert-lm native module not linked');
+  if (!getLib()) {
+    track('litert.module.unavailable', { reason: 'native_binding_missing', kind: 'text' }, { surface: 'litert', severity: 'warn' });
+    throw new Error('react-native-litert-lm native module not linked');
+  }
   if (!_llm || !_state.loadedModel) throw new Error('No model loaded. Call loadModel() first.');
+
+  const _kind = onToken ? 'text_stream' : 'text';
+  const _startedAt = Date.now();
+  track('litert.inference.start', { kind: _kind, prompt_chars: prompt.length }, { surface: 'litert' });
 
   if (onToken) {
     // Native sendMessageAsync returns void — accumulate tokens and resolve
@@ -321,15 +348,98 @@ export async function generateResponse(
             full += token;
             onToken(token);
           }
-          if (done) resolve(full);
+          if (done) {
+            track(
+              'litert.inference.success',
+              { kind: _kind, response_chars: full.length },
+              { surface: 'litert', latency_ms: Date.now() - _startedAt },
+            );
+            resolve(full);
+          }
         });
       } catch (err) {
+        trackError('litert.inference.failed', err, { kind: _kind, latency_ms: Date.now() - _startedAt });
         reject(err);
       }
     });
   }
 
-  return _llm.sendMessage(prompt);
+  try {
+    const result = await _llm.sendMessage(prompt);
+    track(
+      'litert.inference.success',
+      { kind: _kind, response_chars: result.length },
+      { surface: 'litert', latency_ms: Date.now() - _startedAt },
+    );
+    return result;
+  } catch (err) {
+    trackError('litert.inference.failed', err, { kind: _kind, latency_ms: Date.now() - _startedAt });
+    throw err;
+  }
+}
+
+// ── Multimodal (Gemma 4 vision) ──────────────────────────────────────────────
+//
+// Library exposes sendMessageWithImage on Android. iOS is gated by
+// react-native-litert-lm's checkMultimodalSupport() — currently disabled
+// there because our vendored XCFramework doesn't link the vision/audio
+// executor ops yet (see vendor/litert-cpp/HybridLiteRTLM.cpp). When the
+// XCFramework rebuild adds those ops, this code path lights up on iOS
+// automatically — no caller changes needed.
+
+/**
+ * True when the loaded model + native lib + platform combination supports
+ * sendMessageWithImage. Read this just before dispatching a vision call so
+ * the caller can fall back to OCR when it's false.
+ */
+export function isMultimodalSupported(): boolean {
+  if (Platform.OS === 'ios') return false;  // gated by our XCFramework rebuild
+  if (!getLib()) return false;
+  if (!_llm || !_state.loadedModel) return false;
+  return true;
+}
+
+/**
+ * Multimodal counterpart to generateResponse. The image is sent alongside
+ * the prompt; the model attends to both during generation.
+ *
+ * @param prompt     Full templated prompt (caller is responsible for the
+ *                   chat-template wrapping just like with generateResponse).
+ * @param imagePath  Absolute path to the image file. file:// URIs from
+ *                   expo-camera / expo-image-picker work on Android.
+ *
+ * Throws when no model is loaded or the native lib isn't linked. Throws
+ * when called on iOS (multimodal not yet wired) so callers must guard
+ * with isMultimodalSupported().
+ */
+export async function generateResponseWithImage(
+  prompt: string,
+  imagePath: string,
+): Promise<string> {
+  if (!getLib()) {
+    track('litert.module.unavailable', { reason: 'native_binding_missing', kind: 'image' }, { surface: 'litert', severity: 'warn' });
+    throw new Error('react-native-litert-lm native module not linked');
+  }
+  if (!_llm || !_state.loadedModel) throw new Error('No model loaded. Call loadModel() first.');
+  if (Platform.OS === 'ios') {
+    track('litert.module.unavailable', { reason: 'ios_multimodal_unsupported', kind: 'image' }, { surface: 'litert', severity: 'warn' });
+    throw new Error('Multimodal not yet available on iOS — XCFramework rebuild pending.');
+  }
+
+  const _startedAt = Date.now();
+  track('litert.inference.start', { kind: 'image', prompt_chars: prompt.length }, { surface: 'litert' });
+  try {
+    const result = await _llm.sendMessageWithImage(prompt, imagePath);
+    track(
+      'litert.inference.success',
+      { kind: 'image', response_chars: result.length },
+      { surface: 'litert', latency_ms: Date.now() - _startedAt },
+    );
+    return result;
+  } catch (err) {
+    trackError('litert.inference.failed', err, { kind: 'image', latency_ms: Date.now() - _startedAt });
+    throw err;
+  }
 }
 
 // ── On-device user context ────────────────────────────────────────────────────
@@ -370,8 +480,18 @@ export function serializeUserContext(ctx: OnDeviceUserContext): string {
 
 /**
  * Build the Socratic tutor prompt for the E2B student model.
- * LiteRT-LM has a systemPrompt option on loadModel, but we don't use it
- * here because each request can vary. We embed everything in the user turn.
+ *
+ * The on-device model is Gemma 3n. Gemma was trained with a specific
+ * chat template that uses `<start_of_turn>user` / `<start_of_turn>model`
+ * delimiters and an `<end_of_turn>` close token. If we feed it a plain
+ * "Student: ... Neriah: " transcript, the model defaults to generating
+ * the next token as another `<start_of_turn>` boundary and ends up
+ * echoing the whole system prompt back to the user (or emitting bare
+ * `</start_of_turn>` strings).
+ *
+ * We build the proper template here. Gemma has no separate "system"
+ * role — convention is to prepend the system instructions to the first
+ * user turn, separated by a blank line.
  */
 export function buildTutorPrompt(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
@@ -391,12 +511,60 @@ export function buildTutorPrompt(
     ? `\nThis student recently struggled with: ${userContext.weakness_topics.slice(0, 3).join(', ')}. Give extra patience on these topics.`
     : '';
 
-  const turns = history
-    .slice(-6) // last 3 exchanges for context
-    .map(m => `${m.role === 'user' ? 'Student' : 'Neriah'}: ${m.content}`)
-    .join('\n');
+  const systemBlock = `${contextBlock}${system}${weakNote}`.trim();
 
-  return `${contextBlock}${system}${weakNote}\n\n${turns ? turns + '\n' : ''}Student: ${userMessage}\nNeriah:`;
+  // Last 3 exchanges (6 turns) — matches the cloud chat history window.
+  const recentHistory = history.slice(-6);
+
+  return renderGemmaTemplate(systemBlock, recentHistory, userMessage);
+}
+
+/**
+ * Wrap a chat in Gemma 3's chat template:
+ *
+ *   <start_of_turn>user
+ *   {systemBlock}
+ *
+ *   {userTurn1}<end_of_turn>
+ *   <start_of_turn>model
+ *   {modelTurn1}<end_of_turn>
+ *   <start_of_turn>user
+ *   {userTurn2}<end_of_turn>
+ *   <start_of_turn>model
+ *
+ * The trailing `<start_of_turn>model\n` (no `<end_of_turn>`) is the
+ * generation prompt — the model's reply continues from there. Always
+ * fold the system block into the FIRST user turn since Gemma has no
+ * dedicated system role.
+ */
+function renderGemmaTemplate(
+  systemBlock: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  currentUserMessage: string,
+): string {
+  // Build the canonical turn sequence: every history pair, then the
+  // pending user message. The system block prepends the very first
+  // user turn (which may be the pending one if history is empty).
+  const turns: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    ...history,
+    { role: 'user', content: currentUserMessage },
+  ];
+
+  let out = '';
+  let systemInjected = !systemBlock;
+  for (const turn of turns) {
+    const tag = turn.role === 'user' ? 'user' : 'model';
+    let content = turn.content;
+    if (!systemInjected && tag === 'user') {
+      content = `${systemBlock}\n\n${content}`;
+      systemInjected = true;
+    }
+    out += `<start_of_turn>${tag}\n${content}<end_of_turn>\n`;
+  }
+  // Open-ended generation prompt: model fills in everything until it
+  // emits its own <end_of_turn>.
+  out += '<start_of_turn>model\n';
+  return out;
 }
 
 /**
@@ -547,10 +715,8 @@ export function buildAssistantPrompt(
     ? `\nCULTURAL CONTEXT: The teacher is in ${userContext.country}. Use real-world examples drawn from that country's daily life when illustrating concepts.\n`
     : '';
 
-  const turns = history
-    .slice(-6)
-    .map(m => `${m.role === 'user' ? 'Teacher' : 'Neriah'}: ${m.content}`)
-    .join('\n');
+  const systemBlock = `${contextBlock}${baseSystem}${countryNote}\n\n${actionInstruction[action]}`.trim();
+  const recentHistory = history.slice(-6);
 
-  return `${contextBlock}${baseSystem}${countryNote}\n\n${actionInstruction[action]}\n\n${turns ? turns + '\n' : ''}Teacher: ${userMessage}\nNeriah:`;
+  return renderGemmaTemplate(systemBlock, recentHistory, userMessage);
 }

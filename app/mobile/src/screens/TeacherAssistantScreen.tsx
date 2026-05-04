@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -43,11 +44,20 @@ import {
   teacherAssistantChat,
 } from '../services/api';
 import {
-  resolveRoute,
   assistantOnDevice,
+  assistantOnDeviceWithImage,
+  documentToOnDeviceReply,
+  imageToOnDeviceReply,
+  resolveRoute,
   showUnavailableAlert,
 } from '../services/router';
 import type { AssistantOnDeviceActionType } from '../services/litert';
+import {
+  enqueueChatRequest,
+  onNetworkRestore,
+  replayChatQueue,
+  type ChatReplaySender,
+} from '../services/chatOfflineQueue';
 import { detectCountryFromPhone } from '../utils/country';
 import InAppCamera from '../components/InAppCamera';
 import AvatarWithStatus from '../components/AvatarWithStatus';
@@ -138,6 +148,13 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 function stripMarkdown(text: string): string {
   if (!text) return text;
   return text
+    // fenced code block: ```json ... ``` (or any lang). Strip the fence
+    // markers but keep the content. The backend already scrubs JSON for
+    // the assistant + tutor endpoints, so this is the defensive layer
+    // that catches anything new (e.g. on-device responses) before the
+    // user ever sees a literal ```...``` in the chat bubble.
+    .replace(/```[a-zA-Z]*\s*\n?/g, '')
+    .replace(/\n?```\s*/g, '')
     // bold **x** or __x__
     .replace(/\*\*([^*\n]+)\*\*/g, '$1')
     .replace(/__([^_\n]+)__/g, '$1')
@@ -179,7 +196,11 @@ interface ChatMessage {
   structured?: Record<string, unknown>;
   exportable?: boolean;
   timestamp:   string;  // ISO 8601
-  attachment?: { media_type: string; name: string };
+  attachment?: { media_type: string; name: string; uri?: string };
+  /** Set on user messages whose request is currently sitting in the
+   *  offline queue waiting for connectivity. Cleared by replay logic. */
+  queued?:     boolean;
+  queuedReason?: string;
 }
 
 interface ChatSession {
@@ -393,6 +414,73 @@ export default function TeacherAssistantScreen() {
     }
   }, [messages, typing]);
 
+  // ── Offline queue replay ──────────────────────────────────────────────────
+  // Track currentChatId in a ref so the sender doesn't recreate when
+  // the teacher switches chats — we want a single, stable replay loop.
+  const currentChatIdRef = useRef(currentChatId);
+  useEffect(() => { currentChatIdRef.current = currentChatId; }, [currentChatId]);
+
+  const replayQueueOnce = useCallback(async () => {
+    const sender: ChatReplaySender = async (item) => {
+      try {
+        const res = await teacherAssistantChat(item.payload as any);
+        const structured = res.structured;
+        const isEmptyStructured = !!structured && Object.values(structured).every((v) => {
+          if (v == null) return true;
+          if (typeof v === 'string') return v.trim() === '';
+          if (Array.isArray(v)) return v.length === 0;
+          return false;
+        });
+        const aiMsg: ChatMessage = {
+          id:         makeId(),
+          role:       'assistant',
+          content:    res.response ?? '',
+          actionType: res.action_type,
+          structured: isEmptyStructured ? undefined : structured,
+          exportable: res.exportable,
+          timestamp:  new Date().toISOString(),
+        };
+        try {
+          const raw = await AsyncStorage.getItem(sessionsKey(userId));
+          const sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
+          const idx = sessions.findIndex(s => s.chat_id === item.chat_id);
+          if (idx >= 0) {
+            const updatedMsgs = sessions[idx].messages.map(m =>
+              m.id === item.user_msg_id ? { ...m, queued: false } : m,
+            );
+            updatedMsgs.push(aiMsg);
+            sessions[idx] = {
+              ...sessions[idx],
+              messages: updatedMsgs,
+              updated_at: new Date().toISOString(),
+            };
+            await AsyncStorage.setItem(sessionsKey(userId), JSON.stringify(sessions));
+            setChatHistory(sessions);
+            if (item.chat_id === currentChatIdRef.current) {
+              setMessages(updatedMsgs);
+            }
+          }
+        } catch {
+          // Storage write failed — replay still succeeded.
+        }
+        return { ok: true, response: res };
+      } catch (err: any) {
+        const status = err?.response?.status ?? err?.status;
+        const permanent = typeof status === 'number' &&
+          status >= 400 && status < 500 && status !== 408 && status !== 429;
+        return { ok: false, permanent, error: err };
+      }
+    };
+    try {
+      await replayChatQueue('teacher_assistant', sender);
+    } catch {
+      // Best-effort.
+    }
+  }, [userId]);
+
+  useEffect(() => { void replayQueueOnce(); }, [replayQueueOnce]);
+  useEffect(() => onNetworkRestore(() => { void replayQueueOnce(); }), [replayQueueOnce]);
+
   // (listClasses effect removed — classes state only existed to feed the
   // export-to-class picker, which is gone.)
 
@@ -506,31 +594,56 @@ export default function TeacherAssistantScreen() {
   };
 
   // ── Attachment picker ─────────────────────────────────────────────────────
+  // Wait for the attach-sheet Modal to finish dismissing before opening a
+  // native picker. Without this, iOS silently no-ops because the Modal is
+  // still animating out when the picker tries to present.
+  const closeSheetAndRun = useCallback((fn: () => void | Promise<void>) => {
+    setShowAttachSheet(false);
+    setTimeout(() => { void fn(); }, 350);
+  }, []);
+
   const pickFromCamera = useCallback(() => {
     setShowInAppCamera(true);
   }, []);
 
   const pickFromGallery = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { showToast('Gallery permission is required.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.8, mediaTypes: ImagePicker.MediaTypeOptions.Images });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    setAttachment({ data: asset.base64 ?? '', type: 'image', name: asset.fileName ?? 'Image', uri: asset.uri });
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          'Photos permission needed',
+          'Allow Neriah to read your photos so you can attach images. Open Settings to enable it.',
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.8, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setAttachment({ data: asset.base64 ?? '', type: 'image', name: asset.fileName ?? 'Image', uri: asset.uri });
+    } catch (err: any) {
+      Alert.alert('Could not open the gallery', err?.message ?? 'Please try again.');
+    }
   }, []);
 
   const pickDocument = useCallback(async (docType: 'pdf' | 'word') => {
-    const mimeTypes = docType === 'pdf'
-      ? ['application/pdf']
-      : ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-    const result = await DocumentPicker.getDocumentAsync({ type: mimeTypes, copyToCacheDirectory: true });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
     try {
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
-      setAttachment({ data: base64, type: docType, name: asset.name ?? `Document.${docType}` });
-    } catch {
-      showToast('Could not read the document. Try a different file.');
+      const mimeTypes = docType === 'pdf'
+        ? ['application/pdf']
+        : ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+      const result = await DocumentPicker.getDocumentAsync({ type: mimeTypes, copyToCacheDirectory: true });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      try {
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        setAttachment({ data: base64, type: docType, name: asset.name ?? `Document.${docType}` });
+      } catch {
+        showToast('Could not read the document. Try a different file.');
+      }
+    } catch (err: any) {
+      Alert.alert(
+        docType === 'pdf' ? 'Could not open PDF picker' : 'Could not open Word picker',
+        err?.message ?? 'Please try again.',
+      );
     }
   }, []);
 
@@ -560,7 +673,7 @@ export default function TeacherAssistantScreen() {
       role:      'user',
       content:   displayText,
       timestamp: new Date().toISOString(),
-      ...(snap ? { attachment: { media_type: snap.type, name: snap.name } } : {}),
+      ...(snap ? { attachment: { media_type: snap.type, name: snap.name, uri: snap.uri } } : {}),
     };
     const updatedWithUser = [...messages, userMsg];
     setMessages(updatedWithUser);
@@ -577,23 +690,157 @@ export default function TeacherAssistantScreen() {
       const route = await resolveRoute('teacher_assistant');
 
       if (route === 'unavailable') {
+        if (snap) {
+          // Offline + attachment — queue the request and flip the user
+          // bubble to "Will send when online" instead of dropping it.
+          await enqueueChatRequest({
+            kind:        'teacher_assistant',
+            chat_id:     activeChatId,
+            user_msg_id: userMsg.id,
+            payload: {
+              message:         text.trim() || '(See attached file)',
+              action_type:     forcedActionType,
+              curriculum,
+              level:           level === ALL_LEVELS ? undefined : level,
+              class_id:        classId,
+              chat_history:    apiHistory,
+              conversation_id: conversationId,
+              file_data:       snap.data,
+              media_type:      snap.type,
+            },
+          });
+          const queuedMsgs = updatedWithUser.map(m =>
+            m.id === userMsg.id ? { ...m, queued: true } : m,
+          );
+          setMessages(queuedMsgs);
+          persistHistory(queuedMsgs);
+          saveToSessionHistory(queuedMsgs, activeChatId, forcedActionType);
+          return;
+        }
+        // No attachment + offline + no on-device model → there's nothing
+        // useful to do. Surface the standard "Connect to continue" alert.
         showUnavailableAlert();
-        // Surface a placeholder assistant turn so the user sees a clear reason
-        // for the missing reply rather than just the dots disappearing.
-        const aiMsg: ChatMessage = {
-          id:        makeId(),
-          role:      'assistant',
-          content:   'You\'re offline and the on-device model is not loaded. Connect to use Neriah AI, or download the assistant model from Settings.',
-          timestamp: new Date().toISOString(),
-        };
-        const updated = [...updatedWithUser, aiMsg];
-        setMessages(updated);
-        persistHistory(updated);
-        saveToSessionHistory(updated, activeChatId);
         return;
       }
 
       if (route === 'on-device') {
+        // LiteRT E2B is text-only. For image attachments we can still
+        // produce an on-device answer by running OCR locally and feeding
+        // the extracted text into the assistant prompt. That covers the
+        // common case (screenshots, textbook pages, photographed marking
+        // schemes). Object-only photos / blurry images / decorative
+        // attachments fall back to the queue. PDFs and Word docs always
+        // queue — extracting them client-side is impractical.
+        if (snap) {
+          // Map cloud action types to the on-device subset.
+          const onDeviceActionForImage: AssistantOnDeviceActionType =
+            forcedActionType === 'prepare_notes'    ? 'prepare_notes' :
+            forcedActionType === 'teaching_methods' ? 'teaching_methods' :
+            forcedActionType === 'exam_questions'   ? 'exam_questions' :
+            'chat';
+          const onDeviceHistoryForImage = apiHistory.map(m => ({
+            role: m.role as 'user' | 'assistant', content: m.content,
+          }));
+          const isGenericCurr = !curriculum || curriculum.toLowerCase() === 'generic';
+          const isAnyLevel    = !level || level === ALL_LEVELS || ['all', 'any'].includes(level.toLowerCase());
+
+          // Offline + attachment: extract text client-side (image OCR,
+          // DOCX unzip, PDF byte-regex with FlateDecode inflate) and
+          // feed it into the on-device assistant. Anything we can't
+          // extract falls back to the queue for cloud replay when
+          // reconnected.
+          let attachmentReason: string | undefined;
+          try {
+            const assistantContext = {
+              curriculum:      isGenericCurr ? undefined : curriculum,
+              education_level: isAnyLevel    ? undefined : level,
+              country:         detectCountryFromPhone((user as any)?.phone),
+            };
+            const runner = (combined: string) => assistantOnDevice(
+              onDeviceActionForImage,
+              onDeviceHistoryForImage,
+              combined,
+              assistantContext,
+            );
+            // Vision-capable runner — same pattern as the student tutor.
+            // Available on Android today; iOS waits on the XCFramework rebuild.
+            const multimodalRunner = (msg: string, imagePath: string) => assistantOnDeviceWithImage(
+              onDeviceActionForImage,
+              onDeviceHistoryForImage,
+              msg,
+              imagePath,
+              assistantContext,
+            );
+
+            let result: Awaited<ReturnType<typeof imageToOnDeviceReply>> | null = null;
+            if (snap.type === 'image' && snap.uri) {
+              result = await imageToOnDeviceReply(snap.uri, text.trim(), runner, multimodalRunner);
+            } else if (snap.type === 'pdf' || snap.type === 'word') {
+              result = await documentToOnDeviceReply(
+                snap.data,
+                snap.type,
+                snap.name,
+                text.trim(),
+                runner,
+              );
+            }
+
+            if (result && result.kind === 'replied') {
+              const aiMsg: ChatMessage = {
+                id:          makeId(),
+                role:        'assistant',
+                content:     stripMarkdown(result.reply),
+                actionType:  forcedActionType ?? 'chat',
+                timestamp:   new Date().toISOString(),
+              };
+              const updated = [...updatedWithUser, aiMsg];
+              setMessages(updated);
+              persistHistory(updated);
+              saveToSessionHistory(updated, activeChatId, forcedActionType ?? 'chat');
+              return;
+            }
+            if (result?.kind === 'no_text') {
+              attachmentReason = snap.type === 'image'
+                ? "Couldn't read text in this image"
+                : 'No readable text found in this file';
+            } else if (result?.kind === 'unavailable') {
+              attachmentReason = 'Offline reader unavailable';
+            } else if (result?.kind === 'extraction_error') {
+              attachmentReason = `Extract error: ${result.error.slice(0, 80)}`;
+            } else if (result?.kind === 'runner_error') {
+              attachmentReason = `Local AI error: ${result.error.slice(0, 80)}`;
+            }
+          } catch (err: any) {
+            attachmentReason = `Local AI crashed: ${(err?.message ?? String(err)).slice(0, 80)}`;
+          }
+
+          if (!attachmentReason) attachmentReason = 'fell through to queue';
+
+          await enqueueChatRequest({
+            kind:        'teacher_assistant',
+            chat_id:     activeChatId,
+            user_msg_id: userMsg.id,
+            payload: {
+              message:         text.trim() || '(See attached file)',
+              action_type:     forcedActionType,
+              curriculum,
+              level:           level === ALL_LEVELS ? undefined : level,
+              class_id:        classId,
+              chat_history:    apiHistory,
+              conversation_id: conversationId,
+              file_data:       snap.data,
+              media_type:      snap.type,
+            },
+          });
+          const queuedMsgs = updatedWithUser.map(m =>
+            m.id === userMsg.id ? { ...m, queued: true, queuedReason: attachmentReason } : m,
+          );
+          setMessages(queuedMsgs);
+          persistHistory(queuedMsgs);
+          saveToSessionHistory(queuedMsgs, activeChatId, forcedActionType);
+          return;
+        }
+
         // Map cloud action types to the on-device subset (drops class_performance).
         const onDeviceAction: AssistantOnDeviceActionType =
           forcedActionType === 'prepare_notes'    ? 'prepare_notes' :
@@ -654,8 +901,10 @@ export default function TeacherAssistantScreen() {
         setConversationId(res.conversation_id);
       }
 
-      // Detect an empty structured payload from older backends — render a
-      // friendly prompt so the user isn't staring at a blank card.
+      // Detect an empty structured payload from older backends so the
+      // empty card doesn't render. Don't fabricate a synthetic AI bubble
+      // when both `response` and `structured` are empty — the new backend
+      // returns the model's clarifying question as `response` instead.
       const structured = res.structured;
       const isEmptyStructured = !!structured && Object.values(structured).every((v) => {
         if (v == null) return true;
@@ -663,14 +912,11 @@ export default function TeacherAssistantScreen() {
         if (Array.isArray(v)) return v.length === 0;
         return false;
       });
-      const fallbackContent = isEmptyStructured && !res.response
-        ? 'I need a bit more info — what topic, subject or grade should I focus on?'
-        : (res.response ?? '');
 
       const aiMsg: ChatMessage = {
         id:          makeId(),
         role:        'assistant',
-        content:     stripMarkdown(fallbackContent),
+        content:     stripMarkdown(res.response ?? ''),
         actionType:  res.action_type,
         structured:  isEmptyStructured ? undefined : structured,
         exportable:  res.exportable,
@@ -694,7 +940,7 @@ export default function TeacherAssistantScreen() {
     } finally {
       setTyping(false);
     }
-  }, [typing, messages, curriculum, level, conversationId, persistHistory, currentChatId, saveToSessionHistory]);
+  }, [typing, attachment, messages, curriculum, level, conversationId, persistHistory, currentChatId, saveToSessionHistory]);
 
   // handleExport / doExport removed 2026-04-22 along with
   // POST /api/teacher/assistant/export.
@@ -720,6 +966,36 @@ export default function TeacherAssistantScreen() {
           </View>
         )}
         <View style={{ maxWidth: '80%' }}>
+          {/* Attachment preview — image inline, file as chip. Always above
+              the text bubble so it's visible regardless of caption length. */}
+          {item.attachment && (
+            item.attachment.media_type === 'image' && item.attachment.uri ? (
+              <Image
+                source={{ uri: item.attachment.uri }}
+                style={isUser ? s.bubbleAttachImageRight : s.bubbleAttachImageLeft}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={isUser ? s.bubbleFileChipRight : s.bubbleFileChipLeft}>
+                <Ionicons
+                  name={
+                    item.attachment.media_type === 'pdf' ? 'document-text-outline' :
+                    item.attachment.media_type === 'word' ? 'document-outline' :
+                    'attach-outline'
+                  }
+                  size={18}
+                  color={isUser ? AI.userText : AI.teal}
+                />
+                <Text
+                  style={isUser ? s.bubbleFileChipTextRight : s.bubbleFileChipTextLeft}
+                  numberOfLines={1}
+                >
+                  {item.attachment.name}
+                </Text>
+              </View>
+            )
+          )}
+
           {/* Text bubble */}
           {!!item.content && (
             <View style={isUser ? s.bubbleRight : s.bubbleLeft}>
@@ -756,6 +1032,17 @@ export default function TeacherAssistantScreen() {
               {/* Export-to-class buttons removed 2026-04-22 along with the
                   export endpoint. Structured homework/quiz cards now render
                   preview-only. */}
+            </View>
+          )}
+
+          {/* Offline-queue indicator on user bubbles awaiting connectivity. */}
+          {item.queued && isUser && (
+            <View style={s.queuedRow}>
+              <Ionicons name="cloud-offline-outline" size={12} color={AI.sub} />
+              <Text style={s.queuedText}>
+                {item.queuedReason ? `${item.queuedReason} · ` : ''}
+                Will send when online
+              </Text>
             </View>
           )}
         </View>
@@ -986,10 +1273,10 @@ export default function TeacherAssistantScreen() {
           <View style={s.attachSheet} onStartShouldSetResponder={() => true}>
             <Text style={s.attachSheetTitle}>Attach a file</Text>
             {[
-              { icon: 'camera-outline',        label: 'Camera',        color: AI.teal, onPress: () => { setShowAttachSheet(false); setShowInAppCamera(true); } },
-              { icon: 'image-outline',         label: 'Gallery',       color: AI.teal, onPress: () => { setShowAttachSheet(false); pickFromGallery(); } },
-              { icon: 'document-outline',      label: 'PDF',           color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('pdf'); } },
-              { icon: 'document-text-outline', label: 'Word',          color: AI.teal, onPress: () => { setShowAttachSheet(false); pickDocument('word'); } },
+              { icon: 'camera-outline',        label: 'Camera',        color: AI.teal, onPress: () => closeSheetAndRun(() => setShowInAppCamera(true)) },
+              { icon: 'image-outline',         label: 'Gallery',       color: AI.teal, onPress: () => closeSheetAndRun(pickFromGallery) },
+              { icon: 'document-outline',      label: 'PDF',           color: AI.teal, onPress: () => closeSheetAndRun(() => pickDocument('pdf')) },
+              { icon: 'document-text-outline', label: 'Word',          color: AI.teal, onPress: () => closeSheetAndRun(() => pickDocument('word')) },
               { icon: 'close-outline',         label: 'Cancel',        color: AI.sub,  onPress: () => setShowAttachSheet(false) },
             ].map(({ icon, label, color, onPress }, idx, arr) => (
               <TouchableOpacity
@@ -1149,6 +1436,28 @@ const s = StyleSheet.create({
   },
   msgText:     { fontSize: 14, color: AI.text,     lineHeight: 21 },
   msgTextUser: { fontSize: 14, color: AI.userText, lineHeight: 21 },
+
+  // In-bubble attachment previews
+  bubbleAttachImageLeft:  { width: 200, height: 150, borderRadius: 12, marginBottom: 6, alignSelf: 'flex-start' },
+  bubbleAttachImageRight: { width: 200, height: 150, borderRadius: 12, marginBottom: 6, alignSelf: 'flex-end' },
+  bubbleFileChipLeft: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: AI.card, borderWidth: 1, borderColor: AI.border,
+    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: 6, alignSelf: 'flex-start', maxWidth: 240,
+  },
+  bubbleFileChipRight: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: AI.user, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: 6, alignSelf: 'flex-end', maxWidth: 240,
+  },
+  bubbleFileChipTextLeft:  { fontSize: 13, color: AI.text,     flexShrink: 1, fontWeight: '500' },
+  bubbleFileChipTextRight: { fontSize: 13, color: AI.userText, flexShrink: 1, fontWeight: '500' },
+
+  // Offline-queue "Will send when online" indicator
+  queuedRow:  { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, alignSelf: 'flex-end', paddingHorizontal: 4 },
+  queuedText: { fontSize: 11, color: AI.sub, fontStyle: 'italic' },
 
   // Structured card
   structuredCard: {

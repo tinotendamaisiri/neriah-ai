@@ -1,12 +1,41 @@
+# IMPORTANT — these patterns must NOT match anything inside neriah-website/.
+# Patterns without a leading slash match at any depth (gitignore semantics),
+# which previously broke production: an unanchored `app/` excluded BOTH the
+# mobile app at /app/ AND the Next.js website's /neriah-website/app/ — the
+# latter contains every page in the site, so the deploy had zero routes and
+# every request returned a cached 404.
+#
+# Always anchor with a leading `/` to limit each rule to the repo root.
+
+# Repo-root Python backend (deployed via gcloud, not Vercel)
+/backend/
+/functions/
+/shared/
+/tests/
+/scripts/
+/docs/
+/infra/
+/batch_job/
+/samples/
+/syllabuses/
+/notebooks/
+/kaggle_notebook.ipynb
+/main.py
+/requirements.txt
+
+# Repo-root mobile app (deployed via EAS / gradle, not Vercel)
+/app/
+
+# Misc
 *.task
-backend/
-functions/
-shared/
-tests/
-scripts/
-docs/
-infra/
-*.py
+*.pyc
 __pycache__/
 .venv/
-*.pyc
+.gradle/
+.cxx/
+.expo/
+
+# Generated
+node_modules/
+build/
+dist/

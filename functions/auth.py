@@ -22,6 +22,7 @@ from shared.config import is_demo, settings
 from shared.constants import TERMS_URL, TERMS_VERSION
 from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Student, Teacher
+from shared.observability import instrument_route
 from shared.sms_client import (
     BYPASS_OTP_CODE,
     OTPDeliveryError,
@@ -256,6 +257,7 @@ def _store_otp(phone: str, pending_data: dict | None = None) -> tuple[str | None
 # ─── Register ─────────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/register")
+@instrument_route("auth.register", "auth")
 def auth_register():
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
@@ -343,6 +345,7 @@ def auth_register():
 # ─── Login ────────────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/login")
+@instrument_route("auth.login", "auth")
 def auth_login():
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
@@ -413,6 +416,7 @@ def auth_login():
 # ─── Verify OTP ───────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/verify")
+@instrument_route("auth.verify", "auth")
 def auth_verify():
     body = request.get_json(silent=True) or {}
     # Accept both app contract (verification_id + otp_code) and direct (phone + otp)
@@ -660,6 +664,7 @@ def auth_verify():
 # ─── Resend OTP ───────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/resend-otp")
+@instrument_route("auth.resend_otp", "auth")
 def auth_resend_otp():
     body = request.get_json(silent=True) or {}
     phone = (body.get("verification_id") or body.get("phone") or "").strip()
@@ -705,6 +710,7 @@ def auth_resend_otp():
 # ─── Me ───────────────────────────────────────────────────────────────────────
 
 @auth_bp.get("/auth/me")
+@instrument_route("auth.me", "auth")
 def auth_me():
     # Try teacher first, then student — require_role validates token_version.
     user_id, err = require_role(request, "teacher", "student")
@@ -738,6 +744,7 @@ _PROFILE_UPDATABLE = frozenset({"training_data_consent"})
 
 
 @auth_bp.patch("/auth/profile")
+@instrument_route("auth.update_profile", "auth")
 def auth_update_profile():
     """
     Update mutable profile preferences on the authenticated teacher document.
@@ -770,6 +777,7 @@ def auth_update_profile():
 # ─── Recover ──────────────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/recover")
+@instrument_route("auth.recover", "auth")
 def auth_recover():
     body = request.get_json(silent=True) or {}
     phone = (body.get("phone") or "").strip()
@@ -818,6 +826,7 @@ def auth_recover():
 # ─── PIN management ───────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/pin/set")
+@instrument_route("auth.pin_set", "auth")
 def auth_pin_set():
     user_id, err = require_role(request, "teacher")
     if err:
@@ -841,6 +850,7 @@ def auth_pin_set():
 
 
 @auth_bp.post("/auth/pin/verify")
+@instrument_route("auth.pin_verify", "auth")
 def auth_pin_verify():
     user_id, err = require_role(request, "teacher")
     if err:
@@ -886,6 +896,7 @@ def auth_pin_verify():
 
 
 @auth_bp.delete("/auth/pin")
+@instrument_route("auth.pin_delete", "auth")
 def auth_pin_delete():
     user_id, err = require_role(request, "teacher")
     if err:
@@ -902,6 +913,7 @@ def auth_pin_delete():
 # ─── Profile update ───────────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/profile/request-otp")
+@instrument_route("auth.profile_request_otp", "auth")
 def auth_profile_request_otp():
     """Send OTP to a phone number for profile update verification. Requires valid JWT (teacher or student)."""
     user_id, err = require_role(request, "teacher", "student")
@@ -948,6 +960,7 @@ def auth_profile_request_otp():
 
 
 @auth_bp.post("/auth/terms-accept")
+@instrument_route("auth.terms_accept", "auth")
 def auth_terms_accept():
     """Record that the teacher has accepted the current terms version. JWT required, no OTP."""
     user_id, err = require_role(request, "teacher")
@@ -971,6 +984,7 @@ def auth_terms_accept():
 
 
 @auth_bp.patch("/auth/me")
+@instrument_route("auth.update_me", "auth")
 def auth_update_me():
     """Update teacher profile. Requires valid JWT + OTP verification."""
     user_id, err = require_role(request, "teacher")
@@ -1138,6 +1152,7 @@ def auth_update_me():
 # ─── Student lookup (by join code) ───────────────────────────────────────────
 
 @auth_bp.post("/auth/student/lookup")
+@instrument_route("auth.student_lookup", "auth")
 def auth_student_lookup():
     """
     Public — find a class by join code so the student registration wizard
@@ -1200,6 +1215,7 @@ def auth_student_lookup():
 # ─── Student registration ─────────────────────────────────────────────────────
 
 @auth_bp.post("/auth/student/register")
+@instrument_route("auth.student_register", "auth")
 def auth_student_register():
     """
     Public — register a new student account.
@@ -1318,6 +1334,7 @@ def auth_student_register():
 # ─── Student profile update ──────────────────────────────────────────────────
 
 @auth_bp.put("/auth/student/update")
+@instrument_route("auth.student_update", "auth")
 def auth_student_update():
     """
     Authenticated — update student profile fields.
@@ -1357,6 +1374,7 @@ def auth_student_update():
 
 
 @auth_bp.delete("/auth/student/<student_id>")
+@instrument_route("auth.student_delete", "auth")
 def auth_student_delete(student_id: str):
     """
     Authenticated — delete own student account.
@@ -1390,6 +1408,7 @@ def auth_student_delete(student_id: str):
 
 
 @auth_bp.post("/auth/student/join-class")
+@instrument_route("auth.student_join_class", "auth")
 def auth_student_join_class():
     """
     Authenticated — join a class by join code.
@@ -1483,6 +1502,7 @@ def auth_student_join_class():
 # ─── Student class management ──────────────────────────────────────────────────
 
 @auth_bp.get("/auth/student/classes")
+@instrument_route("auth.student_classes", "auth")
 def auth_student_classes():
     """Return all classes the student is enrolled in, enriched with teacher/school."""
     student_id, err = require_role(request, "student")
@@ -1528,6 +1548,7 @@ def auth_student_classes():
 
 
 @auth_bp.delete("/auth/student/leave-class")
+@instrument_route("auth.student_leave_class", "auth")
 def auth_student_leave_class():
     """Remove a class from the student's enrollment."""
     student_id, err = require_role(request, "student")

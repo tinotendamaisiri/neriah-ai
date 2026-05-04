@@ -38,6 +38,12 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ModelProvider, useModel } from './src/context/ModelContext';
+import { bootAnalytics, trackScreen, track } from './src/services/analytics';
+
+// Analytics must boot at module top-level (before any component renders)
+// so screen views and api calls fired during the very first frame are
+// captured. bootAnalytics is idempotent.
+bootAnalytics();
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinLoginScreen from './src/screens/PinLoginScreen';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
@@ -397,11 +403,10 @@ function DownloadPromptModal() {
         <View style={promptStyles.card}>
           <Text style={promptStyles.title}>Download AI model</Text>
           <Text style={promptStyles.body}>
-            Neriah can grade and assist offline with an on-device AI model.{'\n\n'}
-            <Text style={promptStyles.name}>{MODEL_DISPLAY_NAME[variant]}</Text>
-            {'\n'}
-            <Text style={promptStyles.size}>{MODEL_SIZE_LABEL[variant]} — recommended on Wi-Fi</Text>
+            Neriah can grade and assist offline with an on-device AI model.
           </Text>
+          <Text style={promptStyles.name}>Powered by Gemma 4 E2B</Text>
+          <Text style={promptStyles.size}>~3GB : recommended on Wi-Fi</Text>
 
           <TouchableOpacity style={promptStyles.primaryBtn} onPress={acceptDownload}>
             <Text style={promptStyles.primaryBtnText}>Download now</Text>
@@ -422,20 +427,20 @@ const promptStyles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', padding: 24,
   },
   card: {
-    backgroundColor: COLORS.white, borderRadius: 20,
-    padding: 28, width: '100%', maxWidth: 360,
+    backgroundColor: COLORS.white, borderRadius: 16,
+    padding: 20, width: '100%', maxWidth: 300,
   },
-  title: { fontSize: 20, fontWeight: '800', color: COLORS.text, marginBottom: 12 },
-  body: { fontSize: 15, color: COLORS.textLight, lineHeight: 22, marginBottom: 24 },
-  name: { fontSize: 15, fontWeight: '700', color: COLORS.text },
-  size: { fontSize: 13, color: COLORS.gray500 },
+  title: { fontSize: 17, fontWeight: '800', color: COLORS.text, marginBottom: 8 },
+  body: { fontSize: 13, color: COLORS.textLight, lineHeight: 18, marginBottom: 12 },
+  name: { fontSize: 14, fontWeight: '700', color: COLORS.text, marginBottom: 2 },
+  size: { fontSize: 12, color: COLORS.gray500, marginBottom: 18 },
   primaryBtn: {
-    backgroundColor: COLORS.teal500, borderRadius: 12,
-    padding: 16, alignItems: 'center', marginBottom: 10,
+    backgroundColor: COLORS.teal500, borderRadius: 10,
+    paddingVertical: 12, alignItems: 'center', marginBottom: 6,
   },
-  primaryBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 16 },
-  secondaryBtn: { padding: 12, alignItems: 'center' },
-  secondaryBtnText: { color: COLORS.gray500, fontSize: 15 },
+  primaryBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
+  secondaryBtn: { paddingVertical: 8, alignItems: 'center' },
+  secondaryBtnText: { color: COLORS.gray500, fontSize: 13 },
 });
 
 // ── App shell — auth gate + role routing ──────────────────────────────────────
@@ -510,7 +515,17 @@ function AppShell() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      onReady={() => track('app.ready', undefined, { surface: 'app' })}
+      onStateChange={(state) => {
+        try {
+          const r = state?.routes?.[state.index ?? 0];
+          if (r) trackScreen(r.name, r.params as Record<string, unknown> | undefined);
+        } catch {
+          /* never break navigation over telemetry */
+        }
+      }}
+    >
       <View style={{ flex: 1 }}>
         {/* NetworkBanner removed — sync status now lives on the
             profile avatar (orange ring + "Syncing…" label, see

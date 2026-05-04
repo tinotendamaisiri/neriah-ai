@@ -1,0 +1,2856 @@
+diff --git a/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.cpp b/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.cpp
+index 55854e1..38c4763 100644
+--- a/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.cpp
++++ b/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.cpp
+@@ -20,6 +20,8 @@
+ #include <sstream>
+ #include <sys/stat.h>
+ #include <cstdio>
++#include <unistd.h>
++#include <fcntl.h>
+ 
+ #ifdef __APPLE__
+ #include "IOSDownloadHelper.h"
+@@ -209,43 +211,32 @@ void HybridLiteRTLM::createNewConversation() {
+     throw std::runtime_error("Cannot create conversation: engine not initialized");
+   }
+ 
+-  // Clean up previous conversation
+-  if (conversation_) {
+-    litert_lm_conversation_delete(conversation_);
+-    conversation_ = nullptr;
+-  }
+-  if (conv_config_) {
+-    litert_lm_conversation_config_delete(conv_config_);
+-    conv_config_ = nullptr;
++  // Clean up previous session
++  if (session_) {
++    litert_lm_session_delete(session_);
++    session_ = nullptr;
+   }
+-  
+-  // Build system message JSON if provided
+-  std::string systemMsgJson;
+-  const char* systemMsgPtr = nullptr;
+-  if (!systemPrompt_.empty()) {
+-    systemMsgJson = "{\"role\":\"system\",\"content\":\"" + escapeJson(systemPrompt_) + "\"}";
+-    systemMsgPtr = systemMsgJson.c_str();
+-  }
+-  
+-  // Create conversation config with session config
+-  conv_config_ = litert_lm_conversation_config_create(
+-    engine_,
+-    session_config_,  // may be nullptr for defaults
+-    systemMsgPtr,     // system message
+-    nullptr,          // tools (not used yet)
+-    nullptr,          // messages history
+-    false             // constrained decoding
+-  );
+-  if (!conv_config_) {
+-    throw std::runtime_error("Failed to create conversation config");
+-  }
+-  
+-  // Create conversation
+-  conversation_ = litert_lm_conversation_create(engine_, conv_config_);
+-  if (!conversation_) {
+-    litert_lm_conversation_config_delete(conv_config_);
+-    conv_config_ = nullptr;
+-    throw std::runtime_error("Failed to create conversation");
++  // Conversation pointers stay nullptr on iOS — see comment block below.
++
++  // We deliberately skip litert_lm_conversation_config_create / _create
++  // on iOS. That path constructs a litert::lm::PromptTemplate by reading
++  // the model's chat-template metadata (Gemma 4 ships one with vision
++  // soft-tokens) and feeding it into re2::RE2(). On our XCFramework —
++  // built without vision/audio executor ops — the engine internals
++  // partially initialise the multimodal data-processor with a null
++  // vision_executor, which writes past the end of an internal buffer
++  // and corrupts a libmalloc free-list block. The crash surfaces later,
++  // inside re2, as EXC_BREAKPOINT (libmalloc's "memory corruption of
++  // free block" trap).
++  //
++  // The Session API (litert_lm_engine_create_session / generate_content)
++  // takes raw InputData and bypasses ConversationConfig + PromptTemplate
++  // entirely. We format Gemma 4 turn tokens manually in
++  // sendMessageInternal so the model still gets a proper instruction
++  // turn structure.
++  session_ = litert_lm_engine_create_session(engine_, session_config_);
++  if (!session_) {
++    throw std::runtime_error("Failed to create LiteRT-LM session");
+   }
+ #endif
+ }
+@@ -307,19 +298,125 @@ void HybridLiteRTLM::loadModelInternal(
+     }
+   };
+   
+-  auto tryCreateEngine = [&](const char* backend, const char* visionBackend) -> bool {
++  // Per-attempt diagnostics. Each tryCreateEngine call appends a labelled
++  // line: which backend combination, whether settings_create or engine_
++  // create returned null, and any ABSL_LOG output that landed on stderr
++  // during the call. Crucial for figuring out *why* the engine refuses
++  // to initialise — the upstream C library swallows error context and
++  // litert_lm_get_last_error() isn't exported in our XCFramework.
++  std::string attemptLog;
++
++  auto tryCreateEngine = [&](const char* backend,
++                             const char* visionBackend,
++                             const char* audioBackend) -> bool {
++    // ── Begin stderr capture ───────────────────────────────────────────────
++    // Redirect stderr to a pipe so ABSL_LOG / fprintf calls inside the
++    // upstream C library can be drained back to our diagnostic string.
++    // We restore stderr unconditionally in cleanup() below so that even
++    // if the C call crashes/aborts mid-flight (it shouldn't but defense
++    // in depth), the process's stderr is back to normal afterwards.
++    // Use ::-prefixed syscalls because some unqualified names (close, read)
++    // collide with C++ stream member functions imported into this scope by
++    // upstream headers — Xcode flags them as "too many arguments to
++    // function call, expected 0, have 1".
++    int saved_stderr = ::dup(STDERR_FILENO);
++    int pipe_fds[2] = {-1, -1};
++    bool capture_active = false;
++    if (saved_stderr >= 0 && ::pipe(pipe_fds) == 0) {
++      // Make the read end non-blocking so we never hang draining.
++      int flags = ::fcntl(pipe_fds[0], F_GETFL, 0);
++      if (flags >= 0) ::fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
++      if (::dup2(pipe_fds[1], STDERR_FILENO) >= 0) {
++        capture_active = true;
++      }
++    }
++
++    auto cleanup_stderr = [&]() -> std::string {
++      if (!capture_active) {
++        if (saved_stderr >= 0) ::close(saved_stderr);
++        if (pipe_fds[0] >= 0) ::close(pipe_fds[0]);
++        if (pipe_fds[1] >= 0) ::close(pipe_fds[1]);
++        return "";
++      }
++      // Make sure any buffered stderr writes are flushed to our pipe before
++      // we restore the real stderr.
++      fflush(stderr);
++      ::dup2(saved_stderr, STDERR_FILENO);
++      ::close(saved_stderr);
++      ::close(pipe_fds[1]);
++      // Drain. Bounded read because some absl logs are noisy and we don't
++      // want to dump kilobytes into the JS-facing error string.
++      std::string captured;
++      char buf[2048];
++      ssize_t n;
++      while ((n = ::read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
++        buf[n] = '\0';
++        captured += buf;
++        if (captured.size() > 1500) {
++          captured.resize(1500);
++          captured += "…(truncated)";
++          break;
++        }
++      }
++      ::close(pipe_fds[0]);
++      // Strip trailing whitespace / newlines that pollute the JS string.
++      while (!captured.empty() &&
++             (captured.back() == '\n' || captured.back() == '\r' ||
++              captured.back() == ' ')) {
++        captured.pop_back();
++      }
++      return captured;
++    };
++
++    // Compose a label for this attempt, even before making any C calls,
++    // so the diag string clearly shows what was tried.
++    std::string label = std::string("backend=") + (backend ? backend : "null") +
++                        " vision=" + (visionBackend ? visionBackend : "null") +
++                        " audio=" + (audioBackend ? audioBackend : "null");
++
+     auto* settings = litert_lm_engine_settings_create(
+       modelPath.c_str(),
+       backend,
+       visionBackend,
+-      "cpu" // audio executor: iOS XCFramework lacks compiled audio ops (INTERNAL ERROR at Invoke)
++      audioBackend
+     );
++
+     if (!settings) {
++      std::string captured = cleanup_stderr();
++      attemptLog += "\n[" + label + "] settings_create returned null";
++      if (!captured.empty()) attemptLog += " | stderr: " + captured;
+       return false;
+     }
+ 
+-    litert_lm_engine_settings_set_max_num_tokens(settings, static_cast<int>(maxTokens_));
+-    litert_lm_engine_settings_enable_benchmark(settings);
++    // Do NOT call set_max_num_tokens here. The C-API setting is the engine
++    // *context length* (KV-cache size in tokens), NOT a generation cap.
++    // Hard-coding it to e.g. 1024 caps the KV-cache slot below what the
++    // Gemma 4 E2B prefill graph expects, and the magic-number remap then
++    // wires a context-dim of 1024 into a graph compiled for a longer
++    // context. The first prefill invocation then trips
++    //   dynamic_update_slice.cc:70
++    //     SizeOfDimension(update, i) <= SizeOfDimension(operand, i)
++    // because the prefill chunk is bigger than the (capped) cache slot.
++    //
++    // Default is 0 = "let the magic-number heuristic pick", which reads
++    // the model's compiled context magic and rounds it down to the largest
++    // multiple of 256. That matches what `litert_lm_main` does by default
++    // and is what every published Gemma 4 example assumes.
++    //
++    // Output-token cap belongs on the session (set_max_output_tokens), not
++    // here — that one we still set further down where session_config_ is
++    // built.
++
++    // No benchmark mode — adds extra logging and (on some paths) wires
++    // is_benchmark into AdvancedSettings, which we don't want in production.
++
++    // prefill_chunk_size only takes effect on the *dynamic* CPU executor
++    // (LlmLiteRtCompiledModelExecutorDynamic). Gemma 4 ships as a static
++    // model with fixed-shape prefill signatures, so this is a no-op for it
++    // and we leave it at the C-API default (-1 = no chunking). Setting an
++    // arbitrary value here used to seem like the fix for the
++    // DYNAMIC_UPDATE_SLICE error, but the real issue was max_num_tokens
++    // above; chunk_size never mattered for static models.
+ 
+     // Set cache directory to the same directory as the model file
+     std::string cacheDir = modelPath.substr(0, modelPath.find_last_of('/'));
+@@ -328,23 +425,26 @@ void HybridLiteRTLM::loadModelInternal(
+     engine_ = litert_lm_engine_create(settings);
+     litert_lm_engine_settings_delete(settings);
+ 
+-    return engine_ != nullptr;
++    std::string captured = cleanup_stderr();
++    if (engine_ == nullptr) {
++      attemptLog += "\n[" + label + "] engine_create returned null";
++      if (!captured.empty()) attemptLog += " | stderr: " + captured;
++      return false;
++    }
++    // Success — note any captured stderr (often informational, not errors)
++    // for later analysis if anyone is reading the log.
++    return true;
+   };
+ 
+-  // Try requested backend first (e.g. gpu/gpu)
++  // Text-only mode: pass nullptr for vision and audio. The only inference
++  // call sites in the JS layer are sendMessage() / sendMessageAsync()
++  // (text in, text out). Skipping multimodal executors avoids the
++  // "iOS XCFramework lacks vision/audio ops" failure path entirely on
++  // engines that still want to compile those executors eagerly at init
++  // (engine_impl.cc:340/348 only creates them when settings have value).
+   const char* primaryBackend = backendStr(backend_);
+-  if (!tryCreateEngine(primaryBackend, primaryBackend)) {
+-    // Fallback chain for when the primary backend fails:
+-    bool fallbackOk = false;
+-    if (backend_ != Backend::CPU) {
+-      // 1) Try CPU main + GPU vision (model's vision encoder often requires GPU)
+-      fallbackOk = tryCreateEngine("cpu", "gpu");
+-      // 2) Try CPU main + CPU vision
+-      if (!fallbackOk) fallbackOk = tryCreateEngine("cpu", "cpu");
+-    }
+-    // 3) Try CPU main + no vision (nullptr skips vision executor entirely)
+-    if (!fallbackOk) fallbackOk = tryCreateEngine("cpu", nullptr);
+-    if (fallbackOk) {
++  if (!tryCreateEngine(primaryBackend, nullptr, nullptr)) {
++    if (backend_ != Backend::CPU && tryCreateEngine("cpu", nullptr, nullptr)) {
+       backend_ = Backend::CPU;
+     }
+   }
+@@ -367,10 +467,11 @@ void HybridLiteRTLM::loadModelInternal(
+       diag += ", Readable: NO (errno: " + std::to_string(errno) + ")";
+     }
+     
+-    // Get the native error from the C API
+-    const char* nativeErr = litert_lm_get_last_error();
+-    if (nativeErr && nativeErr[0] != '\0') {
+-      diag += " | Native error: " + std::string(nativeErr);
++    // litert_lm_get_last_error not available in this build — we capture
++    // ABSL_LOG output via stderr redirect inside tryCreateEngine instead,
++    // and append it here.
++    if (!attemptLog.empty()) {
++      diag += " | Attempts:" + attemptLog;
+     }
+ 
+     throw std::runtime_error(
+@@ -383,7 +484,7 @@ void HybridLiteRTLM::loadModelInternal(
+     litert_lm_session_config_set_max_output_tokens(session_config_, static_cast<int>(maxTokens_));
+     
+     LiteRtLmSamplerParams sampler{};
+-    sampler.type = kTopP;
++    sampler.type = kLiteRtLmSamplerTypeTopP;
+     sampler.top_k = static_cast<int32_t>(topK_);
+     sampler.top_p = static_cast<float>(topP_);
+     sampler.temperature = static_cast<float>(temperature_);
+@@ -421,31 +522,117 @@ std::string HybridLiteRTLM::sendMessageInternal(const std::string& message) {
+   std::string result;
+ 
+ #ifdef __APPLE__
+-  std::string msgJson = buildTextMessageJson(message);
++  if (!session_) {
++    throw std::runtime_error("LiteRT-LM: session not created — call loadModel() first");
++  }
+ 
+-  auto* response = litert_lm_conversation_send_message(
+-    conversation_, msgJson.c_str(), nullptr);
++  // Wrap user input in Gemma 4 turn tokens. The Session API doesn't
++  // apply the model's chat template (that's the very thing we're
++  // skipping to avoid the iOS re2 crash), so the wrapper has to format
++  // the instruction turn explicitly. Single-turn instruction following
++  // is the only mode the JS layer uses (offline homework grading); no
++  // multi-turn history needed.
++  std::string formatted;
++  if (!systemPrompt_.empty()) {
++    formatted  = "<start_of_turn>system\n" + systemPrompt_ + "<end_of_turn>\n";
++  }
++  formatted   += "<start_of_turn>user\n" + message + "<end_of_turn>\n";
++  formatted   += "<start_of_turn>model\n";
++
++  // Rebuild the session for every call. The Session API has no
++  // reset / clear-turn function, so a session that's already done
++  // one prefill (or one that errored mid-flight, like our earlier
++  // DYNAMIC_UPDATE_SLICE failure) won't accept a new turn — it
++  // throws "Prefill turn prefill:0 already started". Recreating is
++  // ~tens of ms; total inference is multi-second, so the overhead
++  // is negligible and we get guaranteed clean state.
++  if (session_) {
++    litert_lm_session_delete(session_);
++    session_ = nullptr;
++  }
++  session_ = litert_lm_engine_create_session(engine_, session_config_);
++  if (!session_) {
++    throw std::runtime_error("LiteRT-LM: failed to create session before generate");
++  }
+ 
+-  if (!response) {
+-    throw std::runtime_error("LiteRT-LM: sendMessage failed");
++  LiteRtLmInputData input{};
++  input.type = kLiteRtLmInputDataTypeText;
++  input.data = formatted.c_str();
++  input.size = formatted.size();
++
++  // Capture stderr while generate_content runs so any ABSL_LOG /
++  // tflite / kleidiAI error messages get surfaced back to JS land.
++  // Without this the C call just returns null with no context and the
++  // user sees a generic "generate_content failed" with no clue
++  // whether it was OOM, an oversized prompt, a tokenizer issue, or
++  // something else.
++  int saved_stderr = ::dup(STDERR_FILENO);
++  int pipe_fds[2] = {-1, -1};
++  bool capture_active = false;
++  if (saved_stderr >= 0 && ::pipe(pipe_fds) == 0) {
++    int flags = ::fcntl(pipe_fds[0], F_GETFL, 0);
++    if (flags >= 0) ::fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
++    if (::dup2(pipe_fds[1], STDERR_FILENO) >= 0) capture_active = true;
+   }
+ 
+-  const char* responseStr = litert_lm_json_response_get_string(response);
+-  if (responseStr) {
+-    result = extractTextFromResponse(std::string(responseStr));
++  auto* responses = litert_lm_session_generate_content(session_, &input, 1);
++
++  std::string captured;
++  if (capture_active) {
++    fflush(stderr);
++    ::dup2(saved_stderr, STDERR_FILENO);
++    ::close(saved_stderr);
++    ::close(pipe_fds[1]);
++    char buf[2048];
++    ssize_t n;
++    while ((n = ::read(pipe_fds[0], buf, sizeof(buf) - 1)) > 0) {
++      buf[n] = '\0';
++      captured += buf;
++      if (captured.size() > 1500) {
++        captured.resize(1500);
++        captured += "…(truncated)";
++        break;
++      }
++    }
++    ::close(pipe_fds[0]);
++    while (!captured.empty() &&
++           (captured.back() == '\n' || captured.back() == '\r' ||
++            captured.back() == ' ')) {
++      captured.pop_back();
++    }
++  } else if (saved_stderr >= 0) {
++    ::close(saved_stderr);
++    if (pipe_fds[0] >= 0) ::close(pipe_fds[0]);
++    if (pipe_fds[1] >= 0) ::close(pipe_fds[1]);
+   }
+-  litert_lm_json_response_delete(response);
+ 
+-  auto* benchInfo = litert_lm_conversation_get_benchmark_info(conversation_);
++  if (!responses) {
++    std::string msg = "LiteRT-LM: generate_content failed (prompt=" +
++                      std::to_string(formatted.size()) + " bytes";
++    if (!captured.empty()) msg += ", stderr: " + captured;
++    msg += ")";
++    throw std::runtime_error(msg);
++  }
++
++  if (litert_lm_responses_get_num_candidates(responses) > 0) {
++    const char* text = litert_lm_responses_get_response_text_at(responses, 0);
++    if (text) {
++      result = stripControlTokens(std::string(text));
++    }
++  }
++  litert_lm_responses_delete(responses);
++
++  // Benchmark info on Session — best-effort. Some C API builds expose
++  // a per-session benchmark accessor; if not available, leave the
++  // existing lastStats_ values untouched.
++  auto* benchInfo = litert_lm_session_get_benchmark_info(session_);
+   if (benchInfo) {
+     int numDecodeTurns = litert_lm_benchmark_info_get_num_decode_turns(benchInfo);
+     if (numDecodeTurns > 0) {
+       int lastIdx = numDecodeTurns - 1;
+-      lastStats_.tokensPerSecond = litert_lm_benchmark_info_get_decode_tokens_per_sec_at(benchInfo, lastIdx);
+       lastStats_.completionTokens = static_cast<double>(
+         litert_lm_benchmark_info_get_decode_token_count_at(benchInfo, lastIdx));
+     }
+-    lastStats_.timeToFirstToken = litert_lm_benchmark_info_get_time_to_first_token(benchInfo);
+     litert_lm_benchmark_info_delete(benchInfo);
+   }
+ #else
+@@ -535,19 +722,51 @@ void HybridLiteRTLM::sendMessageAsync(
+   
+ #ifdef __APPLE__
+   ensureLoaded();
++  if (!session_) {
++    throw std::runtime_error("LiteRT-LM: session not created — call loadModel() first");
++  }
+ 
+-  std::string msgJson = buildTextMessageJson(messageCopy);
++  // Format Gemma 4 turn tokens manually — same reasoning as
++  // sendMessageInternal: Session API skips the prompt-template machinery
++  // (which crashes on iOS for vision-aware Gemma 4), so the wrapper
++  // formats the chat turns itself.
++  std::string formatted;
++  if (!systemPrompt_.empty()) {
++    formatted  = "<start_of_turn>system\n" + systemPrompt_ + "<end_of_turn>\n";
++  }
++  formatted   += "<start_of_turn>user\n" + messageCopy + "<end_of_turn>\n";
++  formatted   += "<start_of_turn>model\n";
++
++  // Pin the formatted prompt on the StreamContext so its underlying
++  // buffer outlives the C call (InputData.data is a borrowed pointer).
++  ctxOwner->promptBuffer = std::move(formatted);
++
++  // Same session rebuild as sendMessageInternal — Session API has no
++  // reset, so a prior turn (especially one that errored mid-flight)
++  // would block this call with "Prefill turn already started".
++  if (session_) {
++    litert_lm_session_delete(session_);
++    session_ = nullptr;
++  }
++  session_ = litert_lm_engine_create_session(engine_, session_config_);
++  if (!session_) {
++    throw std::runtime_error("LiteRT-LM: failed to create session before stream");
++  }
+ 
+   // Release ownership — the C callback now owns the context via raw pointer.
+   // streamCallbackFn will delete it when done or on error.
+   StreamContext* ctx = ctxOwner.release();
+ 
++  LiteRtLmInputData input{};
++  input.type = kLiteRtLmInputDataTypeText;
++  input.data = ctx->promptBuffer.c_str();
++  input.size = ctx->promptBuffer.size();
++
+   // Wrap the initial engine call in runOnLargeStack for consistency
+   // with all other engine entry points (XNNPack needs >512KB stack).
+   runOnLargeStack([&]() {
+-    int result = litert_lm_conversation_send_message_stream(
+-      conversation_, msgJson.c_str(), nullptr,
+-      streamCallbackFn, ctx);
++    int result = litert_lm_session_generate_content_stream(
++      session_, &input, 1, streamCallbackFn, ctx);
+ 
+     if (result != 0) {
+       delete ctx;
+@@ -603,10 +822,7 @@ std::string HybridLiteRTLM::sendMessageWithImageInternal(
+   
+   if (!response) {
+     std::string errMsg = "LiteRT-LM: sendMessageWithImage failed";
+-    const char* nativeErr = litert_lm_get_last_error();
+-    if (nativeErr && nativeErr[0] != '\0') {
+-      errMsg += ": " + std::string(nativeErr);
+-    }
++    // litert_lm_get_last_error not available in this build
+     throw std::runtime_error(errMsg);
+   }
+   
+@@ -668,10 +884,7 @@ std::string HybridLiteRTLM::sendMessageWithAudioInternal(
+   
+   if (!response) {
+     std::string errMsg = "LiteRT-LM: sendMessageWithAudio failed";
+-    const char* nativeErr = litert_lm_get_last_error();
+-    if (nativeErr && nativeErr[0] != '\0') {
+-      errMsg += ": " + std::string(nativeErr);
+-    }
++    // litert_lm_get_last_error not available in this build
+     throw std::runtime_error(errMsg);
+   }
+   
+@@ -829,6 +1042,10 @@ void HybridLiteRTLM::close() {
+   history_.clear();
+   
+ #ifdef __APPLE__
++  if (session_) {
++    litert_lm_session_delete(session_);
++    session_ = nullptr;
++  }
+   if (conversation_) {
+     litert_lm_conversation_delete(conversation_);
+     conversation_ = nullptr;
+diff --git a/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.hpp b/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.hpp
+index 03ade1d..9915e47 100644
+--- a/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.hpp
++++ b/node_modules/react-native-litert-lm/cpp/HybridLiteRTLM.hpp
+@@ -101,6 +101,12 @@ private:
+   LiteRtLmConversation* conversation_ = nullptr;
+   LiteRtLmConversationConfig* conv_config_ = nullptr;
+   LiteRtLmSessionConfig* session_config_ = nullptr;
++  // Session is the iOS text-only fast path. Conversation API on iOS
++  // crashes inside re2 when compiling Gemma 4's vision-aware prompt
++  // template (heap corruption — vision_executor is null but the model
++  // still has a multimodal template). Session API takes raw InputData
++  // (text/image/audio) and skips the conversation-template machinery.
++  LiteRtLmSession* session_ = nullptr;
+ #endif
+   
+   // State
+@@ -156,6 +162,10 @@ private:
+     GenerationStats* lastStats;
+     std::chrono::steady_clock::time_point startTime;
+     int tokenCount;
++    // Owns the formatted Gemma 4 prompt for the lifetime of the C call.
++    // InputData.data is a borrowed pointer, so the std::string backing
++    // it must outlive the streaming callback chain.
++    std::string promptBuffer;
+   };
+   
+   // Static C callback for streaming (no captures needed)
+diff --git a/node_modules/react-native-litert-lm/cpp/include/litert_lm_engine.h b/node_modules/react-native-litert-lm/cpp/include/litert_lm_engine.h
+index bcfa7f8..79e8be0 100644
+--- a/node_modules/react-native-litert-lm/cpp/include/litert_lm_engine.h
++++ b/node_modules/react-native-litert-lm/cpp/include/litert_lm_engine.h
+@@ -56,6 +56,32 @@ typedef struct LiteRtLmConversation LiteRtLmConversation;
+ // Opaque pointer for a JSON response.
+ typedef struct LiteRtLmJsonResponse LiteRtLmJsonResponse;
+ 
++// Opaque pointer for a detokenize result.
++// Use `litert_lm_detokenize_result_delete` to free memory.
++typedef struct LiteRtLmDetokenizeResult LiteRtLmDetokenizeResult;
++
++// Opaque pointer for a tokenize result.
++// Use `litert_lm_tokenize_result_delete` to free memory.
++typedef struct LiteRtLmTokenizeResult LiteRtLmTokenizeResult;
++
++// Represents the type of a TokenUnion.
++typedef enum {
++  kLiteRtLmTokenUnionTypeString = 0,
++  kLiteRtLmTokenUnionTypeIds = 1,
++} LiteRtLmTokenUnionType;
++
++// Opaque pointer for LiteRT LM Token Union.
++// Represents a single start or stop token, which could be either a string or a
++// sequence of token ids.
++// Use `litert_lm_token_union_delete` to free memory.
++typedef struct LiteRtLmTokenUnion LiteRtLmTokenUnion;
++
++// Opaque pointer for LiteRT LM Token Unions.
++// Represents a collection of TokenUnion, typically used for model stop
++// conditions.
++// Use `litert_lm_token_unions_delete` to free memory.
++typedef struct LiteRtLmTokenUnions LiteRtLmTokenUnions;
++
+ // Opaque pointer for LiteRT LM Session Config.
+ typedef struct LiteRtLmSessionConfig LiteRtLmSessionConfig;
+ 
+@@ -64,19 +90,19 @@ typedef struct LiteRtLmConversationConfig LiteRtLmConversationConfig;
+ 
+ // Represents the type of sampler.
+ typedef enum {
+-  kTypeUnspecified = 0,
++  kLiteRtLmSamplerTypeUnspecified = 0,
+   // Probabilistically pick among the top k tokens.
+-  kTopK = 1,
++  kLiteRtLmSamplerTypeTopK = 1,
+   // Probabilistically pick among the tokens such that the sum is greater
+   // than or equal to p tokens after first performing top-k sampling.
+-  kTopP = 2,
++  kLiteRtLmSamplerTypeTopP = 2,
+   // Pick the token with maximum logit (i.e., argmax).
+-  kGreedy = 3,
+-} Type;
++  kLiteRtLmSamplerTypeGreedy = 3,
++} LiteRtLmSamplerType;
+ 
+ // Parameters for the sampler.
+ typedef struct {
+-  Type type;
++  LiteRtLmSamplerType type;
+   int32_t top_k;
+   float top_p;
+   float temperature;
+@@ -97,6 +123,13 @@ LITERT_LM_C_API_EXPORT
+ void litert_lm_session_config_set_max_output_tokens(
+     LiteRtLmSessionConfig* config, int max_output_tokens);
+ 
++// Sets whether to apply prompt template for this session.
++// @param config The config to modify.
++// @param apply_prompt_template Whether to apply prompt template.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_apply_prompt_template(
++    LiteRtLmSessionConfig* config, bool apply_prompt_template);
++
+ // Sets the sampler parameters for this session config.
+ // @param config The config to modify.
+ // @param sampler_params The sampler parameters to use.
+@@ -112,18 +145,45 @@ void litert_lm_session_config_delete(LiteRtLmSessionConfig* config);
+ // Creates a LiteRT LM Conversation Config.
+ // The caller is responsible for destroying the config using
+ // `litert_lm_conversation_config_delete`.
+-// @param engine The engine to use.
+-// @param session_config The session config to use. If NULL, default
+-// session config will be used.
++// @return A pointer to the created config, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmConversationConfig* litert_lm_conversation_config_create();
++
++// Sets the session config for this conversation config.
++// @param config The config to modify.
++// @param session_config The session config to use.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_session_config(
++    LiteRtLmConversationConfig* config,
++    const LiteRtLmSessionConfig* session_config);
++
++// Sets the system message for this conversation config.
++// @param config The config to modify.
+ // @param system_message_json The system message in JSON format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_system_message(
++    LiteRtLmConversationConfig* config, const char* system_message_json);
++
++// Sets the tools for this conversation config.
++// @param config The config to modify.
+ // @param tools_json The tools description in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_tools(LiteRtLmConversationConfig* config,
++                                             const char* tools_json);
++
++// Sets the initial messages for this conversation config.
++// @param config The config to modify.
++// @param messages_json The initial messages in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_messages(
++    LiteRtLmConversationConfig* config, const char* messages_json);
++
++// Sets whether to enable constrained decoding for this conversation config.
++// @param config The config to modify.
+ // @param enable_constrained_decoding Whether to enable constrained decoding.
+-// @return A pointer to the created config, or NULL on failure.
+ LITERT_LM_C_API_EXPORT
+-LiteRtLmConversationConfig* litert_lm_conversation_config_create(
+-    LiteRtLmEngine* engine, const LiteRtLmSessionConfig* session_config,
+-    const char* system_message_json, const char* tools_json,
+-    const char* messages_json, bool enable_constrained_decoding);
++void litert_lm_conversation_config_set_enable_constrained_decoding(
++    LiteRtLmConversationConfig* config, bool enable_constrained_decoding);
+ 
+ // Destroys a LiteRT LM Conversation Config.
+ // @param config The config to destroy.
+@@ -131,29 +191,30 @@ LITERT_LM_C_API_EXPORT
+ void litert_lm_conversation_config_delete(LiteRtLmConversationConfig* config);
+ 
+ // Sets the minimum log level for the LiteRT LM library.
+-// Log levels are: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL.
++// Log levels are: 0=VERBOSE, 1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR, 5=FATAL,
++// 1000=SILENT.
+ LITERT_LM_C_API_EXPORT
+ void litert_lm_set_min_log_level(int level);
+ 
+ // Represents the type of input data.
+ typedef enum {
+-  kInputText,
+-  kInputImage,
+-  kInputImageEnd,
+-  kInputAudio,
+-  kInputAudioEnd,
+-} InputDataType;
++  kLiteRtLmInputDataTypeText,
++  kLiteRtLmInputDataTypeImage,
++  kLiteRtLmInputDataTypeImageEnd,
++  kLiteRtLmInputDataTypeAudio,
++  kLiteRtLmInputDataTypeAudioEnd,
++} LiteRtLmInputDataType;
+ 
+ // Represents a single piece of input data.
+ typedef struct {
+-  InputDataType type;
++  LiteRtLmInputDataType type;
+   // The data pointer. The interpretation depends on the `type`.
+   // For kInputText, it's a UTF-8 string.
+   // For kInputImage and kInputAudio, it's a pointer to the raw bytes.
+   const void* data;
+   // The size of the data in bytes.
+   size_t size;
+-} InputData;
++} LiteRtLmInputData;
+ 
+ // Creates LiteRT LM Engine Settings. The caller is responsible for destroying
+ // the settings using `litert_lm_engine_settings_delete`.
+@@ -182,6 +243,15 @@ LITERT_LM_C_API_EXPORT
+ void litert_lm_engine_settings_set_max_num_tokens(
+     LiteRtLmEngineSettings* settings, int max_num_tokens);
+ 
++// Sets whether the engine should load different sections of the litertlm file
++// in parallel. Defaults to true.
++//
++// @param settings The engine settings.
++// @param parallel_file_section_loading Whether to load in parallel.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_parallel_file_section_loading(
++    LiteRtLmEngineSettings* settings, bool parallel_file_section_loading);
++
+ // Sets the cache directory for the engine.
+ //
+ // @param settings The engine settings.
+@@ -232,18 +302,19 @@ LITERT_LM_C_API_EXPORT
+ void litert_lm_engine_settings_set_num_decode_tokens(
+     LiteRtLmEngineSettings* settings, int num_decode_tokens);
+ 
+-// Returns the last error message from a failed C API call.
+-// Returns an empty string if no error has occurred.
+-// The returned pointer is valid until the next C API call on the same thread.
++// Sets whether to enable speculative decoding.
++//
++// @param settings The engine settings.
++// @param enable_speculative_decoding Whether to enable speculative decoding.
+ LITERT_LM_C_API_EXPORT
+-const char* litert_lm_get_last_error();
++void litert_lm_engine_settings_set_enable_speculative_decoding(
++    LiteRtLmEngineSettings* settings, bool enable_speculative_decoding);
+ 
+ // Creates a LiteRT LM Engine from the given settings. The caller is responsible
+ // for destroying the engine using `litert_lm_engine_delete`.
+ //
+ // @param settings The engine settings.
+ // @return A pointer to the created engine, or NULL on failure.
+-//         Call litert_lm_get_last_error() for details on failure.
+ LITERT_LM_C_API_EXPORT
+ LiteRtLmEngine* litert_lm_engine_create(const LiteRtLmEngineSettings* settings);
+ 
+@@ -270,18 +341,65 @@ LiteRtLmSession* litert_lm_engine_create_session(LiteRtLmEngine* engine,
+ LITERT_LM_C_API_EXPORT
+ void litert_lm_session_delete(LiteRtLmSession* session);
+ 
+-// Generates content from the input prompt.
++// Cancels the current processing in the session.
+ //
+-// @param session The session to use for generation.
++// @param session The session to cancel processing on.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_cancel_process(LiteRtLmSession* session);
++
++// Adds the input prompt/query to the model for starting the prefilling
++// process. This is a blocking call and the function will return when the
++// prefill process is done.
++//
++// @param session The session to use.
+ // @param inputs An array of InputData structs representing the multimodal
+ //   input.
+ // @param num_inputs The number of InputData structs in the array.
++// @return 0 on success, non-zero on failure.
++LITERT_LM_C_API_EXPORT
++int litert_lm_session_run_prefill(LiteRtLmSession* session,
++                                  const LiteRtLmInputData* inputs,
++                                  size_t num_inputs);
++
++// Starts the decoding process for the model to predict the response based
++// on the input prompt/query added after using litert_lm_session_run_prefill.
++// This is a blocking call and the function will return when the decoding
++// process is done.
++//
++// @param session The session to use.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_decode(LiteRtLmSession* session);
++
++// Scores the target text after the prefill process is done.
++//
++// @param session The session to use.
++// @param target_text An array of target text strings to score.
++// @param num_targets The number of strings in the target_text array.
++// @param store_token_lengths Whether to store the token lengths of the target
++//   texts in the responses.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_text_scoring(LiteRtLmSession* session,
++                                                      const char** target_text,
++                                                      size_t num_targets,
++                                                      bool store_token_lengths);
++
++// Generates content from the input prompt.
++//
++// @param session The session to use for generation.
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
++//   input.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
+ // @return A pointer to the responses, or NULL on failure. The caller is
+ //   responsible for deleting the responses using `litert_lm_responses_delete`.
+ LITERT_LM_C_API_EXPORT
+-LiteRtLmResponses* litert_lm_session_generate_content(LiteRtLmSession* session,
+-                                                      const InputData* inputs,
+-                                                      size_t num_inputs);
++LiteRtLmResponses* litert_lm_session_generate_content(
++    LiteRtLmSession* session, const LiteRtLmInputData* inputs,
++    size_t num_inputs);
+ // Destroys a LiteRT LM Responses object.
+ //
+ // @param responses The responses to destroy.
+@@ -306,6 +424,45 @@ LITERT_LM_C_API_EXPORT
+ const char* litert_lm_responses_get_response_text_at(
+     const LiteRtLmResponses* responses, int index);
+ 
++// Returns whether the response contains a score at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the score is available at the given index, false otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_score_at(const LiteRtLmResponses* responses,
++                                      int index);
++
++// Returns the score at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The score. Returns 0.0f if index is out of bounds or no score is
++//   present.
++LITERT_LM_C_API_EXPORT
++float litert_lm_responses_get_score_at(const LiteRtLmResponses* responses,
++                                       int index);
++
++// Returns whether the response contains a token length at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the token length is available at the given index, false
++//   otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_token_length_at(const LiteRtLmResponses* responses,
++                                             int index);
++
++// Returns the token length at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The token length. Returns 0 if index is out of bounds or no token
++//   length is present.
++LITERT_LM_C_API_EXPORT
++int litert_lm_responses_get_token_length_at(const LiteRtLmResponses* responses,
++                                            int index);
++
+ // Retrieves the benchmark information from the session. The caller is
+ // responsible for destroying the benchmark info using
+ // `litert_lm_benchmark_info_delete`.
+@@ -408,16 +565,17 @@ typedef void (*LiteRtLmStreamCallback)(void* callback_data, const char* chunk,
+ // background thread for each chunk.
+ //
+ // @param session The session to use for generation.
+-// @param inputs An array of InputData structs representing the multimodal
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
+ //   input.
+-// @param num_inputs The number of InputData structs in the array.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
+ // @param callback The callback function to receive response chunks.
+ // @param callback_data A pointer to user data that will be passed to the
+ // callback.
+ // @return 0 on success, non-zero on failure to start the stream.
+ LITERT_LM_C_API_EXPORT
+ int litert_lm_session_generate_content_stream(LiteRtLmSession* session,
+-                                              const InputData* inputs,
++                                              const LiteRtLmInputData* inputs,
+                                               size_t num_inputs,
+                                               LiteRtLmStreamCallback callback,
+                                               void* callback_data);
+@@ -502,6 +660,147 @@ LITERT_LM_C_API_EXPORT
+ LiteRtLmBenchmarkInfo* litert_lm_conversation_get_benchmark_info(
+     LiteRtLmConversation* conversation);
+ 
++// Tokenizes text using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param text The UTF-8 string to tokenize.
++// @return A pointer to the tokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_tokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenizeResult* litert_lm_engine_tokenize(LiteRtLmEngine* engine,
++                                                  const char* text);
++
++// Destroys a LiteRT LM Tokenize Result.
++//
++// @param result The tokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_tokenize_result_delete(LiteRtLmTokenizeResult* result);
++
++// Returns the token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return A pointer to the internal array of token ids. The returned pointer
++//   is valid only for the lifetime of the `result` object.
++LITERT_LM_C_API_EXPORT
++const int* litert_lm_tokenize_result_get_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Returns the number of token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return The number of token ids.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_tokenize_result_get_num_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Detokenizes token ids using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param tokens An array of token ids to detokenize.
++// @param num_tokens The number of token ids in the array.
++// @return A pointer to the detokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_detokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmDetokenizeResult* litert_lm_engine_detokenize(LiteRtLmEngine* engine,
++                                                      const int* tokens,
++                                                      size_t num_tokens);
++
++// Destroys a LiteRT LM Detokenize Result.
++//
++// @param result The detokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_detokenize_result_delete(LiteRtLmDetokenizeResult* result);
++
++// Returns the string from a detokenize result.
++//
++// @param result The detokenize result.
++// @return The detokenized UTF-8 string. The returned string is owned by the
++//   `result` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_detokenize_result_get_string(
++    const LiteRtLmDetokenizeResult* result);
++
++// Destroys a LiteRT LM Token Union.
++//
++// @param token_union The token union to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_union_delete(LiteRtLmTokenUnion* token_union);
++
++// Returns the type of the token union.
++//
++// @param token_union The token union.
++// @return The type of the token union.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnionType litert_lm_token_union_get_type(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the string value from a token union.
++//
++// @param token_union The token union.
++// @return The string value, or NULL if the type is not
++//   kLiteRtLmTokenUnionTypeString. The returned string is owned by the
++//   `token_union` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_token_union_get_string(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the token ids from a token union.
++//
++// @param token_union The token union.
++// @param out_tokens A pointer to receive the internal array of token ids.
++//   The received pointer is valid only for the lifetime of the `token_union`
++//   object.
++// @param out_num_tokens A pointer to receive the number of token ids.
++// @return 0 on success, non-zero if the type is not kLiteRtLmTokenUnionTypeIds.
++LITERT_LM_C_API_EXPORT
++int litert_lm_token_union_get_ids(const LiteRtLmTokenUnion* token_union,
++                                  const int** out_tokens,
++                                  size_t* out_num_tokens);
++
++// Destroys a LiteRT LM Token Unions object.
++//
++// @param tokens The token unions object to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_unions_delete(LiteRtLmTokenUnions* tokens);
++
++// Returns the number of token unions in the collection.
++//
++// @param tokens The token unions object.
++// @return The number of token unions.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_token_unions_get_num_tokens(const LiteRtLmTokenUnions* tokens);
++
++// Returns the token union at a given index from a collection.
++//
++// @param tokens The token unions collection.
++// @param index The index of the token union.
++// @return A pointer to the token union at the given index, or NULL if the index
++//   is out of bounds. The returned pointer is owned by the `tokens` object and
++//   is valid only for its lifetime. The caller MUST NOT delete it.
++LITERT_LM_C_API_EXPORT
++const LiteRtLmTokenUnion* litert_lm_token_unions_get_token_at(
++    const LiteRtLmTokenUnions* tokens, size_t index);
++
++// Returns the configured start token (BOS), if any.
++//
++// @param engine The engine instance.
++// @return A pointer to the start token, or NULL if none configured. The caller
++//   is responsible for deleting the result using
++//   `litert_lm_token_union_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnion* litert_lm_engine_get_start_token(LiteRtLmEngine* engine);
++
++// Returns the configured stop tokens (EOS).
++//
++// @param engine The engine instance.
++// @return A pointer to the stop tokens collection, or NULL if none configured.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_token_unions_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnions* litert_lm_engine_get_stop_tokens(LiteRtLmEngine* engine);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64-simulator/libengine_init.a b/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64-simulator/libengine_init.a
+new file mode 100644
+index 0000000..a99639f
+Binary files /dev/null and b/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64-simulator/libengine_init.a differ
+diff --git a/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64/libengine_init.a b/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64/libengine_init.a
+new file mode 100644
+index 0000000..56cc64c
+Binary files /dev/null and b/node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64/libengine_init.a differ
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/Info.plist b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/Info.plist
+new file mode 100644
+index 0000000..a9ac0cb
+--- /dev/null
++++ b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/Info.plist
+@@ -0,0 +1,43 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>AvailableLibraries</key>
++	<array>
++		<dict>
++			<key>BinaryPath</key>
++			<string>LiteRTLM.framework/LiteRTLM</string>
++			<key>LibraryIdentifier</key>
++			<string>ios-arm64-simulator</string>
++			<key>LibraryPath</key>
++			<string>LiteRTLM.framework</string>
++			<key>SupportedArchitectures</key>
++			<array>
++				<string>arm64</string>
++			</array>
++			<key>SupportedPlatform</key>
++			<string>ios</string>
++			<key>SupportedPlatformVariant</key>
++			<string>simulator</string>
++		</dict>
++		<dict>
++			<key>BinaryPath</key>
++			<string>LiteRTLM.framework/LiteRTLM</string>
++			<key>LibraryIdentifier</key>
++			<string>ios-arm64</string>
++			<key>LibraryPath</key>
++			<string>LiteRTLM.framework</string>
++			<key>SupportedArchitectures</key>
++			<array>
++				<string>arm64</string>
++			</array>
++			<key>SupportedPlatform</key>
++			<string>ios</string>
++		</dict>
++	</array>
++	<key>CFBundlePackageType</key>
++	<string>XFWK</string>
++	<key>XCFrameworkFormatVersion</key>
++	<string>1.0</string>
++</dict>
++</plist>
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Headers/litert_lm_engine.h b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Headers/litert_lm_engine.h
+new file mode 100644
+index 0000000..79e8be0
+--- /dev/null
++++ b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Headers/litert_lm_engine.h
+@@ -0,0 +1,808 @@
++// Copyright 2025 The ODML Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
++#define THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// For Windows, __declspec( dllexport ) is required to export function in .dll.
++// https://learn.microsoft.com/en-us/cpp/cpp/using-dllimport-and-dllexport-in-cpp-classes?view=msvc-170
++//
++// _WIN32 is defined as 1 when the compilation target is 32-bit ARM, 64-bit ARM,
++// x86, x64, or ARM64EC. Otherwise, undefined.
++// https://learn.microsoft.com/en-us/cpp/preprocessor/predefined-macros
++#if defined(_WIN32)
++#define LITERT_LM_C_API_EXPORT __declspec(dllexport)
++#else
++#define LITERT_LM_C_API_EXPORT
++#endif
++
++// Opaque pointer for the LiteRT LM Engine.
++typedef struct LiteRtLmEngine LiteRtLmEngine;
++
++// Opaque pointer for the LiteRT LM Session.
++typedef struct LiteRtLmSession LiteRtLmSession;
++
++// Opaque pointer for the LiteRT LM Responses.
++typedef struct LiteRtLmResponses LiteRtLmResponses;
++
++// Opaque pointer for the LiteRT LM Engine Settings.
++typedef struct LiteRtLmEngineSettings LiteRtLmEngineSettings;
++
++// Opaque pointer for the LiteRT LM Benchmark Info.
++typedef struct LiteRtLmBenchmarkInfo LiteRtLmBenchmarkInfo;
++
++// Opaque pointer for the LiteRT LM Conversation.
++typedef struct LiteRtLmConversation LiteRtLmConversation;
++
++// Opaque pointer for a JSON response.
++typedef struct LiteRtLmJsonResponse LiteRtLmJsonResponse;
++
++// Opaque pointer for a detokenize result.
++// Use `litert_lm_detokenize_result_delete` to free memory.
++typedef struct LiteRtLmDetokenizeResult LiteRtLmDetokenizeResult;
++
++// Opaque pointer for a tokenize result.
++// Use `litert_lm_tokenize_result_delete` to free memory.
++typedef struct LiteRtLmTokenizeResult LiteRtLmTokenizeResult;
++
++// Represents the type of a TokenUnion.
++typedef enum {
++  kLiteRtLmTokenUnionTypeString = 0,
++  kLiteRtLmTokenUnionTypeIds = 1,
++} LiteRtLmTokenUnionType;
++
++// Opaque pointer for LiteRT LM Token Union.
++// Represents a single start or stop token, which could be either a string or a
++// sequence of token ids.
++// Use `litert_lm_token_union_delete` to free memory.
++typedef struct LiteRtLmTokenUnion LiteRtLmTokenUnion;
++
++// Opaque pointer for LiteRT LM Token Unions.
++// Represents a collection of TokenUnion, typically used for model stop
++// conditions.
++// Use `litert_lm_token_unions_delete` to free memory.
++typedef struct LiteRtLmTokenUnions LiteRtLmTokenUnions;
++
++// Opaque pointer for LiteRT LM Session Config.
++typedef struct LiteRtLmSessionConfig LiteRtLmSessionConfig;
++
++// Opaque pointer for LiteRT LM Conversation Config.
++typedef struct LiteRtLmConversationConfig LiteRtLmConversationConfig;
++
++// Represents the type of sampler.
++typedef enum {
++  kLiteRtLmSamplerTypeUnspecified = 0,
++  // Probabilistically pick among the top k tokens.
++  kLiteRtLmSamplerTypeTopK = 1,
++  // Probabilistically pick among the tokens such that the sum is greater
++  // than or equal to p tokens after first performing top-k sampling.
++  kLiteRtLmSamplerTypeTopP = 2,
++  // Pick the token with maximum logit (i.e., argmax).
++  kLiteRtLmSamplerTypeGreedy = 3,
++} LiteRtLmSamplerType;
++
++// Parameters for the sampler.
++typedef struct {
++  LiteRtLmSamplerType type;
++  int32_t top_k;
++  float top_p;
++  float temperature;
++  int32_t seed;
++} LiteRtLmSamplerParams;
++
++// Creates a LiteRT LM Session Config.
++// The caller is responsible for destroying the config using
++// `litert_lm_session_config_delete`.
++// @return A pointer to the created config, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmSessionConfig* litert_lm_session_config_create();
++
++// Sets the maximum number of output tokens per decode step for this session.
++// @param config The config to modify.
++// @param max_output_tokens The maximum number of output tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_max_output_tokens(
++    LiteRtLmSessionConfig* config, int max_output_tokens);
++
++// Sets whether to apply prompt template for this session.
++// @param config The config to modify.
++// @param apply_prompt_template Whether to apply prompt template.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_apply_prompt_template(
++    LiteRtLmSessionConfig* config, bool apply_prompt_template);
++
++// Sets the sampler parameters for this session config.
++// @param config The config to modify.
++// @param sampler_params The sampler parameters to use.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_sampler_params(
++    LiteRtLmSessionConfig* config, const LiteRtLmSamplerParams* sampler_params);
++
++// Destroys a LiteRT LM Session Config.
++// @param config The config to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_delete(LiteRtLmSessionConfig* config);
++
++// Creates a LiteRT LM Conversation Config.
++// The caller is responsible for destroying the config using
++// `litert_lm_conversation_config_delete`.
++// @return A pointer to the created config, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmConversationConfig* litert_lm_conversation_config_create();
++
++// Sets the session config for this conversation config.
++// @param config The config to modify.
++// @param session_config The session config to use.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_session_config(
++    LiteRtLmConversationConfig* config,
++    const LiteRtLmSessionConfig* session_config);
++
++// Sets the system message for this conversation config.
++// @param config The config to modify.
++// @param system_message_json The system message in JSON format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_system_message(
++    LiteRtLmConversationConfig* config, const char* system_message_json);
++
++// Sets the tools for this conversation config.
++// @param config The config to modify.
++// @param tools_json The tools description in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_tools(LiteRtLmConversationConfig* config,
++                                             const char* tools_json);
++
++// Sets the initial messages for this conversation config.
++// @param config The config to modify.
++// @param messages_json The initial messages in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_messages(
++    LiteRtLmConversationConfig* config, const char* messages_json);
++
++// Sets whether to enable constrained decoding for this conversation config.
++// @param config The config to modify.
++// @param enable_constrained_decoding Whether to enable constrained decoding.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_enable_constrained_decoding(
++    LiteRtLmConversationConfig* config, bool enable_constrained_decoding);
++
++// Destroys a LiteRT LM Conversation Config.
++// @param config The config to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_delete(LiteRtLmConversationConfig* config);
++
++// Sets the minimum log level for the LiteRT LM library.
++// Log levels are: 0=VERBOSE, 1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR, 5=FATAL,
++// 1000=SILENT.
++LITERT_LM_C_API_EXPORT
++void litert_lm_set_min_log_level(int level);
++
++// Represents the type of input data.
++typedef enum {
++  kLiteRtLmInputDataTypeText,
++  kLiteRtLmInputDataTypeImage,
++  kLiteRtLmInputDataTypeImageEnd,
++  kLiteRtLmInputDataTypeAudio,
++  kLiteRtLmInputDataTypeAudioEnd,
++} LiteRtLmInputDataType;
++
++// Represents a single piece of input data.
++typedef struct {
++  LiteRtLmInputDataType type;
++  // The data pointer. The interpretation depends on the `type`.
++  // For kInputText, it's a UTF-8 string.
++  // For kInputImage and kInputAudio, it's a pointer to the raw bytes.
++  const void* data;
++  // The size of the data in bytes.
++  size_t size;
++} LiteRtLmInputData;
++
++// Creates LiteRT LM Engine Settings. The caller is responsible for destroying
++// the settings using `litert_lm_engine_settings_delete`.
++//
++// @param model_path The path to the model file.
++// @param backend_str The backend to use (e.g., "cpu", "gpu").
++// @param vision_backend_str The vision backend to use, or NULL if not set.
++// @param audio_backend_str The audio backend to use, or NULL if not set.
++// @return A pointer to the created settings, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmEngineSettings* litert_lm_engine_settings_create(
++    const char* model_path, const char* backend_str,
++    const char* vision_backend_str, const char* audio_backend_str);
++
++// Destroys LiteRT LM Engine Settings.
++//
++// @param settings The settings to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_delete(LiteRtLmEngineSettings* settings);
++
++// Sets the maximum number of tokens for the engine.
++//
++// @param settings The engine settings.
++// @param max_num_tokens The maximum number of tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_max_num_tokens(
++    LiteRtLmEngineSettings* settings, int max_num_tokens);
++
++// Sets whether the engine should load different sections of the litertlm file
++// in parallel. Defaults to true.
++//
++// @param settings The engine settings.
++// @param parallel_file_section_loading Whether to load in parallel.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_parallel_file_section_loading(
++    LiteRtLmEngineSettings* settings, bool parallel_file_section_loading);
++
++// Sets the cache directory for the engine.
++//
++// @param settings The engine settings.
++// @param cache_dir The cache directory.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_cache_dir(LiteRtLmEngineSettings* settings,
++                                             const char* cache_dir);
++
++// Sets the activation data type.
++//
++// @param settings The engine settings.
++// @param activation_data_type_int The activation data type. See
++// `ActivationDataType` in executor_settings_base.h for the possible values
++// (e.g., 0 for F32, 1 for F16, 2 for I16, 3 for I8).
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_activation_data_type(
++    LiteRtLmEngineSettings* settings, int activation_data_type_int);
++
++// Sets the prefill chunk size for the engine. Only applicable for CPU backend
++// with dynamic models.
++//
++// @param settings The engine settings.
++// @param prefill_chunk_size The prefill chunk size.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_prefill_chunk_size(
++    LiteRtLmEngineSettings* settings, int prefill_chunk_size);
++
++// Enables benchmarking for the engine.
++//
++// @param settings The engine settings.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_enable_benchmark(
++    LiteRtLmEngineSettings* settings);
++
++// Sets the number of prefill tokens for benchmarking.
++//
++// @param settings The engine settings.
++// @param num_prefill_tokens The number of prefill tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_num_prefill_tokens(
++    LiteRtLmEngineSettings* settings, int num_prefill_tokens);
++
++// Sets the number of decode tokens for benchmarking.
++//
++// @param settings The engine settings.
++// @param num_decode_tokens The number of decode tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_num_decode_tokens(
++    LiteRtLmEngineSettings* settings, int num_decode_tokens);
++
++// Sets whether to enable speculative decoding.
++//
++// @param settings The engine settings.
++// @param enable_speculative_decoding Whether to enable speculative decoding.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_enable_speculative_decoding(
++    LiteRtLmEngineSettings* settings, bool enable_speculative_decoding);
++
++// Creates a LiteRT LM Engine from the given settings. The caller is responsible
++// for destroying the engine using `litert_lm_engine_delete`.
++//
++// @param settings The engine settings.
++// @return A pointer to the created engine, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmEngine* litert_lm_engine_create(const LiteRtLmEngineSettings* settings);
++
++// Destroys a LiteRT LM Engine.
++//
++// @param engine The engine to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_delete(LiteRtLmEngine* engine);
++
++// Creates a LiteRT LM Session. The caller is responsible for destroying the
++// session using `litert_lm_session_delete`.
++//
++// @param engine The engine to create the session from.
++// @param config The session config of the session. If NULL, use the default
++// session config.
++// @return A pointer to the created session, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmSession* litert_lm_engine_create_session(LiteRtLmEngine* engine,
++                                                 LiteRtLmSessionConfig* config);
++
++// Destroys a LiteRT LM Session.
++//
++// @param session The session to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_delete(LiteRtLmSession* session);
++
++// Cancels the current processing in the session.
++//
++// @param session The session to cancel processing on.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_cancel_process(LiteRtLmSession* session);
++
++// Adds the input prompt/query to the model for starting the prefilling
++// process. This is a blocking call and the function will return when the
++// prefill process is done.
++//
++// @param session The session to use.
++// @param inputs An array of InputData structs representing the multimodal
++//   input.
++// @param num_inputs The number of InputData structs in the array.
++// @return 0 on success, non-zero on failure.
++LITERT_LM_C_API_EXPORT
++int litert_lm_session_run_prefill(LiteRtLmSession* session,
++                                  const LiteRtLmInputData* inputs,
++                                  size_t num_inputs);
++
++// Starts the decoding process for the model to predict the response based
++// on the input prompt/query added after using litert_lm_session_run_prefill.
++// This is a blocking call and the function will return when the decoding
++// process is done.
++//
++// @param session The session to use.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_decode(LiteRtLmSession* session);
++
++// Scores the target text after the prefill process is done.
++//
++// @param session The session to use.
++// @param target_text An array of target text strings to score.
++// @param num_targets The number of strings in the target_text array.
++// @param store_token_lengths Whether to store the token lengths of the target
++//   texts in the responses.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_text_scoring(LiteRtLmSession* session,
++                                                      const char** target_text,
++                                                      size_t num_targets,
++                                                      bool store_token_lengths);
++
++// Generates content from the input prompt.
++//
++// @param session The session to use for generation.
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
++//   input.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_generate_content(
++    LiteRtLmSession* session, const LiteRtLmInputData* inputs,
++    size_t num_inputs);
++// Destroys a LiteRT LM Responses object.
++//
++// @param responses The responses to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_responses_delete(LiteRtLmResponses* responses);
++
++// Returns the number of response candidates.
++//
++// @param responses The responses object.
++// @return The number of candidates.
++LITERT_LM_C_API_EXPORT
++int litert_lm_responses_get_num_candidates(const LiteRtLmResponses* responses);
++
++// Returns the response text at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The response text. The returned string is owned by the `responses`
++//   object and is valid only for its lifetime. Returns NULL if index is out of
++//   bounds.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_responses_get_response_text_at(
++    const LiteRtLmResponses* responses, int index);
++
++// Returns whether the response contains a score at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the score is available at the given index, false otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_score_at(const LiteRtLmResponses* responses,
++                                      int index);
++
++// Returns the score at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The score. Returns 0.0f if index is out of bounds or no score is
++//   present.
++LITERT_LM_C_API_EXPORT
++float litert_lm_responses_get_score_at(const LiteRtLmResponses* responses,
++                                       int index);
++
++// Returns whether the response contains a token length at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the token length is available at the given index, false
++//   otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_token_length_at(const LiteRtLmResponses* responses,
++                                             int index);
++
++// Returns the token length at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The token length. Returns 0 if index is out of bounds or no token
++//   length is present.
++LITERT_LM_C_API_EXPORT
++int litert_lm_responses_get_token_length_at(const LiteRtLmResponses* responses,
++                                            int index);
++
++// Retrieves the benchmark information from the session. The caller is
++// responsible for destroying the benchmark info using
++// `litert_lm_benchmark_info_delete`.
++//
++// @param session The session to get the benchmark info from.
++// @return A pointer to the benchmark info, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmBenchmarkInfo* litert_lm_session_get_benchmark_info(
++    LiteRtLmSession* session);
++
++// Destroys a LiteRT LM Benchmark Info object.
++//
++// @param benchmark_info The benchmark info to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_benchmark_info_delete(LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the time to the first token in seconds.
++//
++// Note that the first time to token doesn't include the time for
++// initialization. It is the sum of the prefill time for the first turn and
++// the time spent for decoding the first token.
++//
++// @param benchmark_info The benchmark info object.
++// @return The time to the first token in seconds.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_time_to_first_token(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the total initialization time in seconds.
++//
++// @param benchmark_info The benchmark info object.
++// @return The total initialization time in seconds.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_total_init_time_in_second(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the number of prefill turns.
++//
++// @param benchmark_info The benchmark info object.
++// @return The number of prefill turns.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_num_prefill_turns(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the number of decode turns.
++//
++// @param benchmark_info The benchmark info object.
++// @return The number of decode turns.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_num_decode_turns(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the prefill token count at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the prefill turn.
++// @return The prefill token count.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_prefill_token_count_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the decode token count at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the decode turn.
++// @return The decode token count.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_decode_token_count_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the prefill tokens per second at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the prefill turn.
++// @return The prefill tokens per second.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_prefill_tokens_per_sec_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the decode tokens per second at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the decode turn.
++// @return The decode tokens per second.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_decode_tokens_per_sec_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Callback for streaming responses.
++// `callback_data` is a pointer to user-defined data passed to the stream
++// function. `chunk` is the piece of text from the stream. It's only valid for
++// the duration of the call. `is_final` is true if this is the last chunk in the
++// stream. `error_msg` is a null-terminated string with an error message, or
++// NULL on success.
++typedef void (*LiteRtLmStreamCallback)(void* callback_data, const char* chunk,
++                                       bool is_final, const char* error_msg);
++
++// Generates content from the input prompt and streams the response via a
++// callback. This is a non-blocking call that will invoke the callback from a
++// background thread for each chunk.
++//
++// @param session The session to use for generation.
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
++//   input.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
++// @param callback The callback function to receive response chunks.
++// @param callback_data A pointer to user data that will be passed to the
++// callback.
++// @return 0 on success, non-zero on failure to start the stream.
++LITERT_LM_C_API_EXPORT
++int litert_lm_session_generate_content_stream(LiteRtLmSession* session,
++                                              const LiteRtLmInputData* inputs,
++                                              size_t num_inputs,
++                                              LiteRtLmStreamCallback callback,
++                                              void* callback_data);
++
++// Creates a LiteRT LM Conversation. The caller is responsible for destroying
++// the conversation using `litert_lm_conversation_delete`.
++//
++// @param engine The engine to create the conversation from.
++// @param config The conversation config to use. If NULL, the default config
++//   will be used.
++// @return A pointer to the created conversation, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmConversation* litert_lm_conversation_create(
++    LiteRtLmEngine* engine, LiteRtLmConversationConfig* config);
++
++// Destroys a LiteRT LM Conversation.
++//
++// @param conversation The conversation to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_delete(LiteRtLmConversation* conversation);
++
++// Sends a message to the conversation and returns the response.
++// This is a blocking call.
++//
++// @param conversation The conversation to use.
++// @param message_json A JSON string representing the message to send.
++// @param extra_context A JSON string representing the extra context to use.
++// @return A pointer to the JSON response, or NULL on failure. The caller is
++//   responsible for deleting the response using
++//   `litert_lm_json_response_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmJsonResponse* litert_lm_conversation_send_message(
++    LiteRtLmConversation* conversation, const char* message_json,
++    const char* extra_context);
++
++// Destroys a LiteRT LM Json Response object.
++//
++// @param response The response to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_json_response_delete(LiteRtLmJsonResponse* response);
++
++// Returns the JSON response string from a response object.
++//
++// @param response The response object.
++// @return The response JSON string. The returned string is owned by the
++//   `response` object and is valid only for its lifetime. Returns NULL if
++//   response is NULL.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_json_response_get_string(
++    const LiteRtLmJsonResponse* response);
++
++// Sends a message to the conversation and streams the response via a
++// callback. This is a non-blocking call that will invoke the callback from a
++// background thread for each chunk.
++//
++// @param conversation The conversation to use.
++// @param message_json A JSON string representing the message to send.
++// @param extra_context A JSON string representing the extra context to use.
++// @param callback The callback function to receive response chunks.
++// @param callback_data A pointer to user data that will be passed to the
++// callback.
++// @return 0 on success, non-zero on failure to start the stream.
++LITERT_LM_C_API_EXPORT
++int litert_lm_conversation_send_message_stream(
++    LiteRtLmConversation* conversation, const char* message_json,
++    const char* extra_context, LiteRtLmStreamCallback callback,
++    void* callback_data);
++
++// Cancels the ongoing inference process, for asynchronous inference.
++//
++// @param conversation The conversation to cancel the inference for.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_cancel_process(LiteRtLmConversation* conversation);
++
++// Retrieves the benchmark information from the conversation. The caller is
++// responsible for destroying the benchmark info using
++// `litert_lm_benchmark_info_delete`.
++//
++// @param conversation The conversation to get the benchmark info from.
++// @return A pointer to the benchmark info, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmBenchmarkInfo* litert_lm_conversation_get_benchmark_info(
++    LiteRtLmConversation* conversation);
++
++// Tokenizes text using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param text The UTF-8 string to tokenize.
++// @return A pointer to the tokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_tokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenizeResult* litert_lm_engine_tokenize(LiteRtLmEngine* engine,
++                                                  const char* text);
++
++// Destroys a LiteRT LM Tokenize Result.
++//
++// @param result The tokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_tokenize_result_delete(LiteRtLmTokenizeResult* result);
++
++// Returns the token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return A pointer to the internal array of token ids. The returned pointer
++//   is valid only for the lifetime of the `result` object.
++LITERT_LM_C_API_EXPORT
++const int* litert_lm_tokenize_result_get_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Returns the number of token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return The number of token ids.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_tokenize_result_get_num_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Detokenizes token ids using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param tokens An array of token ids to detokenize.
++// @param num_tokens The number of token ids in the array.
++// @return A pointer to the detokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_detokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmDetokenizeResult* litert_lm_engine_detokenize(LiteRtLmEngine* engine,
++                                                      const int* tokens,
++                                                      size_t num_tokens);
++
++// Destroys a LiteRT LM Detokenize Result.
++//
++// @param result The detokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_detokenize_result_delete(LiteRtLmDetokenizeResult* result);
++
++// Returns the string from a detokenize result.
++//
++// @param result The detokenize result.
++// @return The detokenized UTF-8 string. The returned string is owned by the
++//   `result` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_detokenize_result_get_string(
++    const LiteRtLmDetokenizeResult* result);
++
++// Destroys a LiteRT LM Token Union.
++//
++// @param token_union The token union to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_union_delete(LiteRtLmTokenUnion* token_union);
++
++// Returns the type of the token union.
++//
++// @param token_union The token union.
++// @return The type of the token union.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnionType litert_lm_token_union_get_type(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the string value from a token union.
++//
++// @param token_union The token union.
++// @return The string value, or NULL if the type is not
++//   kLiteRtLmTokenUnionTypeString. The returned string is owned by the
++//   `token_union` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_token_union_get_string(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the token ids from a token union.
++//
++// @param token_union The token union.
++// @param out_tokens A pointer to receive the internal array of token ids.
++//   The received pointer is valid only for the lifetime of the `token_union`
++//   object.
++// @param out_num_tokens A pointer to receive the number of token ids.
++// @return 0 on success, non-zero if the type is not kLiteRtLmTokenUnionTypeIds.
++LITERT_LM_C_API_EXPORT
++int litert_lm_token_union_get_ids(const LiteRtLmTokenUnion* token_union,
++                                  const int** out_tokens,
++                                  size_t* out_num_tokens);
++
++// Destroys a LiteRT LM Token Unions object.
++//
++// @param tokens The token unions object to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_unions_delete(LiteRtLmTokenUnions* tokens);
++
++// Returns the number of token unions in the collection.
++//
++// @param tokens The token unions object.
++// @return The number of token unions.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_token_unions_get_num_tokens(const LiteRtLmTokenUnions* tokens);
++
++// Returns the token union at a given index from a collection.
++//
++// @param tokens The token unions collection.
++// @param index The index of the token union.
++// @return A pointer to the token union at the given index, or NULL if the index
++//   is out of bounds. The returned pointer is owned by the `tokens` object and
++//   is valid only for its lifetime. The caller MUST NOT delete it.
++LITERT_LM_C_API_EXPORT
++const LiteRtLmTokenUnion* litert_lm_token_unions_get_token_at(
++    const LiteRtLmTokenUnions* tokens, size_t index);
++
++// Returns the configured start token (BOS), if any.
++//
++// @param engine The engine instance.
++// @return A pointer to the start token, or NULL if none configured. The caller
++//   is responsible for deleting the result using
++//   `litert_lm_token_union_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnion* litert_lm_engine_get_start_token(LiteRtLmEngine* engine);
++
++// Returns the configured stop tokens (EOS).
++//
++// @param engine The engine instance.
++// @return A pointer to the stop tokens collection, or NULL if none configured.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_token_unions_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnions* litert_lm_engine_get_stop_tokens(LiteRtLmEngine* engine);
++
++#ifdef __cplusplus
++}  // extern "C"
++#endif
++
++#endif  // THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Info.plist b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Info.plist
+new file mode 100644
+index 0000000..93863ca
+--- /dev/null
++++ b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/Info.plist
+@@ -0,0 +1,24 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++  <key>CFBundleDevelopmentRegion</key>
++  <string>en</string>
++  <key>CFBundleExecutable</key>
++  <string>LiteRTLM</string>
++  <key>CFBundleIdentifier</key>
++  <string>com.google.ai.edge.litert-lm</string>
++  <key>CFBundleInfoDictionaryVersion</key>
++  <string>6.0</string>
++  <key>CFBundleName</key>
++  <string>LiteRTLM</string>
++  <key>CFBundlePackageType</key>
++  <string>FMWK</string>
++  <key>CFBundleShortVersionString</key>
++  <string>0.9.0</string>
++  <key>CFBundleVersion</key>
++  <string>1</string>
++  <key>MinimumOSVersion</key>
++  <string>15.0</string>
++</dict>
++</plist>
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/LiteRTLM b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/LiteRTLM
+new file mode 100644
+index 0000000..dc1ddb3
+Binary files /dev/null and b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64-simulator/LiteRTLM.framework/LiteRTLM differ
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Headers/litert_lm_engine.h b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Headers/litert_lm_engine.h
+new file mode 100644
+index 0000000..79e8be0
+--- /dev/null
++++ b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Headers/litert_lm_engine.h
+@@ -0,0 +1,808 @@
++// Copyright 2025 The ODML Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
++#define THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// For Windows, __declspec( dllexport ) is required to export function in .dll.
++// https://learn.microsoft.com/en-us/cpp/cpp/using-dllimport-and-dllexport-in-cpp-classes?view=msvc-170
++//
++// _WIN32 is defined as 1 when the compilation target is 32-bit ARM, 64-bit ARM,
++// x86, x64, or ARM64EC. Otherwise, undefined.
++// https://learn.microsoft.com/en-us/cpp/preprocessor/predefined-macros
++#if defined(_WIN32)
++#define LITERT_LM_C_API_EXPORT __declspec(dllexport)
++#else
++#define LITERT_LM_C_API_EXPORT
++#endif
++
++// Opaque pointer for the LiteRT LM Engine.
++typedef struct LiteRtLmEngine LiteRtLmEngine;
++
++// Opaque pointer for the LiteRT LM Session.
++typedef struct LiteRtLmSession LiteRtLmSession;
++
++// Opaque pointer for the LiteRT LM Responses.
++typedef struct LiteRtLmResponses LiteRtLmResponses;
++
++// Opaque pointer for the LiteRT LM Engine Settings.
++typedef struct LiteRtLmEngineSettings LiteRtLmEngineSettings;
++
++// Opaque pointer for the LiteRT LM Benchmark Info.
++typedef struct LiteRtLmBenchmarkInfo LiteRtLmBenchmarkInfo;
++
++// Opaque pointer for the LiteRT LM Conversation.
++typedef struct LiteRtLmConversation LiteRtLmConversation;
++
++// Opaque pointer for a JSON response.
++typedef struct LiteRtLmJsonResponse LiteRtLmJsonResponse;
++
++// Opaque pointer for a detokenize result.
++// Use `litert_lm_detokenize_result_delete` to free memory.
++typedef struct LiteRtLmDetokenizeResult LiteRtLmDetokenizeResult;
++
++// Opaque pointer for a tokenize result.
++// Use `litert_lm_tokenize_result_delete` to free memory.
++typedef struct LiteRtLmTokenizeResult LiteRtLmTokenizeResult;
++
++// Represents the type of a TokenUnion.
++typedef enum {
++  kLiteRtLmTokenUnionTypeString = 0,
++  kLiteRtLmTokenUnionTypeIds = 1,
++} LiteRtLmTokenUnionType;
++
++// Opaque pointer for LiteRT LM Token Union.
++// Represents a single start or stop token, which could be either a string or a
++// sequence of token ids.
++// Use `litert_lm_token_union_delete` to free memory.
++typedef struct LiteRtLmTokenUnion LiteRtLmTokenUnion;
++
++// Opaque pointer for LiteRT LM Token Unions.
++// Represents a collection of TokenUnion, typically used for model stop
++// conditions.
++// Use `litert_lm_token_unions_delete` to free memory.
++typedef struct LiteRtLmTokenUnions LiteRtLmTokenUnions;
++
++// Opaque pointer for LiteRT LM Session Config.
++typedef struct LiteRtLmSessionConfig LiteRtLmSessionConfig;
++
++// Opaque pointer for LiteRT LM Conversation Config.
++typedef struct LiteRtLmConversationConfig LiteRtLmConversationConfig;
++
++// Represents the type of sampler.
++typedef enum {
++  kLiteRtLmSamplerTypeUnspecified = 0,
++  // Probabilistically pick among the top k tokens.
++  kLiteRtLmSamplerTypeTopK = 1,
++  // Probabilistically pick among the tokens such that the sum is greater
++  // than or equal to p tokens after first performing top-k sampling.
++  kLiteRtLmSamplerTypeTopP = 2,
++  // Pick the token with maximum logit (i.e., argmax).
++  kLiteRtLmSamplerTypeGreedy = 3,
++} LiteRtLmSamplerType;
++
++// Parameters for the sampler.
++typedef struct {
++  LiteRtLmSamplerType type;
++  int32_t top_k;
++  float top_p;
++  float temperature;
++  int32_t seed;
++} LiteRtLmSamplerParams;
++
++// Creates a LiteRT LM Session Config.
++// The caller is responsible for destroying the config using
++// `litert_lm_session_config_delete`.
++// @return A pointer to the created config, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmSessionConfig* litert_lm_session_config_create();
++
++// Sets the maximum number of output tokens per decode step for this session.
++// @param config The config to modify.
++// @param max_output_tokens The maximum number of output tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_max_output_tokens(
++    LiteRtLmSessionConfig* config, int max_output_tokens);
++
++// Sets whether to apply prompt template for this session.
++// @param config The config to modify.
++// @param apply_prompt_template Whether to apply prompt template.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_apply_prompt_template(
++    LiteRtLmSessionConfig* config, bool apply_prompt_template);
++
++// Sets the sampler parameters for this session config.
++// @param config The config to modify.
++// @param sampler_params The sampler parameters to use.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_set_sampler_params(
++    LiteRtLmSessionConfig* config, const LiteRtLmSamplerParams* sampler_params);
++
++// Destroys a LiteRT LM Session Config.
++// @param config The config to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_config_delete(LiteRtLmSessionConfig* config);
++
++// Creates a LiteRT LM Conversation Config.
++// The caller is responsible for destroying the config using
++// `litert_lm_conversation_config_delete`.
++// @return A pointer to the created config, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmConversationConfig* litert_lm_conversation_config_create();
++
++// Sets the session config for this conversation config.
++// @param config The config to modify.
++// @param session_config The session config to use.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_session_config(
++    LiteRtLmConversationConfig* config,
++    const LiteRtLmSessionConfig* session_config);
++
++// Sets the system message for this conversation config.
++// @param config The config to modify.
++// @param system_message_json The system message in JSON format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_system_message(
++    LiteRtLmConversationConfig* config, const char* system_message_json);
++
++// Sets the tools for this conversation config.
++// @param config The config to modify.
++// @param tools_json The tools description in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_tools(LiteRtLmConversationConfig* config,
++                                             const char* tools_json);
++
++// Sets the initial messages for this conversation config.
++// @param config The config to modify.
++// @param messages_json The initial messages in JSON array format.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_messages(
++    LiteRtLmConversationConfig* config, const char* messages_json);
++
++// Sets whether to enable constrained decoding for this conversation config.
++// @param config The config to modify.
++// @param enable_constrained_decoding Whether to enable constrained decoding.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_set_enable_constrained_decoding(
++    LiteRtLmConversationConfig* config, bool enable_constrained_decoding);
++
++// Destroys a LiteRT LM Conversation Config.
++// @param config The config to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_config_delete(LiteRtLmConversationConfig* config);
++
++// Sets the minimum log level for the LiteRT LM library.
++// Log levels are: 0=VERBOSE, 1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR, 5=FATAL,
++// 1000=SILENT.
++LITERT_LM_C_API_EXPORT
++void litert_lm_set_min_log_level(int level);
++
++// Represents the type of input data.
++typedef enum {
++  kLiteRtLmInputDataTypeText,
++  kLiteRtLmInputDataTypeImage,
++  kLiteRtLmInputDataTypeImageEnd,
++  kLiteRtLmInputDataTypeAudio,
++  kLiteRtLmInputDataTypeAudioEnd,
++} LiteRtLmInputDataType;
++
++// Represents a single piece of input data.
++typedef struct {
++  LiteRtLmInputDataType type;
++  // The data pointer. The interpretation depends on the `type`.
++  // For kInputText, it's a UTF-8 string.
++  // For kInputImage and kInputAudio, it's a pointer to the raw bytes.
++  const void* data;
++  // The size of the data in bytes.
++  size_t size;
++} LiteRtLmInputData;
++
++// Creates LiteRT LM Engine Settings. The caller is responsible for destroying
++// the settings using `litert_lm_engine_settings_delete`.
++//
++// @param model_path The path to the model file.
++// @param backend_str The backend to use (e.g., "cpu", "gpu").
++// @param vision_backend_str The vision backend to use, or NULL if not set.
++// @param audio_backend_str The audio backend to use, or NULL if not set.
++// @return A pointer to the created settings, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmEngineSettings* litert_lm_engine_settings_create(
++    const char* model_path, const char* backend_str,
++    const char* vision_backend_str, const char* audio_backend_str);
++
++// Destroys LiteRT LM Engine Settings.
++//
++// @param settings The settings to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_delete(LiteRtLmEngineSettings* settings);
++
++// Sets the maximum number of tokens for the engine.
++//
++// @param settings The engine settings.
++// @param max_num_tokens The maximum number of tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_max_num_tokens(
++    LiteRtLmEngineSettings* settings, int max_num_tokens);
++
++// Sets whether the engine should load different sections of the litertlm file
++// in parallel. Defaults to true.
++//
++// @param settings The engine settings.
++// @param parallel_file_section_loading Whether to load in parallel.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_parallel_file_section_loading(
++    LiteRtLmEngineSettings* settings, bool parallel_file_section_loading);
++
++// Sets the cache directory for the engine.
++//
++// @param settings The engine settings.
++// @param cache_dir The cache directory.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_cache_dir(LiteRtLmEngineSettings* settings,
++                                             const char* cache_dir);
++
++// Sets the activation data type.
++//
++// @param settings The engine settings.
++// @param activation_data_type_int The activation data type. See
++// `ActivationDataType` in executor_settings_base.h for the possible values
++// (e.g., 0 for F32, 1 for F16, 2 for I16, 3 for I8).
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_activation_data_type(
++    LiteRtLmEngineSettings* settings, int activation_data_type_int);
++
++// Sets the prefill chunk size for the engine. Only applicable for CPU backend
++// with dynamic models.
++//
++// @param settings The engine settings.
++// @param prefill_chunk_size The prefill chunk size.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_prefill_chunk_size(
++    LiteRtLmEngineSettings* settings, int prefill_chunk_size);
++
++// Enables benchmarking for the engine.
++//
++// @param settings The engine settings.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_enable_benchmark(
++    LiteRtLmEngineSettings* settings);
++
++// Sets the number of prefill tokens for benchmarking.
++//
++// @param settings The engine settings.
++// @param num_prefill_tokens The number of prefill tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_num_prefill_tokens(
++    LiteRtLmEngineSettings* settings, int num_prefill_tokens);
++
++// Sets the number of decode tokens for benchmarking.
++//
++// @param settings The engine settings.
++// @param num_decode_tokens The number of decode tokens.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_num_decode_tokens(
++    LiteRtLmEngineSettings* settings, int num_decode_tokens);
++
++// Sets whether to enable speculative decoding.
++//
++// @param settings The engine settings.
++// @param enable_speculative_decoding Whether to enable speculative decoding.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_settings_set_enable_speculative_decoding(
++    LiteRtLmEngineSettings* settings, bool enable_speculative_decoding);
++
++// Creates a LiteRT LM Engine from the given settings. The caller is responsible
++// for destroying the engine using `litert_lm_engine_delete`.
++//
++// @param settings The engine settings.
++// @return A pointer to the created engine, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmEngine* litert_lm_engine_create(const LiteRtLmEngineSettings* settings);
++
++// Destroys a LiteRT LM Engine.
++//
++// @param engine The engine to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_engine_delete(LiteRtLmEngine* engine);
++
++// Creates a LiteRT LM Session. The caller is responsible for destroying the
++// session using `litert_lm_session_delete`.
++//
++// @param engine The engine to create the session from.
++// @param config The session config of the session. If NULL, use the default
++// session config.
++// @return A pointer to the created session, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmSession* litert_lm_engine_create_session(LiteRtLmEngine* engine,
++                                                 LiteRtLmSessionConfig* config);
++
++// Destroys a LiteRT LM Session.
++//
++// @param session The session to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_delete(LiteRtLmSession* session);
++
++// Cancels the current processing in the session.
++//
++// @param session The session to cancel processing on.
++LITERT_LM_C_API_EXPORT
++void litert_lm_session_cancel_process(LiteRtLmSession* session);
++
++// Adds the input prompt/query to the model for starting the prefilling
++// process. This is a blocking call and the function will return when the
++// prefill process is done.
++//
++// @param session The session to use.
++// @param inputs An array of InputData structs representing the multimodal
++//   input.
++// @param num_inputs The number of InputData structs in the array.
++// @return 0 on success, non-zero on failure.
++LITERT_LM_C_API_EXPORT
++int litert_lm_session_run_prefill(LiteRtLmSession* session,
++                                  const LiteRtLmInputData* inputs,
++                                  size_t num_inputs);
++
++// Starts the decoding process for the model to predict the response based
++// on the input prompt/query added after using litert_lm_session_run_prefill.
++// This is a blocking call and the function will return when the decoding
++// process is done.
++//
++// @param session The session to use.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_decode(LiteRtLmSession* session);
++
++// Scores the target text after the prefill process is done.
++//
++// @param session The session to use.
++// @param target_text An array of target text strings to score.
++// @param num_targets The number of strings in the target_text array.
++// @param store_token_lengths Whether to store the token lengths of the target
++//   texts in the responses.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_run_text_scoring(LiteRtLmSession* session,
++                                                      const char** target_text,
++                                                      size_t num_targets,
++                                                      bool store_token_lengths);
++
++// Generates content from the input prompt.
++//
++// @param session The session to use for generation.
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
++//   input.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
++// @return A pointer to the responses, or NULL on failure. The caller is
++//   responsible for deleting the responses using `litert_lm_responses_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmResponses* litert_lm_session_generate_content(
++    LiteRtLmSession* session, const LiteRtLmInputData* inputs,
++    size_t num_inputs);
++// Destroys a LiteRT LM Responses object.
++//
++// @param responses The responses to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_responses_delete(LiteRtLmResponses* responses);
++
++// Returns the number of response candidates.
++//
++// @param responses The responses object.
++// @return The number of candidates.
++LITERT_LM_C_API_EXPORT
++int litert_lm_responses_get_num_candidates(const LiteRtLmResponses* responses);
++
++// Returns the response text at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The response text. The returned string is owned by the `responses`
++//   object and is valid only for its lifetime. Returns NULL if index is out of
++//   bounds.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_responses_get_response_text_at(
++    const LiteRtLmResponses* responses, int index);
++
++// Returns whether the response contains a score at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the score is available at the given index, false otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_score_at(const LiteRtLmResponses* responses,
++                                      int index);
++
++// Returns the score at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The score. Returns 0.0f if index is out of bounds or no score is
++//   present.
++LITERT_LM_C_API_EXPORT
++float litert_lm_responses_get_score_at(const LiteRtLmResponses* responses,
++                                       int index);
++
++// Returns whether the response contains a token length at the given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return true if the token length is available at the given index, false
++//   otherwise.
++LITERT_LM_C_API_EXPORT
++bool litert_lm_responses_has_token_length_at(const LiteRtLmResponses* responses,
++                                             int index);
++
++// Returns the token length at a given index.
++//
++// @param responses The responses object.
++// @param index The index of the response.
++// @return The token length. Returns 0 if index is out of bounds or no token
++//   length is present.
++LITERT_LM_C_API_EXPORT
++int litert_lm_responses_get_token_length_at(const LiteRtLmResponses* responses,
++                                            int index);
++
++// Retrieves the benchmark information from the session. The caller is
++// responsible for destroying the benchmark info using
++// `litert_lm_benchmark_info_delete`.
++//
++// @param session The session to get the benchmark info from.
++// @return A pointer to the benchmark info, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmBenchmarkInfo* litert_lm_session_get_benchmark_info(
++    LiteRtLmSession* session);
++
++// Destroys a LiteRT LM Benchmark Info object.
++//
++// @param benchmark_info The benchmark info to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_benchmark_info_delete(LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the time to the first token in seconds.
++//
++// Note that the first time to token doesn't include the time for
++// initialization. It is the sum of the prefill time for the first turn and
++// the time spent for decoding the first token.
++//
++// @param benchmark_info The benchmark info object.
++// @return The time to the first token in seconds.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_time_to_first_token(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the total initialization time in seconds.
++//
++// @param benchmark_info The benchmark info object.
++// @return The total initialization time in seconds.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_total_init_time_in_second(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the number of prefill turns.
++//
++// @param benchmark_info The benchmark info object.
++// @return The number of prefill turns.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_num_prefill_turns(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the number of decode turns.
++//
++// @param benchmark_info The benchmark info object.
++// @return The number of decode turns.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_num_decode_turns(
++    const LiteRtLmBenchmarkInfo* benchmark_info);
++
++// Returns the prefill token count at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the prefill turn.
++// @return The prefill token count.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_prefill_token_count_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the decode token count at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the decode turn.
++// @return The decode token count.
++LITERT_LM_C_API_EXPORT
++int litert_lm_benchmark_info_get_decode_token_count_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the prefill tokens per second at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the prefill turn.
++// @return The prefill tokens per second.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_prefill_tokens_per_sec_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Returns the decode tokens per second at a given turn index.
++//
++// @param benchmark_info The benchmark info object.
++// @param index The index of the decode turn.
++// @return The decode tokens per second.
++LITERT_LM_C_API_EXPORT
++double litert_lm_benchmark_info_get_decode_tokens_per_sec_at(
++    const LiteRtLmBenchmarkInfo* benchmark_info, int index);
++
++// Callback for streaming responses.
++// `callback_data` is a pointer to user-defined data passed to the stream
++// function. `chunk` is the piece of text from the stream. It's only valid for
++// the duration of the call. `is_final` is true if this is the last chunk in the
++// stream. `error_msg` is a null-terminated string with an error message, or
++// NULL on success.
++typedef void (*LiteRtLmStreamCallback)(void* callback_data, const char* chunk,
++                                       bool is_final, const char* error_msg);
++
++// Generates content from the input prompt and streams the response via a
++// callback. This is a non-blocking call that will invoke the callback from a
++// background thread for each chunk.
++//
++// @param session The session to use for generation.
++// @param inputs An array of LiteRtLmInputData structs representing the
++// multimodal
++//   input.
++// @param num_inputs The number of LiteRtLmInputData structs in the array.
++// @param callback The callback function to receive response chunks.
++// @param callback_data A pointer to user data that will be passed to the
++// callback.
++// @return 0 on success, non-zero on failure to start the stream.
++LITERT_LM_C_API_EXPORT
++int litert_lm_session_generate_content_stream(LiteRtLmSession* session,
++                                              const LiteRtLmInputData* inputs,
++                                              size_t num_inputs,
++                                              LiteRtLmStreamCallback callback,
++                                              void* callback_data);
++
++// Creates a LiteRT LM Conversation. The caller is responsible for destroying
++// the conversation using `litert_lm_conversation_delete`.
++//
++// @param engine The engine to create the conversation from.
++// @param config The conversation config to use. If NULL, the default config
++//   will be used.
++// @return A pointer to the created conversation, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmConversation* litert_lm_conversation_create(
++    LiteRtLmEngine* engine, LiteRtLmConversationConfig* config);
++
++// Destroys a LiteRT LM Conversation.
++//
++// @param conversation The conversation to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_delete(LiteRtLmConversation* conversation);
++
++// Sends a message to the conversation and returns the response.
++// This is a blocking call.
++//
++// @param conversation The conversation to use.
++// @param message_json A JSON string representing the message to send.
++// @param extra_context A JSON string representing the extra context to use.
++// @return A pointer to the JSON response, or NULL on failure. The caller is
++//   responsible for deleting the response using
++//   `litert_lm_json_response_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmJsonResponse* litert_lm_conversation_send_message(
++    LiteRtLmConversation* conversation, const char* message_json,
++    const char* extra_context);
++
++// Destroys a LiteRT LM Json Response object.
++//
++// @param response The response to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_json_response_delete(LiteRtLmJsonResponse* response);
++
++// Returns the JSON response string from a response object.
++//
++// @param response The response object.
++// @return The response JSON string. The returned string is owned by the
++//   `response` object and is valid only for its lifetime. Returns NULL if
++//   response is NULL.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_json_response_get_string(
++    const LiteRtLmJsonResponse* response);
++
++// Sends a message to the conversation and streams the response via a
++// callback. This is a non-blocking call that will invoke the callback from a
++// background thread for each chunk.
++//
++// @param conversation The conversation to use.
++// @param message_json A JSON string representing the message to send.
++// @param extra_context A JSON string representing the extra context to use.
++// @param callback The callback function to receive response chunks.
++// @param callback_data A pointer to user data that will be passed to the
++// callback.
++// @return 0 on success, non-zero on failure to start the stream.
++LITERT_LM_C_API_EXPORT
++int litert_lm_conversation_send_message_stream(
++    LiteRtLmConversation* conversation, const char* message_json,
++    const char* extra_context, LiteRtLmStreamCallback callback,
++    void* callback_data);
++
++// Cancels the ongoing inference process, for asynchronous inference.
++//
++// @param conversation The conversation to cancel the inference for.
++LITERT_LM_C_API_EXPORT
++void litert_lm_conversation_cancel_process(LiteRtLmConversation* conversation);
++
++// Retrieves the benchmark information from the conversation. The caller is
++// responsible for destroying the benchmark info using
++// `litert_lm_benchmark_info_delete`.
++//
++// @param conversation The conversation to get the benchmark info from.
++// @return A pointer to the benchmark info, or NULL on failure.
++LITERT_LM_C_API_EXPORT
++LiteRtLmBenchmarkInfo* litert_lm_conversation_get_benchmark_info(
++    LiteRtLmConversation* conversation);
++
++// Tokenizes text using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param text The UTF-8 string to tokenize.
++// @return A pointer to the tokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_tokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenizeResult* litert_lm_engine_tokenize(LiteRtLmEngine* engine,
++                                                  const char* text);
++
++// Destroys a LiteRT LM Tokenize Result.
++//
++// @param result The tokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_tokenize_result_delete(LiteRtLmTokenizeResult* result);
++
++// Returns the token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return A pointer to the internal array of token ids. The returned pointer
++//   is valid only for the lifetime of the `result` object.
++LITERT_LM_C_API_EXPORT
++const int* litert_lm_tokenize_result_get_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Returns the number of token ids from a tokenize result.
++//
++// @param result The tokenize result.
++// @return The number of token ids.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_tokenize_result_get_num_tokens(
++    const LiteRtLmTokenizeResult* result);
++
++// Detokenizes token ids using the engine's tokenizer.
++//
++// @param engine The engine instance.
++// @param tokens An array of token ids to detokenize.
++// @param num_tokens The number of token ids in the array.
++// @return A pointer to the detokenize result, or NULL on failure.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_detokenize_result_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmDetokenizeResult* litert_lm_engine_detokenize(LiteRtLmEngine* engine,
++                                                      const int* tokens,
++                                                      size_t num_tokens);
++
++// Destroys a LiteRT LM Detokenize Result.
++//
++// @param result The detokenize result to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_detokenize_result_delete(LiteRtLmDetokenizeResult* result);
++
++// Returns the string from a detokenize result.
++//
++// @param result The detokenize result.
++// @return The detokenized UTF-8 string. The returned string is owned by the
++//   `result` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_detokenize_result_get_string(
++    const LiteRtLmDetokenizeResult* result);
++
++// Destroys a LiteRT LM Token Union.
++//
++// @param token_union The token union to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_union_delete(LiteRtLmTokenUnion* token_union);
++
++// Returns the type of the token union.
++//
++// @param token_union The token union.
++// @return The type of the token union.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnionType litert_lm_token_union_get_type(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the string value from a token union.
++//
++// @param token_union The token union.
++// @return The string value, or NULL if the type is not
++//   kLiteRtLmTokenUnionTypeString. The returned string is owned by the
++//   `token_union` object and is valid only for its lifetime.
++LITERT_LM_C_API_EXPORT
++const char* litert_lm_token_union_get_string(
++    const LiteRtLmTokenUnion* token_union);
++
++// Returns the token ids from a token union.
++//
++// @param token_union The token union.
++// @param out_tokens A pointer to receive the internal array of token ids.
++//   The received pointer is valid only for the lifetime of the `token_union`
++//   object.
++// @param out_num_tokens A pointer to receive the number of token ids.
++// @return 0 on success, non-zero if the type is not kLiteRtLmTokenUnionTypeIds.
++LITERT_LM_C_API_EXPORT
++int litert_lm_token_union_get_ids(const LiteRtLmTokenUnion* token_union,
++                                  const int** out_tokens,
++                                  size_t* out_num_tokens);
++
++// Destroys a LiteRT LM Token Unions object.
++//
++// @param tokens The token unions object to destroy.
++LITERT_LM_C_API_EXPORT
++void litert_lm_token_unions_delete(LiteRtLmTokenUnions* tokens);
++
++// Returns the number of token unions in the collection.
++//
++// @param tokens The token unions object.
++// @return The number of token unions.
++LITERT_LM_C_API_EXPORT
++size_t litert_lm_token_unions_get_num_tokens(const LiteRtLmTokenUnions* tokens);
++
++// Returns the token union at a given index from a collection.
++//
++// @param tokens The token unions collection.
++// @param index The index of the token union.
++// @return A pointer to the token union at the given index, or NULL if the index
++//   is out of bounds. The returned pointer is owned by the `tokens` object and
++//   is valid only for its lifetime. The caller MUST NOT delete it.
++LITERT_LM_C_API_EXPORT
++const LiteRtLmTokenUnion* litert_lm_token_unions_get_token_at(
++    const LiteRtLmTokenUnions* tokens, size_t index);
++
++// Returns the configured start token (BOS), if any.
++//
++// @param engine The engine instance.
++// @return A pointer to the start token, or NULL if none configured. The caller
++//   is responsible for deleting the result using
++//   `litert_lm_token_union_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnion* litert_lm_engine_get_start_token(LiteRtLmEngine* engine);
++
++// Returns the configured stop tokens (EOS).
++//
++// @param engine The engine instance.
++// @return A pointer to the stop tokens collection, or NULL if none configured.
++//   The caller is responsible for deleting the result using
++//   `litert_lm_token_unions_delete`.
++LITERT_LM_C_API_EXPORT
++LiteRtLmTokenUnions* litert_lm_engine_get_stop_tokens(LiteRtLmEngine* engine);
++
++#ifdef __cplusplus
++}  // extern "C"
++#endif
++
++#endif  // THIRD_PARTY_ODML_LITERT_LM_C_ENGINE_H_
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Info.plist b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Info.plist
+new file mode 100644
+index 0000000..93863ca
+--- /dev/null
++++ b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/Info.plist
+@@ -0,0 +1,24 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++  <key>CFBundleDevelopmentRegion</key>
++  <string>en</string>
++  <key>CFBundleExecutable</key>
++  <string>LiteRTLM</string>
++  <key>CFBundleIdentifier</key>
++  <string>com.google.ai.edge.litert-lm</string>
++  <key>CFBundleInfoDictionaryVersion</key>
++  <string>6.0</string>
++  <key>CFBundleName</key>
++  <string>LiteRTLM</string>
++  <key>CFBundlePackageType</key>
++  <string>FMWK</string>
++  <key>CFBundleShortVersionString</key>
++  <string>0.9.0</string>
++  <key>CFBundleVersion</key>
++  <string>1</string>
++  <key>MinimumOSVersion</key>
++  <string>15.0</string>
++</dict>
++</plist>
+diff --git a/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/LiteRTLM b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/LiteRTLM
+new file mode 100644
+index 0000000..9e55c0d
+Binary files /dev/null and b/node_modules/react-native-litert-lm/ios/Frameworks/LiteRTLM.xcframework/ios-arm64/LiteRTLM.framework/LiteRTLM differ
+diff --git a/node_modules/react-native-litert-lm/ios/LiteRTLMAutolinking.mm b/node_modules/react-native-litert-lm/ios/LiteRTLMAutolinking.mm
+deleted file mode 100644
+index e01bb06..0000000
+--- a/node_modules/react-native-litert-lm/ios/LiteRTLMAutolinking.mm
++++ /dev/null
+@@ -1,30 +0,0 @@
+-///
+-/// LiteRTLMAutolinking.mm
+-/// Registers the C++ HybridLiteRTLM implementation with NitroModules on iOS.
+-///
+-/// On iOS, there's no JNI_OnLoad equivalent, so we use ObjC +load to register
+-/// the HybridObject factory before JS tries to create it.
+-///
+-
+-#import <Foundation/Foundation.h>
+-#include <NitroModules/HybridObjectRegistry.hpp>
+-#include "HybridLiteRTLM.hpp"
+-
+-@interface LiteRTLMAutolinking : NSObject
+-@end
+-
+-@implementation LiteRTLMAutolinking
+-
+-+ (void)load {
+-  using namespace margelo::nitro;
+-  using namespace margelo::nitro::litertlm;
+-  
+-  HybridObjectRegistry::registerHybridObjectConstructor(
+-    "LiteRTLM",
+-    []() -> std::shared_ptr<HybridObject> {
+-      return std::make_shared<HybridLiteRTLM>();
+-    }
+-  );
+-}
+-
+-@end
+diff --git a/node_modules/react-native-litert-lm/react-native-litert-lm.podspec b/node_modules/react-native-litert-lm/react-native-litert-lm.podspec
+index 8bbe9fc..4f28c55 100644
+--- a/node_modules/react-native-litert-lm/react-native-litert-lm.podspec
++++ b/node_modules/react-native-litert-lm/react-native-litert-lm.podspec
+@@ -42,7 +42,31 @@ Pod::Spec.new do |s|
+       '"$(PODS_TARGET_SRCROOT)/nitrogen/generated/shared/c++"',
+       '"$(PODS_TARGET_SRCROOT)/nitrogen/generated/ios"',
+     ].join(' '),
+-    'OTHER_LDFLAGS' => '$(inherited) -ObjC',
++  }
++
++  # Force-loading the entire LiteRTLM framework binary causes
++  # duplicate-symbol errors because the framework is also pulled in by
++  # CocoaPods auto-linking, so the same archive ends up in the link
++  # twice. Instead we extract just engine_impl.o (the only .o we need
++  # to keep — its static initializer LITERT_LM_REGISTER_ENGINE
++  # populates EngineFactory at startup) into a tiny per-slice archive
++  # libengine_init.a, vendored under ios/EngineInit/<slice>/, and
++  # force-load that. The full framework still links lazily as normal.
++  #
++  # Without this, the linker strips engine_impl.o because nothing
++  # outside the framework references its symbols (they're all weak),
++  # leaving EngineFactory empty — engine_create then returns NOT_FOUND
++  # at runtime ("Engine type not found: 1").
++  #
++  # SDK-conditional OTHER_LDFLAGS picks the matching slice for device
++  # vs simulator builds.
++  # $(PODS_TARGET_SRCROOT) is only set on pod-target xcconfigs, not on
++  # the consuming app target — so we reach back into node_modules via
++  # $(PODS_ROOT)/../../node_modules/react-native-litert-lm/, the same
++  # path CocoaPods itself uses for FRAMEWORK_SEARCH_PATHS on this pod.
++  s.user_target_xcconfig = {
++    'OTHER_LDFLAGS[sdk=iphoneos*]'        => '$(inherited) -force_load $(PODS_ROOT)/../../node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64/libengine_init.a',
++    'OTHER_LDFLAGS[sdk=iphonesimulator*]' => '$(inherited) -force_load $(PODS_ROOT)/../../node_modules/react-native-litert-lm/ios/EngineInit/ios-arm64-simulator/libengine_init.a',
+   }
+ 
+   # Load nitrogen autolinking
+@@ -61,4 +85,3 @@ Pod::Spec.new do |s|
+ 
+   install_modules_dependencies(s)
+ end
+-

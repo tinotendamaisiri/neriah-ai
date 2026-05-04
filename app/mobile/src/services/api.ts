@@ -10,6 +10,42 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { withCache, readCacheOnly } from './readCache';
 import { enqueueMutation } from './mutationQueue';
+import { track, trackError, newTraceId } from './analytics';
+
+// ── Route slug helper ─────────────────────────────────────────────────────────
+//
+// Translates a method + url into a stable, lowercased slug used as the
+// `<route>` segment in api.<route>.start / .success / .failed events.
+// Strips querystrings, replaces UUID-ish path segments with the literal
+// "byid" so dashboards can group by endpoint shape instead of unique id.
+//
+// Examples:
+//   GET  /classes                 → classes
+//   POST /students/batch          → students.batch
+//   PUT  /marks/abc-123           → marks.byid
+//   GET  /analytics/class/xyz     → analytics.class.byid
+//   POST /auth/login              → auth.login
+function routeKey(method: string | undefined, url: string | undefined): string {
+  const m = (method || 'get').toLowerCase();
+  let path = (url || '').split('?')[0];
+  // strip leading slash + baseURL fragment
+  path = path.replace(/^https?:\/\/[^/]+/, '').replace(/^\/+/, '');
+  if (!path) return `${m}.unknown`;
+  const segments = path.split('/').filter(Boolean).map((seg) => {
+    // Heuristic for "looks like an id":
+    //   - long uuid-ish (contains a hyphen, length >= 8)
+    //   - long opaque token (no hyphen, length >= 16, hex/base36-ish)
+    //   - all digits
+    if (/^\d+$/.test(seg)) return 'byid';
+    if (seg.length >= 16 && /^[A-Za-z0-9_-]+$/.test(seg) && !/[a-z]+/.test(seg.replace(/[A-Z0-9_-]/g, ''))) {
+      return 'byid';
+    }
+    if (seg.length >= 8 && seg.includes('-')) return 'byid';
+    return seg.toLowerCase();
+  });
+  const key = segments.join('.');
+  return key || `${m}.unknown`;
+}
 
 // Local helper — promotes "isOffline" axios rejections into the
 // mutation queue with optimistic cache patching so callers can
@@ -60,6 +96,32 @@ client.interceptors.request.use(async (config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Attach trace id (existing one wins so callers can correlate across
+  // related calls), stamp metadata used by the response interceptor for
+  // latency calculation, and emit api.<route>.start.
+  try {
+    const existingTrace =
+      (config.headers?.['x-trace-id'] as string | undefined) ??
+      (config.headers?.['X-Trace-Id'] as string | undefined);
+    const traceId = existingTrace || newTraceId();
+    if (config.headers) {
+      (config.headers as Record<string, string>)['x-trace-id'] = traceId;
+    }
+    const route = routeKey(config.method, config.url);
+    (config as unknown as { metadata: { startedAt: number; traceId: string; route: string } }).metadata = {
+      startedAt: Date.now(),
+      traceId,
+      route,
+    };
+    track(
+      `api.${route}.start`,
+      { method: (config.method || 'get').toUpperCase(), url: config.url },
+      { surface: 'api', trace_id: traceId },
+    );
+  } catch {
+    // Tracking must never break the request.
+  }
   return config;
 });
 
@@ -70,8 +132,53 @@ export const setUnauthorizedHandler = (fn: () => void) => {
 };
 
 client.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // Success-side telemetry. Wrapped in try/catch — telemetry must
+    // never break the actual response delivery.
+    try {
+      const meta = (res.config as unknown as { metadata?: { startedAt: number; traceId: string; route: string } }).metadata;
+      if (meta) {
+        track(
+          `api.${meta.route}.success`,
+          { status: res.status },
+          { surface: 'api', trace_id: meta.traceId, latency_ms: Date.now() - meta.startedAt },
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+    return res;
+  },
   (error) => {
+    // Failure-side telemetry — emit BEFORE the user-friendly mapping below
+    // so the raw error info is captured even if mapping changes later.
+    try {
+      const meta = (error.config as unknown as { metadata?: { startedAt: number; traceId: string; route: string } } | undefined)?.metadata;
+      const route = meta?.route ?? routeKey(error.config?.method, error.config?.url);
+      const traceId = meta?.traceId;
+      const latency = meta ? Date.now() - meta.startedAt : undefined;
+      trackError(
+        `api.${route}.failed`,
+        error,
+        {
+          status: error.response?.status,
+          url: error.config?.url,
+          method: (error.config?.method || 'get').toUpperCase(),
+        },
+      );
+      // Also emit a non-error duration sample for failed requests so
+      // dashboards can show p95 latency on the .failed bucket too.
+      if (latency !== undefined) {
+        track(
+          `api.${route}.failed.timing`,
+          { status: error.response?.status },
+          { surface: 'api', trace_id: traceId, latency_ms: latency, severity: 'warn' },
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+
     // No response at all — network unreachable
     if (!error.response) {
       return Promise.reject({
@@ -869,6 +976,40 @@ export const getStudentClassAnalytics = async (
   return res.data;
 };
 
+// ── Student self-analytics ────────────────────────────────────────────────────
+
+export interface StudentWeaknessTopic {
+  topic:        string;
+  attempts:     number;
+  correct:      number;
+  accuracy_pct: number;
+  last_seen_at?: string | null;
+}
+
+export interface StudentSelfAnalytics {
+  has_data: boolean;
+  reason?:  string;
+  student: {
+    id:                     string;
+    name:                   string;
+    average_score:          number;
+    total_submissions:      number;
+    first_submission_date?: string | null;
+  };
+  weaknesses_aggregated: StudentWeaknessTopic[];
+  strengths:             Array<{ topic: string }>;
+}
+
+/**
+ * GET /api/analytics/me — student's own aggregated weakness data.
+ * Cached via withCache so the tutor can show it offline.
+ */
+export const getMyWeaknesses = (): Promise<StudentSelfAnalytics> =>
+  withCache('analytics:me', async () => {
+    const res = await client.get('/analytics/me');
+    return res.data;
+  });
+
 /** Fetch a single mark by ID (student feedback view). */
 export const getMark = async (mark_id: string): Promise<StudentMark> => {
   const res: AxiosResponse<StudentMark> = await client.get(`/marks/${mark_id}`);
@@ -1086,13 +1227,25 @@ export interface TutorResponse {
 export const sendTutorMessage = async (params: {
   message:          string;
   conversation_id?: string;
-  /** Base64-encoded image (no data: prefix) */
+  /** Base64-encoded image (no data: prefix). Legacy image-only field — prefer
+   *  file_data + media_type for new callers so PDF / Word work too. */
   image?:           string;
+  /** Base64-encoded attachment payload (image / PDF / Word). */
+  file_data?:       string;
+  /** Mirrors the teacher assistant contract: 'image' | 'pdf' | 'word'. */
+  media_type?:      'image' | 'pdf' | 'word';
   history?:         TutorChatMessage[];
   is_greeting?:     boolean;
   weak_topics?:     string[];
+  /** Set true when the student is asking about their own weak areas — backend
+   *  switches to data-report mode using their actual aggregated weaknesses. */
+  is_weakness_query?: boolean;
 }): Promise<TutorResponse> => {
-  const res: AxiosResponse<TutorResponse> = await client.post('/tutor/chat', params);
+  // Long timeout: Gemma 4 26B can take 120s+ on long structured generations
+  // (e.g. "Prepare a 40-question MCQ quiz"). Backend Cloud Function timeout
+  // is 300s and the gemma_client request timeout is 240s, so 180s here gives
+  // the request room to complete without the mobile axios bailing first.
+  const res: AxiosResponse<TutorResponse> = await client.post('/tutor/chat', params, { timeout: 180000 });
   return res.data;
 };
 
@@ -1143,7 +1296,9 @@ export const teacherAssistantChat = async (params: {
   media_type?:      'image' | 'pdf' | 'word';
 }): Promise<AssistantResponse> => {
   // LLM generation + Cloud Function cold start can exceed the default 35s.
-  const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params, { timeout: 90000 });
+  // Long timeout: same reasoning as /tutor/chat — Gemma 4 26B can take
+  // 120s+ on long structured generations (lesson notes, exam questions).
+  const res: AxiosResponse<AssistantResponse> = await client.post('/teacher/assistant', params, { timeout: 180000 });
   return res.data;
 };
 

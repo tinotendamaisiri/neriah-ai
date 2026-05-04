@@ -24,3 +24,11 @@ app/mobile/assets/models/
 
 # EAS build artifacts pulled down for local install (not committed)
 app/mobile/build-*.apk
+
+# Editor / OS / one-off backup files
+*.bak
+*.swp
+*.swo
+
+# Stray root-level lockfile from accidental npm runs
+/package-lock.json

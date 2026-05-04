@@ -15,6 +15,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -44,7 +45,29 @@ import {
   initialWindowMetrics,
 } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { sendTutorMessage, TutorChatMessage } from '../services/api';
+import {
+  getMyWeaknesses,
+  sendTutorMessage,
+  StudentSelfAnalytics,
+  TutorChatMessage,
+} from '../services/api';
+import { readCacheOnly } from '../services/readCache';
+import {
+  documentToOnDeviceReply,
+  imageToOnDeviceReply,
+  resolveRoute,
+  showUnavailableAlert,
+  tutorOnDevice,
+  tutorOnDeviceWithImage,
+} from '../services/router';
+import {
+  enqueueChatRequest,
+  getQueuedIdsForChat,
+  onNetworkRestore,
+  replayChatQueue,
+  type ChatReplaySender,
+} from '../services/chatOfflineQueue';
+import { detectCountryFromPhone } from '../utils/country';
 import InAppCamera from '../components/InAppCamera';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { COLORS } from '../constants/colors';
@@ -94,6 +117,10 @@ const makeId      = () => Math.random().toString(36).slice(2) + Date.now().toStr
 function stripMarkdown(text: string): string {
   if (!text) return text;
   return text
+    // fenced code block: ```json ... ``` (or any lang). Strip the fence
+    // markers but keep the content — never show literal ```...``` to users.
+    .replace(/```[a-zA-Z]*\s*\n?/g, '')
+    .replace(/\n?```\s*/g, '')
     .replace(/\*\*([^*\n]+)\*\*/g, '$1')
     .replace(/__([^_\n]+)__/g, '$1')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?;:]|$)/g, '$1$2')
@@ -101,6 +128,60 @@ function stripMarkdown(text: string): string {
     .replace(/`([^`\n]+)`/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^\s*\*\s+/gm, '• ');
+}
+
+// ── Weakness query helpers ────────────────────────────────────────────────────
+
+const WEAKNESS_QUICK_LABEL = 'What are my weak areas?';
+const WEAKNESS_QUERY_PATTERNS = [
+  'weak area',
+  'weak spot',
+  'what am i bad at',
+  'what am i struggling',
+  'what do i need to work on',
+  'where do i need help',
+  'where am i weak',
+  'my weaknesses',
+  'my weak points',
+  'what should i practice',
+  'what should i study',
+  'what topics should i',
+];
+
+function isWeaknessQuery(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return WEAKNESS_QUERY_PATTERNS.some(p => lower.includes(p));
+}
+
+/**
+ * Build a deterministic offline weakness report from cached analytics data.
+ * Used when the device is offline and the cloud tutor is unreachable, so the
+ * student still gets their data. Mirrors the cloud "weakness report mode"
+ * prompt instructions so the tone matches.
+ */
+function buildOfflineWeaknessReport(
+  data: StudentSelfAnalytics | null,
+  firstName: string,
+): string {
+  if (!data || !data.has_data || !data.weaknesses_aggregated?.length) {
+    return (
+      `Hi ${firstName}! I don't have enough graded work yet to show you specific ` +
+      `weak areas — I need at least 2 graded attempts on a topic to spot a pattern. ` +
+      `Once your teacher grades a few more submissions, I'll be able to point them ` +
+      `out. In the meantime, what subject would you like to practice?`
+    );
+  }
+  const top = data.weaknesses_aggregated.slice(0, 5);
+  const lines = top.map(
+    w => `- ${w.topic}: ${w.accuracy_pct}% accuracy (${w.correct}/${w.attempts} correct)`,
+  );
+  const weakest = top[0];
+  return (
+    `Hi ${firstName}! Here are the topics where you've struggled the most so far:\n\n` +
+    lines.join('\n') +
+    `\n\nWant to practice ${weakest.topic}? I can quiz you and walk you through it step by step.`
+  );
 }
 
 function relativeTime(iso: string): string {
@@ -125,6 +206,12 @@ interface ChatMessage {
   timestamp: string;
   imageUri?: string;
   attachment?: { media_type: string; name: string };
+  /** Set on user messages whose request is currently sitting in the
+   *  offline queue waiting for connectivity. Cleared by replay logic. */
+  queued?:   boolean;
+  /** Optional reason shown next to the queued indicator. Helps the user
+   *  understand why a message couldn't be answered locally. */
+  queuedReason?: string;
 }
 
 interface ChatSession {
@@ -185,12 +272,16 @@ export default function StudentTutorScreen() {
   const drawerAnim = useRef(new Animated.Value(-SCREEN_WIDTH * 0.8)).current;
 
   // Attachment
-  const [attachment, setAttachment]       = useState<{ data: string; type: 'image' | 'pdf'; name: string; uri?: string } | null>(null);
+  const [attachment, setAttachment]       = useState<{ data: string; type: 'image' | 'pdf' | 'word'; name: string; uri?: string } | null>(null);
   const [showAttachSheet, setShowAttachSheet] = useState(false);
   const [showCamera, setShowCamera]       = useState(false);
 
   // Usage
   const [usageCount, setUsageCount]       = useState(DAILY_LIMIT);
+
+  // Cached personal weakness data — refreshed on mount, served offline as a
+  // fallback when the cloud tutor can't be reached.
+  const weaknessRef = useRef<StudentSelfAnalytics | null>(null);
 
   const flatRef      = useRef<FlatList>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,6 +310,16 @@ export default function StudentTutorScreen() {
         const used = await AsyncStorage.getItem(usageKey(studentId));
         setUsageCount(DAILY_LIMIT - (used ? parseInt(used, 10) : 0));
       } catch {}
+      // Warm the personal weakness cache. withCache returns cached data even
+      // when offline, so this also seeds weaknessRef from a previous session.
+      try {
+        weaknessRef.current = await getMyWeaknesses();
+      } catch {
+        // Offline + no cache yet — try cache-only as a last resort.
+        try {
+          weaknessRef.current = await readCacheOnly<StudentSelfAnalytics>('analytics:me');
+        } catch {}
+      }
     })();
   }, [studentId]);
 
@@ -240,18 +341,84 @@ export default function StudentTutorScreen() {
         setMessages([msg]);
         saveSession([msg], chatId);
       } catch {
-        const fallback: ChatMessage = {
-          id: makeId(), role: 'assistant',
-          content: `Hi ${firstName}! I'm Neriah, your AI tutor. What would you like help with today?`,
-          timestamp: new Date().toISOString(),
-        };
-        setMessages([fallback]);
+        // Greeting fetch failed — don't fabricate an AI greeting on the
+        // user's screen. Leave messages empty so the quick-action empty
+        // state takes over.
       } finally {
         setTyping(false);
       }
     }, 500);
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Offline queue replay ────────────────────────────────────────────────────
+  // Track currentChatId in a ref so the sender callback (captured by
+  // useEffect deps) doesn't have to re-create on every chat switch — that
+  // would burn CPU when the network is flapping.
+  const currentChatIdRef = useRef(currentChatId);
+  useEffect(() => { currentChatIdRef.current = currentChatId; }, [currentChatId]);
+
+  const replayQueueOnce = useCallback(async () => {
+    const sender: ChatReplaySender = async (item) => {
+      try {
+        const res = await sendTutorMessage(item.payload as any);
+        const aiMsg: ChatMessage = {
+          id: makeId(), role: 'assistant',
+          content: stripMarkdown(res.response),
+          timestamp: new Date().toISOString(),
+        };
+
+        // Clear `queued` on the user message + append AI reply, persisted
+        // directly to storage so the change survives even if this chat
+        // isn't currently rendered.
+        try {
+          const raw = await AsyncStorage.getItem(sessionsKey(studentId));
+          const sessions: ChatSession[] = raw ? JSON.parse(raw) : [];
+          const idx = sessions.findIndex(s => s.chat_id === item.chat_id);
+          if (idx >= 0) {
+            const updatedMsgs = sessions[idx].messages.map(m =>
+              m.id === item.user_msg_id ? { ...m, queued: false } : m,
+            );
+            updatedMsgs.push(aiMsg);
+            sessions[idx] = {
+              ...sessions[idx],
+              messages: updatedMsgs,
+              updated_at: new Date().toISOString(),
+            };
+            await AsyncStorage.setItem(sessionsKey(studentId), JSON.stringify(sessions));
+            setChatHistory(sessions);
+            // If this chat is open, mirror to React state.
+            if (item.chat_id === currentChatIdRef.current) {
+              setMessages(updatedMsgs);
+            }
+          }
+        } catch {
+          // Storage write failed — replay still succeeded; the AI reply
+          // is just lost. Better than retrying forever and triggering
+          // the daily rate limit.
+        }
+        return { ok: true, response: res };
+      } catch (err: any) {
+        const status = err?.response?.status ?? err?.status;
+        // 4xx that we know is permanent — drop the queued item.
+        // 408 (timeout) and 429 (rate limit) keep retrying.
+        const permanent = typeof status === 'number' &&
+          status >= 400 && status < 500 && status !== 408 && status !== 429;
+        return { ok: false, permanent, error: err };
+      }
+    };
+    try {
+      await replayChatQueue('tutor', sender);
+    } catch {
+      // Best-effort — never crash the screen over replay.
+    }
+  }, [studentId]);
+
+  // Replay any stale queue when the screen mounts.
+  useEffect(() => { void replayQueueOnce(); }, [replayQueueOnce]);
+
+  // Replay every time the network transitions back to online.
+  useEffect(() => onNetworkRestore(() => { void replayQueueOnce(); }), [replayQueueOnce]);
 
   // ── Session persistence (debounced 500ms) ───────────────────────────────────
 
@@ -318,13 +485,178 @@ export default function StudentTutorScreen() {
     setAttachment(null);
     saveSession(nextMsgs, chatId);
 
+    const weaknessQuery = text === WEAKNESS_QUICK_LABEL || isWeaknessQuery(text);
+
     setTyping(true);
     try {
+      // Route to cloud, on-device, or offline-fallback. Mirrors the teacher
+      // assistant routing pattern; LiteRT E2B is text-only so attachments
+      // can't be analysed when offline.
+      const route = await resolveRoute('tutoring');
+
+      if (route === 'on-device') {
+        if (sentAttachment) {
+          // Offline + attachment: extract text client-side and feed it
+          // into the on-device tutor. Works fully offline for:
+          //   • Images with readable text (ML Kit OCR)
+          //   • DOCX  (jszip + word/document.xml)
+          //   • PDFs with embedded text streams (regex on raw bytes,
+          //     pako-inflated FlateDecode streams)
+          // For each: if extraction yields substantial text we run
+          // LiteRT and reply directly; if not, fall back to the queue
+          // for cloud replay when reconnected.
+          let attachmentReason: string | undefined;
+          try {
+            const onDeviceHistoryForFile = history.map(m => ({
+              role: m.role as 'user' | 'assistant', content: m.content,
+            }));
+            const tutorContext = {
+              education_level: classLevel ?? undefined,
+              subject:         classSubject ?? undefined,
+              country:         detectCountryFromPhone((user as any)?.phone),
+              weakness_topics: weaknessRef.current?.weaknesses_aggregated?.slice(0, 5).map(w => w.topic),
+            };
+            const runner = (combined: string) => tutorOnDevice(
+              onDeviceHistoryForFile,
+              combined,
+              tutorContext,
+            );
+            // Vision-capable runner — used when the platform supports
+            // multimodal (Android today; iOS once the XCFramework rebuild
+            // adds vision ops). When unavailable, imageToOnDeviceReply
+            // ignores this and falls back to OCR + the text runner.
+            const multimodalRunner = (msg: string, imagePath: string) => tutorOnDeviceWithImage(
+              onDeviceHistoryForFile,
+              msg,
+              imagePath,
+              tutorContext,
+            );
+
+            let result: Awaited<ReturnType<typeof imageToOnDeviceReply>> | null = null;
+            if (sentAttachment.type === 'image' && sentAttachment.uri) {
+              result = await imageToOnDeviceReply(sentAttachment.uri, text, runner, multimodalRunner);
+            } else if (sentAttachment.type === 'pdf' || sentAttachment.type === 'word') {
+              result = await documentToOnDeviceReply(
+                sentAttachment.data,
+                sentAttachment.type,
+                sentAttachment.name,
+                text,
+                runner,
+              );
+            }
+
+            if (result && result.kind === 'replied') {
+              const aiMsg: ChatMessage = {
+                id: makeId(), role: 'assistant',
+                content: stripMarkdown(result.reply),
+                timestamp: new Date().toISOString(),
+              };
+              const withAi = [...nextMsgs, aiMsg];
+              setMessages(withAi);
+              saveSession(withAi, chatId);
+              return;
+            }
+            // Map every non-replied result to a human-readable reason
+            // so the user can see why the offline path didn't answer.
+            if (result?.kind === 'no_text') {
+              attachmentReason = sentAttachment.type === 'image'
+                ? "Couldn't read text in this image"
+                : 'No readable text found in this file';
+            } else if (result?.kind === 'unavailable') {
+              attachmentReason = 'Offline reader unavailable';
+            } else if (result?.kind === 'extraction_error') {
+              attachmentReason = `Extract error: ${result.error.slice(0, 80)}`;
+            } else if (result?.kind === 'runner_error') {
+              attachmentReason = `Local AI error: ${result.error.slice(0, 80)}`;
+            }
+          } catch (err: any) {
+            attachmentReason = `Local AI crashed: ${(err?.message ?? String(err)).slice(0, 80)}`;
+          }
+
+          // Guaranteed default — proves to the user that the new build
+          // is running AND tells us this code path was reached even if
+          // none of the result.kind branches matched.
+          if (!attachmentReason) attachmentReason = 'fell through to queue';
+
+          // Queue: image with no readable text, PDFs, Word docs, or any
+          // case where the on-device path didn't produce a reply.
+          await enqueueChatRequest({
+            kind:        'tutor',
+            chat_id:     chatId,
+            user_msg_id: userMsg.id,
+            payload: {
+              message:           text,
+              conversation_id:   conversationId,
+              file_data:         sentAttachment.data,
+              media_type:        sentAttachment.type,
+              history,
+              is_weakness_query: weaknessQuery || undefined,
+            },
+          });
+          const queuedMsgs = nextMsgs.map(m =>
+            m.id === userMsg.id ? { ...m, queued: true, queuedReason: attachmentReason } : m,
+          );
+          setMessages(queuedMsgs);
+          saveSession(queuedMsgs, chatId);
+          return;
+        }
+
+        // Offline weakness query: use the cached data path before invoking LiteRT.
+        if (weaknessQuery) {
+          const cached = weaknessRef.current ??
+            (await readCacheOnly<StudentSelfAnalytics>('analytics:me').catch(() => null));
+          if (cached) {
+            weaknessRef.current = cached;
+            const offlineText = buildOfflineWeaknessReport(cached, firstName);
+            const offlineMsg: ChatMessage = {
+              id: makeId(), role: 'assistant', content: stripMarkdown(offlineText),
+              timestamp: new Date().toISOString(),
+            };
+            const withOffline = [...nextMsgs, offlineMsg];
+            setMessages(withOffline);
+            saveSession(withOffline, chatId);
+            return;
+          }
+        }
+
+        const onDeviceHistory = history.map(m => ({
+          role: m.role as 'user' | 'assistant', content: m.content,
+        }));
+        const responseText = await tutorOnDevice(
+          onDeviceHistory,
+          text,
+          {
+            education_level: classLevel ?? undefined,
+            subject:         classSubject ?? undefined,
+            country:         detectCountryFromPhone((user as any)?.phone),
+            weakness_topics: weaknessRef.current?.weaknesses_aggregated?.slice(0, 5).map(w => w.topic),
+          },
+        );
+        const aiMsg: ChatMessage = {
+          id: makeId(), role: 'assistant', content: stripMarkdown(responseText),
+          timestamp: new Date().toISOString(),
+        };
+        const withAi = [...nextMsgs, aiMsg];
+        setMessages(withAi);
+        saveSession(withAi, chatId);
+        return;
+      }
+
+      if (route === 'unavailable') {
+        showUnavailableAlert();
+        return;
+      }
+
+      // Cloud path
       const res = await sendTutorMessage({
         message: text,
         conversation_id: conversationId,
-        image: sentAttachment?.data,
+        ...(sentAttachment ? {
+          file_data:  sentAttachment.data,
+          media_type: sentAttachment.type,
+        } : {}),
         history,
+        is_weakness_query: weaknessQuery || undefined,
       });
       setConversationId(res.conversation_id);
       const aiMsg: ChatMessage = {
@@ -338,6 +670,28 @@ export default function StudentTutorScreen() {
       setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
       const status = err?.response?.status ?? err?.status;
+
+      // Offline weakness-query fallback: if the cloud tutor is unreachable
+      // but the student is asking about weak areas, render the cached data
+      // directly so they still get an answer. Same pattern as the teacher's
+      // class weak topics — surfaced via the analytics cache.
+      if (weaknessQuery && (!status || status >= 500 || status === 0)) {
+        const cached = weaknessRef.current ??
+          (await readCacheOnly<StudentSelfAnalytics>('analytics:me').catch(() => null));
+        if (cached) {
+          weaknessRef.current = cached;
+          const offlineText = buildOfflineWeaknessReport(cached, firstName);
+          const offlineMsg: ChatMessage = {
+            id: makeId(), role: 'assistant', content: stripMarkdown(offlineText),
+            timestamp: new Date().toISOString(),
+          };
+          const withOffline = [...nextMsgs, offlineMsg];
+          setMessages(withOffline);
+          saveSession(withOffline, chatId);
+          return;
+        }
+      }
+
       const errText = status === 429
         ? "You've used all your messages for today. They reset at midnight!"
         : 'Something went wrong. Please try again.';
@@ -351,7 +705,7 @@ export default function StudentTutorScreen() {
     } finally {
       setTyping(false);
     }
-  }, [input, messages, conversationId, usageCount, currentChatId, attachment, saveSession, incrementUsage]);
+  }, [input, messages, conversationId, usageCount, currentChatId, attachment, saveSession, incrementUsage, firstName, classLevel, classSubject, user]);
 
   // ── Drawer controls ─────────────────────────────────────────────────────────
 
@@ -401,27 +755,63 @@ export default function StudentTutorScreen() {
 
   // ── Attachment handling ─────────────────────────────────────────────────────
 
-  const pickGallery = useCallback(async () => {
+  // Wait for the attach-sheet Modal to finish dismissing before opening a
+  // native picker. Without this, iOS silently no-ops because the Modal is
+  // still animating out when the picker tries to present.
+  const closeSheetAndRun = useCallback((fn: () => void | Promise<void>) => {
     setShowAttachSheet(false);
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      base64: true, quality: 0.85,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      const a = result.assets[0];
-      setAttachment({ data: a.base64!, type: 'image', name: 'photo.jpg', uri: a.uri });
-    }
+    setTimeout(() => { void fn(); }, 350);
   }, []);
 
-  const pickDocument = useCallback(async () => {
-    setShowAttachSheet(false);
-    const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf'] });
-    if (!result.canceled && result.assets?.[0]) {
-      const f = result.assets[0];
-      const b64 = await FileSystem.readAsStringAsync(f.uri, { encoding: FileSystem.EncodingType.Base64 });
-      setAttachment({ data: b64, type: 'pdf', name: f.name });
-    }
-  }, []);
+  const pickGallery = useCallback(() => {
+    closeSheetAndRun(async () => {
+      try {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            'Photos permission needed',
+            'Allow Neriah to read your photos so you can attach images. Open Settings to enable it.',
+          );
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          base64: true, quality: 0.85,
+        });
+        if (!result.canceled && result.assets?.[0]) {
+          const a = result.assets[0];
+          setAttachment({ data: a.base64!, type: 'image', name: a.fileName ?? 'photo.jpg', uri: a.uri });
+        }
+      } catch (err: any) {
+        Alert.alert('Could not open the gallery', err?.message ?? 'Please try again.');
+      }
+    });
+  }, [closeSheetAndRun]);
+
+  const pickDocument = useCallback((docType: 'pdf' | 'word') => {
+    closeSheetAndRun(async () => {
+      try {
+        const mimeTypes = docType === 'pdf'
+          ? ['application/pdf']
+          : ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+        const result = await DocumentPicker.getDocumentAsync({ type: mimeTypes, copyToCacheDirectory: true });
+        if (!result.canceled && result.assets?.[0]) {
+          const f = result.assets[0];
+          try {
+            const b64 = await FileSystem.readAsStringAsync(f.uri, { encoding: FileSystem.EncodingType.Base64 });
+            setAttachment({ data: b64, type: docType, name: f.name ?? `Document.${docType}` });
+          } catch {
+            Alert.alert('Could not read the file', 'Try a different document.');
+          }
+        }
+      } catch (err: any) {
+        Alert.alert(
+          docType === 'pdf' ? 'Could not open PDF picker' : 'Could not open Word picker',
+          err?.message ?? 'Please try again.',
+        );
+      }
+    });
+  }, [closeSheetAndRun]);
 
   const handleCapture = useCallback(async (uri: string) => {
     setShowCamera(false);
@@ -444,9 +834,36 @@ export default function StudentTutorScreen() {
             <Image source={require('../../assets/icon-transparent.png')} style={{ width: 17, height: 17, tintColor: 'white' }} resizeMode="contain" />
           </View>
         )}
-        <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleAI]}>
-          {item.imageUri && <Image source={{ uri: item.imageUri }} style={s.bubbleImage} />}
-          {item.content ? <Text style={isUser ? s.bubbleTextUser : s.bubbleTextAI}>{item.content}</Text> : null}
+        <View style={{ alignItems: isUser ? 'flex-end' : 'flex-start', flex: 1 }}>
+          <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleAI]}>
+            {item.imageUri ? (
+              <Image source={{ uri: item.imageUri }} style={s.bubbleImage} />
+            ) : item.attachment && item.attachment.media_type !== 'image' ? (
+              <View style={isUser ? s.bubbleFileChipRight : s.bubbleFileChipLeft}>
+                <Ionicons
+                  name={item.attachment.media_type === 'pdf' ? 'document-text-outline' : 'document-outline'}
+                  size={18}
+                  color={isUser ? AI.userText : AI.teal}
+                />
+                <Text
+                  style={isUser ? s.bubbleFileChipTextRight : s.bubbleFileChipTextLeft}
+                  numberOfLines={1}
+                >
+                  {item.attachment.name}
+                </Text>
+              </View>
+            ) : null}
+            {item.content ? <Text style={isUser ? s.bubbleTextUser : s.bubbleTextAI}>{item.content}</Text> : null}
+          </View>
+          {item.queued && (
+            <View style={s.queuedRow}>
+              <Ionicons name="cloud-offline-outline" size={12} color={AI.sub} />
+              <Text style={s.queuedText}>
+                {item.queuedReason ? `${item.queuedReason} · ` : ''}
+                Will send when online
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -527,10 +944,15 @@ export default function StudentTutorScreen() {
             <Text style={s.caption}>Neriah can make mistakes. Verify important info.</Text>
             {attachment && (
               <View style={s.attachChip}>
-                {attachment.type === 'image' && attachment.uri
-                  ? <Image source={{ uri: attachment.uri }} style={s.attachThumb} />
-                  : <Ionicons name="document-text-outline" size={16} color={AI.teal} />
-                }
+                {attachment.type === 'image' && attachment.uri ? (
+                  <Image source={{ uri: attachment.uri }} style={s.attachThumb} />
+                ) : (
+                  <Ionicons
+                    name={attachment.type === 'pdf' ? 'document-text-outline' : 'document-outline'}
+                    size={16}
+                    color={AI.teal}
+                  />
+                )}
                 <Text style={s.attachChipText} numberOfLines={1}>{attachment.name}</Text>
                 <TouchableOpacity onPress={() => setAttachment(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="close-circle" size={16} color={AI.sub} />
@@ -574,9 +996,10 @@ export default function StudentTutorScreen() {
         <TouchableOpacity style={s.sheetBackdrop} activeOpacity={1} onPress={() => setShowAttachSheet(false)}>
           <View style={s.sheetContent}>
             {[
-              { icon: 'camera-outline', label: 'Camera', onPress: () => { setShowAttachSheet(false); setShowCamera(true); } },
+              { icon: 'camera-outline', label: 'Camera', onPress: () => closeSheetAndRun(() => setShowCamera(true)) },
               { icon: 'image-outline', label: 'Gallery', onPress: pickGallery },
-              { icon: 'document-text-outline', label: 'PDF', onPress: pickDocument },
+              { icon: 'document-text-outline', label: 'PDF', onPress: () => pickDocument('pdf') },
+              { icon: 'document-outline', label: 'Word', onPress: () => pickDocument('word') },
             ].map(opt => (
               <TouchableOpacity key={opt.label} style={s.sheetRow} onPress={opt.onPress}>
                 <Ionicons name={opt.icon as any} size={22} color={AI.teal} />
@@ -715,6 +1138,22 @@ const s = StyleSheet.create({
   bubbleTextUser: { color: AI.userText, fontSize: 15, lineHeight: 21 },
   bubbleTextAI:   { color: AI.text,     fontSize: 15, lineHeight: 21 },
   bubbleImage:    { width: 180, height: 140, borderRadius: 10, marginBottom: 8 },
+  queuedRow:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingHorizontal: 4 },
+  queuedText:     { fontSize: 11, color: AI.sub, fontStyle: 'italic' },
+  bubbleFileChipLeft: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#F1F5F9', borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8,
+    alignSelf: 'flex-start', maxWidth: 220,
+  },
+  bubbleFileChipRight: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8,
+    alignSelf: 'flex-start', maxWidth: 220,
+  },
+  bubbleFileChipTextLeft:  { fontSize: 13, color: AI.text,     flexShrink: 1, fontWeight: '500' },
+  bubbleFileChipTextRight: { fontSize: 13, color: AI.userText, flexShrink: 1, fontWeight: '500' },
 
   // Input area
   inputArea: { backgroundColor: AI.card, borderTopWidth: 1, borderTopColor: AI.border, paddingBottom: Platform.OS === 'ios' ? 4 : 8 },

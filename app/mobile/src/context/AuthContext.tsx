@@ -22,6 +22,7 @@ import { clearDeadLetter, clearQueue, getQueue } from '../services/offlineQueue'
 import { clearMutationQueue, getMutationQueue } from '../services/mutationQueue';
 import { clearReadCache } from '../services/readCache';
 import { warmOfflineCache } from '../services/prefetch';
+import { setUser as setAnalyticsUser, track, flush as flushAnalytics } from '../services/analytics';
 import NetInfo from '@react-native-community/netinfo';
 
 const PIN_SET_KEY = 'neriah_has_pin';
@@ -123,6 +124,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             setToken(storedToken);
             setUser(stored);
+            // Identify the analytics layer with the restored user so events
+            // emitted before login() runs (cold-start screen views, etc.)
+            // still carry user_id / role.
+            setAnalyticsUser(stored.id, stored.role, stored.phone);
+            track('auth.session_restored', { role: stored.role }, { surface: 'auth' });
           }
         }
 
@@ -217,6 +223,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(authUser);
     setPinUnlocked(true); // OTP login always unlocks
 
+    // Identify subsequent analytics events with this user.
+    setAnalyticsUser(authUser.id, authUser.role, authUser.phone);
+    track('auth.login.success', { role: authUser.role }, { surface: 'auth' });
+
     // Fire-and-forget cache warm-up so the app is fully usable
     // offline without the teacher having to navigate every screen
     // online first. Teacher-only — see the role guard on the
@@ -253,6 +263,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Emit logout event BEFORE clearing the JWT — flush() needs the
+    // token to authenticate the /events/batch POST.
+    track('auth.logout', undefined, { surface: 'auth' });
+    // Best-effort flush so the logout event ships with the user still
+    // identified. Failure is fine — events stay queued and replay on
+    // the next login.
+    flushAnalytics().catch(() => {});
+
     // Clear the offline scan queue so the next teacher on this device
     // doesn't inherit stale items. Log discarded items first (never drop
     // silently) so post-hoc debugging is possible.
@@ -301,6 +319,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPinUnlocked(false);
     setNeedsPinSetup(false);
     // hasPin intentionally preserved — user may log back in with same phone
+
+    // Drop user identity from analytics. The next login() will re-identify;
+    // any events emitted between now and then carry user_id=null.
+    setAnalyticsUser(null, null, null);
   }, []);
 
   const markPinSet = useCallback(async () => {

@@ -23,7 +23,7 @@ from functools import wraps
 from flask import Blueprint, jsonify, request
 from google.api_core import exceptions as gcp_exc
 
-from shared.auth import require_role
+from shared.auth import decode_jwt, require_role
 from shared.config import settings
 from shared.errors import (
     DuplicateSubmissionError,
@@ -48,6 +48,7 @@ from shared.gemma_client import (
 from shared.annotator import annotate_image, annotate_pages
 from shared.guardrails import log_ai_interaction, validate_output
 from shared.models import GradingVerdict, Mark
+from shared.observability import instrument_route
 from shared.router import AIRequestType, route_ai_request
 from shared.user_context import get_user_context
 
@@ -144,6 +145,7 @@ def _quality_message(reason: str) -> str:
 
 
 @mark_bp.post("/mark")
+@instrument_route("mark.submit_scan", "mark")
 @handle_neriah_errors
 def mark():
     teacher_id, err = require_role(request, "teacher")
@@ -587,6 +589,7 @@ def mark():
 
 
 @mark_bp.put("/marks/<mark_id>")
+@instrument_route("mark.update", "mark")
 def update_mark(mark_id: str):
     """Teacher reviews and overrides a mark."""
     teacher_id, err = require_role(request, "teacher")
@@ -680,22 +683,44 @@ def update_mark(mark_id: str):
 
 
 @mark_bp.get("/marks/<mark_id>")
+@instrument_route("mark.get", "mark")
 @handle_neriah_errors
 def get_mark(mark_id: str):
     """
     Retrieve a single mark by id, enriched with student_name, answer_key_title,
-    and class_name for display. Teacher must own the mark.
+    and class_name for display.
+
+    Authorisation:
+      - Teacher: must own the mark.
+      - Student: must be the student on the mark AND the mark must be approved
+        (matches the visibility rule used by /marks/student/<id> and the
+        Results-tab feedback flow). Without this, the mobile FeedbackScreen
+        for graded student submissions returned 401 → triggered axios's
+        401 → logout interceptor and silently signed students out the
+        moment they tapped a graded entry.
     """
-    teacher_id, err = require_role(request, "teacher")
+    user_id, err = require_role(request, "teacher", "student")
     if err:
         return jsonify({"error": err}), 401
+
+    # Re-decode the JWT to read the role; require_role doesn't surface it.
+    auth_header = request.headers.get("Authorization", "") or ""
+    payload = decode_jwt(auth_header[7:]) if auth_header.startswith("Bearer ") else None
+    role = (payload or {}).get("role")
 
     mark = get_doc("marks", mark_id)
     if not mark:
         return jsonify({"error": "Mark not found"}), 404
 
-    if mark.get("teacher_id") != teacher_id:
-        return jsonify({"error": "forbidden"}), 403
+    if role == "teacher":
+        if mark.get("teacher_id") != user_id:
+            return jsonify({"error": "forbidden"}), 403
+    else:
+        # Student path: own mark + must be approved (teacher-visible only)
+        if mark.get("student_id") != user_id:
+            return jsonify({"error": "forbidden"}), 403
+        if not mark.get("approved"):
+            return jsonify({"error": "Mark not yet released"}), 403
 
     # Enrichment — student name, answer key title, class name.
     student_id = mark.get("student_id", "")
@@ -720,6 +745,7 @@ def get_mark(mark_id: str):
 
 
 @mark_bp.get("/marks/student/<student_id>")
+@instrument_route("mark.student_list", "mark")
 def student_marks(student_id: str):
     """Student fetches their own marks."""
     req_student_id, err = require_role(request, "student")

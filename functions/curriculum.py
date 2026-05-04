@@ -23,6 +23,7 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.config import settings
 from shared.firestore_client import delete_doc, get_doc, query, upsert
+from shared.observability import instrument_route
 from shared.vector_db import delete_collection, search_similar, store_document
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def _now_iso() -> str:
 # ── Curriculum + level picker options (per teacher's country) ────────────────
 
 @curriculum_bp.get("/curriculum/options")
+@instrument_route("curriculum.options", "curriculum")
 def curriculum_options():
     """
     Return the curriculum + level picker config for the calling teacher.
@@ -162,6 +164,7 @@ def _require_teacher_or_admin():
 # ── POST /api/curriculum/upload ───────────────────────────────────────────────
 
 @curriculum_bp.post("/curriculum/upload")
+@instrument_route("curriculum.upload", "curriculum")
 def upload_syllabus():
     """
     Upload a syllabus document. Chunks, embeds, and stores in the vector DB.
@@ -287,6 +290,7 @@ def upload_syllabus():
 # ── GET /api/curriculum/list ──────────────────────────────────────────────────
 
 @curriculum_bp.get("/curriculum/list")
+@instrument_route("curriculum.list", "curriculum")
 def list_syllabuses():
     """
     List uploaded syllabuses.
@@ -325,6 +329,7 @@ def list_syllabuses():
 # ── GET /api/curriculum/<id> ──────────────────────────────────────────────────
 
 @curriculum_bp.get("/curriculum/<syllabus_id>")
+@instrument_route("curriculum.get", "curriculum")
 def get_syllabus(syllabus_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -341,6 +346,7 @@ def get_syllabus(syllabus_id: str):
 # ── DELETE /api/curriculum/<id> ────────────────────────────────────────────────
 
 @curriculum_bp.delete("/curriculum/<syllabus_id>")
+@instrument_route("curriculum.delete", "curriculum")
 def delete_syllabus(syllabus_id: str):
     uploader, err_resp = _require_teacher_or_admin()
     if err_resp:
@@ -397,6 +403,7 @@ def delete_syllabus(syllabus_id: str):
 # ── POST /api/curriculum/<id>/reindex ─────────────────────────────────────────
 
 @curriculum_bp.post("/curriculum/<syllabus_id>/reindex")
+@instrument_route("curriculum.reindex", "curriculum")
 def reindex_syllabus(syllabus_id: str):
     """
     Re-embed all chunks for a syllabus.
@@ -478,6 +485,7 @@ def reindex_syllabus(syllabus_id: str):
 # ── GET /api/curriculum/search (internal / debug) ─────────────────────────────
 
 @curriculum_bp.get("/curriculum/search")
+@instrument_route("curriculum.search", "curriculum")
 def search_curriculum():
     """
     Semantic search across uploaded syllabuses.

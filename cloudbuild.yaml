@@ -15,6 +15,11 @@ steps:
       - --allow-unauthenticated
       - --memory=1Gi
       - --timeout=300s
+      # Pin the runtime service account so deploys don't drift to the
+      # Compute Engine default SA. neriah-ai-sa has the minimum roles
+      # needed: aiplatform.user, datastore.user, storage.objectAdmin,
+      # secretmanager.secretAccessor, cloudfunctions.developer.
+      - --service-account=neriah-ai-sa@$PROJECT_ID.iam.gserviceaccount.com
       - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=us-central1,GCS_BUCKET_SCANS=neriah-scans-dev,GCS_BUCKET_MARKED=neriah-marked-dev,GCS_BUCKET_SUBMISSIONS=neriah-submissions-dev,WHATSAPP_VERIFY_TOKEN=$$WHATSAPP_VERIFY_TOKEN,WHATSAPP_ACCESS_TOKEN=$$WHATSAPP_ACCESS_TOKEN,WHATSAPP_PHONE_NUMBER_ID=$$WHATSAPP_PHONE_NUMBER_ID,APP_JWT_SECRET=$$APP_JWT_SECRET
     secretEnv:
       - WHATSAPP_VERIFY_TOKEN

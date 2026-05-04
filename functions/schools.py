@@ -11,6 +11,7 @@ import logging
 from flask import Blueprint, jsonify
 
 from shared.firestore_client import query
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 schools_bp = Blueprint("schools", __name__)
@@ -47,6 +48,7 @@ _SEED_SCHOOLS = [
 # ─── Endpoint ─────────────────────────────────────────────────────────────────
 
 @schools_bp.get("/schools")
+@instrument_route("schools.list", "schools")
 def list_schools():
     try:
         results = query("schools", [], limit=200, order_by="name")
@@ -61,6 +63,7 @@ def list_schools():
 
 
 @schools_bp.get("/schools/search")
+@instrument_route("schools.search", "schools")
 def search_schools():
     """
     Search schools by partial name match. Returns unique school names.

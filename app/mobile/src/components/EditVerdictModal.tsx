@@ -94,7 +94,7 @@ export default function EditVerdictModal({ visible, verdict, onCancel, onSave }:
       onRequestClose={onCancel}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={USE_FULL_SCREEN ? styles.fullRoot : styles.sheetOverlay}
       >
         {!USE_FULL_SCREEN && <TouchableOpacity style={styles.backdrop} onPress={onCancel} />}

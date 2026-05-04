@@ -59,6 +59,7 @@ from shared.email_client import send_format_error
 from shared.email_parser import ParsedEmail, parse_rfc822
 from shared.firestore_client import get_doc, query, upsert
 from shared.gcs_client import upload_bytes, generate_signed_url
+from shared.observability import log_event
 from shared.gemma_client import (
     check_image_quality_strict,
     grade_submission_strict_multi,
@@ -198,6 +199,18 @@ def _process_message(parsed: ParsedEmail) -> str:
         len(parsed.usable_attachments),
         len(parsed.skipped_attachments),
     )
+    log_event(
+        "email.message.received",
+        "info",
+        payload={
+            "sender": sender,
+            "subject": (parsed.subject or "")[:200],
+            "body_len": len(parsed.body_text or ""),
+            "usable_attachments": len(parsed.usable_attachments),
+            "skipped_attachments": len(parsed.skipped_attachments),
+        },
+        surface="email_poller",
+    )
     if parsed.skipped_attachments:
         for fname, ct, why in parsed.skipped_attachments[:5]:
             logger.info(
@@ -218,6 +231,17 @@ def _process_message(parsed: ParsedEmail) -> str:
     )
 
     def _bounce(*, reason: str, kind: str) -> str:
+        log_event(
+            "email.message.skipped",
+            "warn",
+            payload={
+                "sender": sender,
+                "subject": (parsed.subject or "")[:200],
+                "reason": (reason or "")[:300],
+                "kind": kind,
+            },
+            surface="email_poller",
+        )
         send_format_error(
             student_email=sender,
             reason=reason,
@@ -275,6 +299,18 @@ def _process_message(parsed: ParsedEmail) -> str:
     # MATCHED or AUTO_ENROLLED — both proceed identically from here.
     student = match.student or {}
     class_doc = match.class_doc or {}
+
+    log_event(
+        "email.message.parsed",
+        "info",
+        payload={
+            "sender": sender,
+            "match_status": str(match.status),
+            "student_id": student.get("id"),
+            "class_id": class_doc.get("id"),
+        },
+        surface="email_poller",
+    )
 
     # Pick the answer key. The code path resolves it directly via
     # match.answer_key; the fuzzy path falls back to "most recent
@@ -336,15 +372,40 @@ def _process_message(parsed: ParsedEmail) -> str:
         raw_verdicts = grade_submission_strict_multi(
             pages_bytes, answer_key, education_level,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "email_poller: grading failed for %s (class %s)",
             sender, class_doc.get("id"),
+        )
+        log_event(
+            "email.message.failed",
+            "error",
+            payload={
+                "sender": sender,
+                "stage": "grading",
+                "student_id": student.get("id"),
+                "class_id": class_doc.get("id"),
+            },
+            surface="email_poller",
+            error=exc,
         )
         return _bounce(
             reason="Grading temporarily failed on our side. Please try sending again in a few minutes.",
             kind="internal",
         )
+
+    log_event(
+        "email.message.graded",
+        "info",
+        payload={
+            "sender": sender,
+            "student_id": student.get("id"),
+            "class_id": class_doc.get("id"),
+            "page_count": len(pages_bytes),
+            "verdict_count": len(raw_verdicts),
+        },
+        surface="email_poller",
+    )
 
     # Cap per-question awarded marks against the answer key, drop
     # hallucinated extra questions. Lighter version of the same dedup
@@ -540,6 +601,20 @@ def _process_message(parsed: ParsedEmail) -> str:
         except Exception:
             logger.exception("email_poller: send_receipt_notice failed (non-fatal)")
 
+    log_event(
+        "email.message.replied",
+        "info",
+        payload={
+            "sender": sender,
+            "student_id": student.get("id"),
+            "class_id": class_doc.get("id"),
+            "score": score,
+            "max_score": total_max,
+            "percentage": percentage,
+            "resubmission": was_resubmission,
+        },
+        surface="email_poller",
+    )
     return PROCESSED_FOLDER
 
 
@@ -551,6 +626,7 @@ def poll_email_once() -> dict:
     Returns a small summary dict so callers / scheduled invocations have
     something to log even when there's no mail to process.
     """
+    log_event("email.poll.start", "info", surface="email_poller")
     holder = _acquire_lock()
     if holder is None:
         return {"status": "skipped_locked"}

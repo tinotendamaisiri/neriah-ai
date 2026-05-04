@@ -3,7 +3,7 @@
 // Pending → shows withdraw button.
 // Graded → tappable, navigates to FeedbackScreen.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,14 +14,13 @@ import {
   Alert,
   TouchableOpacity,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { getStudentSubmissions, withdrawSubmission } from '../services/api';
 import { StudentSubmission, StudentRootStackParamList } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
-import AvatarWithStatus from '../components/AvatarWithStatus';
 import { ScreenContainer } from '../components/ScreenContainer';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
@@ -56,6 +55,21 @@ export default function StudentResultsScreen() {
   }, [user]);
 
   useEffect(() => { load(false); }, []);
+
+  // Refetch when the tab gets focus, but only if data is older than 30s.
+  // Prevents unnecessary requests on every tab tap while still picking up
+  // newly-graded submissions (or backend changes like the marks/student
+  // merge fix) without forcing the user to pull-to-refresh.
+  const lastFetchRef = useRef<number>(0);
+  useFocusEffect(
+    useCallback(() => {
+      const now = Date.now();
+      if (now - lastFetchRef.current > 30_000) {
+        lastFetchRef.current = now;
+        load(false);
+      }
+    }, [load]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -109,17 +123,10 @@ export default function StudentResultsScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>My Results</Text>
-          <Text style={styles.headerSub}>
-            {gradedCount} graded · {pendingCount} pending
-          </Text>
-        </View>
-        <AvatarWithStatus
-              variant="light"
-          initial={(user?.first_name ?? 'S')[0].toUpperCase()}
-          onPress={() => (navigation as any).navigate('StudentSettings')}
-        />
+        <Text style={styles.headerTitle}>My Results</Text>
+        <Text style={styles.headerSub}>
+          {gradedCount} graded · {pendingCount} pending
+        </Text>
       </View>
 
       <FlatList
@@ -222,22 +229,12 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: COLORS.teal500,
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
-    flexDirection: 'row',
+    paddingTop: 16,
+    paddingBottom: 16,
     alignItems: 'center',
   },
-  avatarCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
-  headerTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
-  headerSub: { color: COLORS.teal100, fontSize: 13, marginTop: 4 },
+  headerTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  headerSub: { color: COLORS.teal100, fontSize: 13, marginTop: 4, textAlign: 'center' },
   listContent: { padding: 16, paddingBottom: 40 },
   emptyFlex: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },

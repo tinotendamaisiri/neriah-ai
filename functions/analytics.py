@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
 from shared.firestore_client import get_doc, query
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 analytics_bp = Blueprint("analytics", __name__)
@@ -32,6 +33,48 @@ def _trend(scores: list[float]) -> str:
     if delta < -5:
         return "down"
     return "stable"
+
+
+def _aggregate_weaknesses_from_marks(approved_marks: list[dict]) -> list[dict]:
+    """
+    Pool every approved verdict and group by question_text[:50]. Returns
+    list[{topic, attempts, correct, accuracy_pct, last_seen_at}] sorted
+    weakest-first; topics with <2 attempts are dropped (insufficient signal).
+    Shared by both per-student and per-class aggregation.
+    """
+    topic_stats: dict[str, dict] = {}
+    for m in approved_marks:
+        m_ts = m.get("timestamp", "")
+        for v in m.get("verdicts", []):
+            qt = (v.get("question_text") or "").strip()[:50]
+            if not qt:
+                continue
+            entry = topic_stats.setdefault(qt, {
+                "topic": qt,
+                "attempts": 0,
+                "correct": 0,
+                "last_seen_at": "",
+            })
+            entry["attempts"] += 1
+            if v.get("verdict") == "correct":
+                entry["correct"] += 1
+            if m_ts and m_ts > entry["last_seen_at"]:
+                entry["last_seen_at"] = m_ts
+
+    aggregated: list[dict] = []
+    for entry in topic_stats.values():
+        if entry["attempts"] < 2:
+            continue
+        accuracy_pct = round(entry["correct"] / entry["attempts"] * 100)
+        aggregated.append({
+            "topic": entry["topic"],
+            "attempts": entry["attempts"],
+            "correct": entry["correct"],
+            "accuracy_pct": accuracy_pct,
+            "last_seen_at": entry["last_seen_at"] or None,
+        })
+    aggregated.sort(key=lambda e: (e["accuracy_pct"], -e["attempts"]))
+    return aggregated
 
 
 def _class_analytics_data(class_id: str) -> dict:
@@ -142,41 +185,7 @@ def _class_analytics_data(class_id: str) -> dict:
     submitting = len([s for s in student_data if s["submission_count"] > 0])
     sorted_students = sorted(student_data, key=lambda s: s["average_score"], reverse=True)
 
-    # Class-level topic weakness — pool every approved verdict across the class
-    # and group by question_text[:50]. Mirrors the per-student aggregation used
-    # by /analytics/student so the UI rows have the same shape.
-    class_topic_stats: dict[str, dict] = {}
-    for m in approved_marks:
-        m_ts = m.get("timestamp", "")
-        for v in m.get("verdicts", []):
-            qt = (v.get("question_text") or "").strip()[:50]
-            if not qt:
-                continue
-            entry = class_topic_stats.setdefault(qt, {
-                "topic": qt,
-                "attempts": 0,
-                "correct": 0,
-                "last_seen_at": "",
-            })
-            entry["attempts"] += 1
-            if v.get("verdict") == "correct":
-                entry["correct"] += 1
-            if m_ts and m_ts > entry["last_seen_at"]:
-                entry["last_seen_at"] = m_ts
-
-    class_weaknesses_aggregated = []
-    for entry in class_topic_stats.values():
-        if entry["attempts"] < 2:
-            continue
-        accuracy_pct = round(entry["correct"] / entry["attempts"] * 100)
-        class_weaknesses_aggregated.append({
-            "topic": entry["topic"],
-            "attempts": entry["attempts"],
-            "correct": entry["correct"],
-            "accuracy_pct": accuracy_pct,
-            "last_seen_at": entry["last_seen_at"] or None,
-        })
-    class_weaknesses_aggregated.sort(key=lambda e: (e["accuracy_pct"], -e["attempts"]))
+    class_weaknesses_aggregated = _aggregate_weaknesses_from_marks(approved_marks)
 
     # Recent scores — class average per homework, chronological. Used by the
     # mini line chart on the AnalyticsScreen card. Group by answer_key_id,
@@ -221,6 +230,7 @@ def _class_analytics_data(class_id: str) -> dict:
 # ── GET /api/analytics (legacy — kept for backwards compatibility) ─────────────
 
 @analytics_bp.get("/analytics")
+@instrument_route("analytics.legacy", "analytics")
 def analytics():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -246,6 +256,7 @@ def analytics():
 # ── GET /api/analytics/classes ────────────────────────────────────────────────
 
 @analytics_bp.get("/analytics/classes")
+@instrument_route("analytics.classes", "analytics")
 def analytics_classes():
     """
     Summary card data for every class owned by this teacher.
@@ -292,6 +303,7 @@ def analytics_classes():
 # ── GET /api/analytics/class/<class_id> ───────────────────────────────────────
 
 @analytics_bp.get("/analytics/class/<class_id>")
+@instrument_route("analytics.class", "analytics")
 def analytics_class(class_id: str):
     """Full class analytics breakdown with has_data flag."""
     teacher_id, err = require_role(request, "teacher")
@@ -312,9 +324,82 @@ def analytics_class(class_id: str):
     return jsonify(data), 200
 
 
+# ── GET /api/analytics/me ─────────────────────────────────────────────────────
+
+@analytics_bp.get("/analytics/me")
+@instrument_route("analytics.me", "analytics")
+def analytics_me():
+    """
+    Self-service analytics for the authenticated student. Returns the same
+    weakness/strength aggregation as /analytics/student/<id> but without the
+    teacher-only fields. Cacheable on the client (withCache) so the tutor
+    can use the data when offline.
+    """
+    student_id, err = require_role(request, "student")
+    if err:
+        return jsonify({"error": err}), 401
+
+    student = get_doc("students", student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    try:
+        marks = query("marks", [("student_id", "==", student_id)], order_by="timestamp")
+    except Exception:
+        logger.warning("[analytics/me] marks index not ready, falling back to unordered query")
+        marks = query("marks", [("student_id", "==", student_id)])
+        marks.sort(key=lambda m: m.get("timestamp", ""), reverse=False)
+    approved = [m for m in marks if m.get("approved") or m.get("status") in ("approved", "graded")]
+
+    if not approved:
+        return jsonify({
+            "has_data": False,
+            "reason": "no_graded_submissions",
+            "student": {
+                "id": student_id,
+                "name": _student_name(student),
+                "average_score": 0,
+                "total_submissions": 0,
+            },
+            "weaknesses_aggregated": [],
+            "strengths": [],
+        }), 200
+
+    scores = [float(m.get("percentage", 0)) for m in approved]
+    avg = round(sum(scores) / len(scores), 1)
+
+    weaknesses_aggregated = _aggregate_weaknesses_from_marks(approved)
+
+    correct_verdicts: list[dict] = []
+    for m in approved:
+        for v in m.get("verdicts", []):
+            if v.get("verdict") == "correct":
+                correct_verdicts.append(v)
+    strengths = list({v.get("question_text", "")[:50] for v in correct_verdicts if v.get("question_text")})[:5]
+
+    logger.info(
+        "Analytics/me: student_id=%s submissions=%d weak_topics=%d",
+        student_id, len(approved), len(weaknesses_aggregated),
+    )
+
+    return jsonify({
+        "has_data": True,
+        "student": {
+            "id": student_id,
+            "name": _student_name(student),
+            "average_score": avg,
+            "total_submissions": len(approved),
+            "first_submission_date": approved[0].get("timestamp") if approved else None,
+        },
+        "weaknesses_aggregated": weaknesses_aggregated,
+        "strengths": [{"topic": s} for s in strengths],
+    }), 200
+
+
 # ── GET /api/analytics/student/<student_id> ───────────────────────────────────
 
 @analytics_bp.get("/analytics/student/<student_id>")
+@instrument_route("analytics.student", "analytics")
 def analytics_student(student_id: str):
     """Per-student breakdown for a teacher."""
     teacher_id, err = require_role(request, "teacher")
@@ -374,50 +459,11 @@ def analytics_student(student_id: str):
     weaknesses = list({v.get("question_text", "")[:50] for v in incorrect if v.get("question_text")})[:5]
     strengths  = list({v.get("question_text", "")[:50] for v in correct   if v.get("question_text")})[:5]
 
-    # ── Aggregated weaknesses — topic → (attempts, correct, accuracy_pct, last_seen_at).
+    # Aggregated weaknesses — topic → (attempts, correct, accuracy_pct, last_seen_at).
     # Unlike the flat `weaknesses` list above (unique incorrect topics, newest-
-    # first), this version counts BOTH correct and incorrect attempts per topic
-    # so accuracy has a valid denominator. Used by TeacherStudentAnalyticsScreen's
-    # "Areas they're struggling with" section.
-    #
-    # TODO(topic-quality): topic key is currently question_text[:50]. Similar
-    # questions with slightly different wording will count as separate topics.
-    # A proper fix needs either an LLM classifier or curriculum-tagged
-    # questions. Accepted for now.
-    _topic_stats: dict[str, dict] = {}
-    for m in approved:
-        m_ts = m.get("timestamp", "")
-        for v in m.get("verdicts", []):
-            qt = (v.get("question_text") or "").strip()[:50]
-            if not qt:
-                continue
-            entry = _topic_stats.setdefault(qt, {
-                "topic": qt,
-                "attempts": 0,
-                "correct": 0,
-                "last_seen_at": "",
-            })
-            entry["attempts"] += 1
-            if v.get("verdict") == "correct":
-                entry["correct"] += 1
-            # Track the most recent time the student attempted this topic.
-            if m_ts and m_ts > entry["last_seen_at"]:
-                entry["last_seen_at"] = m_ts
-
-    weaknesses_aggregated = []
-    for entry in _topic_stats.values():
-        if entry["attempts"] < 2:
-            continue  # not enough data to flag as a weakness
-        accuracy_pct = round(entry["correct"] / entry["attempts"] * 100)
-        weaknesses_aggregated.append({
-            "topic": entry["topic"],
-            "attempts": entry["attempts"],
-            "correct": entry["correct"],
-            "accuracy_pct": accuracy_pct,
-            "last_seen_at": entry["last_seen_at"] or None,
-        })
-    # Weakest first — tie-break on more attempts (higher confidence) first.
-    weaknesses_aggregated.sort(key=lambda e: (e["accuracy_pct"], -e["attempts"]))
+    # first), this counts BOTH correct and incorrect attempts so accuracy has
+    # a valid denominator. Topics with <2 attempts are dropped.
+    weaknesses_aggregated = _aggregate_weaknesses_from_marks(approved)
 
     # Batch-fetch unique answer keys to avoid N+1 queries
     unique_ak_ids = list({m.get("answer_key_id", "") for m in approved if m.get("answer_key_id")})
@@ -469,6 +515,7 @@ def analytics_student(student_id: str):
 # ── GET /api/analytics/homework/<homework_id> ────────────────────────────────
 
 @analytics_bp.get("/analytics/homework/<homework_id>")
+@instrument_route("analytics.homework", "analytics")
 def analytics_homework(homework_id: str):
     """
     Per-homework analytics: who submitted, what they scored.
@@ -549,6 +596,7 @@ def analytics_homework(homework_id: str):
 # ── GET /api/analytics/student-class/<class_id> ───────────────────────────────
 
 @analytics_bp.get("/analytics/student-class/<class_id>")
+@instrument_route("analytics.student_class", "analytics")
 def analytics_student_class(class_id: str):
     """
     Class analytics scoped to a student's view.

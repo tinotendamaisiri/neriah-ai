@@ -1,9 +1,12 @@
 name: Keep Services Alive
 
+# Runs daily — Supabase free-tier auto-pauses after 7 days of inactivity
+# and the previous biweekly schedule combined with a no-auth REST ping
+# left the project flagged as inactive. Daily authenticated query on a
+# real table is what Supabase counts as "active".
 on:
   schedule:
-    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
-    - cron: '0 9 * * 4'  # Every Thursday at 9am UTC
+    - cron: '0 9 * * *'  # Every day at 9am UTC
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
@@ -42,12 +45,32 @@ jobs:
           echo "https://neriah.ai/demo -> $STATUS"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
-      - name: Ping Supabase REST
+      - name: Ping Supabase (real DB query)
         id: ping_supabase
         continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/)
-          echo "https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/ -> $STATUS"
+          # Supabase auto-pauses on 7 days of zero database activity.
+          # An unauthenticated GET on /rest/v1/ does NOT count — the project
+          # was getting paused because previous pings only hit the REST root.
+          # Issue an authenticated SELECT against a real table, which is what
+          # Supabase tracks as activity.
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "SUPABASE_URL or SUPABASE_ANON_KEY secret missing — falling back to root ping (won't prevent pause)."
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://pxhwfuhflthnakqyotdx.supabase.co/rest/v1/)
+            echo "status=$STATUS (root only — set secrets to do real query)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Hit a small/empty table with an explicit ?limit=1. We use
+          # contact_submissions because it's known to exist; if you rename
+          # it, update the path here.
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/contact_submissions?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "Supabase SELECT contact_submissions -> $STATUS"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
       - name: Ping Upstash Redis

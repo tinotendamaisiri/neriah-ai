@@ -13,6 +13,7 @@ from shared.auth import require_role
 from shared.firestore_client import delete_doc, get_doc, query, upsert
 from shared.gemma_client import _generate, _parse_json
 from shared.models import Student
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 students_bp = Blueprint("students", __name__)
@@ -25,6 +26,7 @@ def _teacher_owns_class(teacher_id: str, class_id: str) -> bool:
 
 
 @students_bp.get("/students")
+@instrument_route("students.list", "students")
 def list_students():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -42,6 +44,7 @@ def list_students():
 
 
 @students_bp.post("/students")
+@instrument_route("students.create", "students")
 def create_student():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -76,6 +79,7 @@ def create_student():
 
 
 @students_bp.post("/students/batch")
+@instrument_route("students.batch", "students")
 def create_students_batch():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -128,6 +132,7 @@ def create_students_batch():
 
 
 @students_bp.put("/students/<student_id>")
+@instrument_route("students.update", "students")
 def update_student(student_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -150,6 +155,7 @@ def update_student(student_id: str):
 
 
 @students_bp.delete("/students/<student_id>")
+@instrument_route("students.delete", "students")
 def delete_student(student_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -274,6 +280,7 @@ def _extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 # ── Extraction endpoints ──────────────────────────────────────────────────────
 
 @students_bp.post("/students/extract-from-image")
+@instrument_route("students.extract_from_image", "students")
 def extract_students_from_image():
     """Extract student roster from a class register photo using Gemma 4."""
     _, err = require_role(request, "teacher")
@@ -293,6 +300,7 @@ def extract_students_from_image():
 
 
 @students_bp.post("/students/extract-from-file")
+@instrument_route("students.extract_from_file", "students")
 def extract_students_from_file():
     """Extract student roster from xlsx, csv, pdf, or docx."""
     _, err = require_role(request, "teacher")

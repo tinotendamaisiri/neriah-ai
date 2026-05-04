@@ -266,6 +266,10 @@ export interface Assignment {
   due_date?: string;
   open_for_submission?: boolean;
   has_pending_submission?: boolean;
+  /** Lifecycle state of the answer key on the teacher side. Drives the
+   *  badge the student sees: pending_setup → "Coming soon", closed →
+   *  "Closed", anything else → submit/closed based on open_for_submission. */
+  status?: 'draft' | 'pending_setup' | 'open' | 'closed' | 'graded' | string;
 }
 
 /** Approved mark visible to a student (GET /api/marks/student/{id}) */

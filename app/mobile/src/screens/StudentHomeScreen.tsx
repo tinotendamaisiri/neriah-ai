@@ -219,14 +219,16 @@ export default function StudentHomeScreen() {
         </View>
       ) : (
         assignments.map(a => {
-          const isOpen = a.open_for_submission !== false;
+          const isPendingSetup = a.status === 'pending_setup';
+          const isOpen = !isPendingSetup && a.open_for_submission !== false;
           const isSubmitted = a.has_pending_submission === true;
+          const isTappable = isOpen && !isSubmitted;
           return (
             <TouchableOpacity
               key={a.id}
               style={styles.assignmentCard}
-              onPress={() => isOpen && !isSubmitted ? goToCamera(a) : undefined}
-              activeOpacity={isOpen && !isSubmitted ? 0.7 : 1}
+              onPress={() => isTappable ? goToCamera(a) : undefined}
+              activeOpacity={isTappable ? 0.7 : 1}
             >
               <View style={styles.assignmentInfo}>
                 <Text style={styles.assignmentTitle}>{a.title ?? a.subject}</Text>
@@ -234,7 +236,11 @@ export default function StudentHomeScreen() {
                   <Text style={styles.assignmentSub}>{a.subject}{a.total_marks ? ` · ${a.total_marks} marks` : ''}</Text>
                 )}
               </View>
-              {isSubmitted ? (
+              {isPendingSetup ? (
+                <View style={styles.closedChip}>
+                  <Text style={styles.closedChipText}>Coming soon</Text>
+                </View>
+              ) : isSubmitted ? (
                 <View style={styles.submittedChip}>
                   <Text style={styles.submittedChipText}>{t('submitted')}</Text>
                 </View>

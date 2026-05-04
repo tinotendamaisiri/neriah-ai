@@ -1,0 +1,137 @@
+// Module-level build.gradle for react-native-litert-lm
+// Configures Android build with Kotlin HybridObject + C++ JNI glue
+//
+// VENDORED COPY — pushed into node_modules/react-native-litert-lm/android/
+// by scripts/install-litert-frameworks.sh on every npm install.
+//
+// Diff vs upstream:
+//   - Replaces the published Maven dep
+//       com.google.ai.edge.litertlm:litertlm-android:<version>
+//     with a local Maven-layout repo at vendor/litert-android-maven/. The
+//     AAR served from that repo is our HEAD-of-main Bazel rebuild
+//     (vendor/litert-android/litertlm-android.aar) and contains the .so
+//     files Gemma 4 E2B actually needs (TF_LITE_PREFILL_DECODE op,
+//     prefer_activation_type loader fix, vision/audio executors).
+//
+//     The previous setup pulled classes from Google Maven and tried to
+//     override the bundled .so files via packagingOptions.jniLibs.pickFirsts
+//     plus a destructive `zip -d` of the cached AAR in the npm postinstall
+//     script. That mutation was opaque to Gradle's transform cache: every
+//     time the hash dir got partially wiped (or the bin/results metadata
+//     went out of sync with the transformed/ output dir) the next build
+//     failed at processDebugMainManifest with
+//       ManifestMerger2$MergeFailureException:
+//         AndroidManifest.xml (No such file or directory)
+//     because Gradle thought the transform was already done.
+//
+//     A local Maven repo (Maven-layout staging dir + a hand-written POM)
+//     gives Gradle full metadata, matches the same Maven coord the upstream
+//     code resolves (so :app's debugRuntimeClasspath finds it through the
+//     library project), and keeps the canonical AAR file untouched. The
+//     postinstall script (re)builds the staging dir on every install from
+//     vendor/litert-android/litertlm-android.aar — see the same script for
+//     the layout it produces.
+//   - Everything else is identical to upstream.
+
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// Apply Nitrogen autolinking
+apply from: '../nitrogen/generated/android/LiteRTLM+autolinking.gradle'
+
+// Read LiteRT-LM SDK version from package.json (single source of truth).
+// The local Maven repo at vendor/litert-android-maven/ serves the AAR + POM
+// under this exact coord, mirroring what was previously pulled from Google
+// Maven. The version pin keeps every npm install on the same coord.
+def packageJson = new groovy.json.JsonSlurper().parseText(file('../package.json').text)
+def litertLmVersion = packageJson.litertLm.androidMavenVersion
+
+android {
+    namespace "dev.litert.litertlm"
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 26  // LiteRT-LM requires API 26+
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-O2 -fexceptions -frtti -std=c++20"
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildFeatures {
+        prefab true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += [
+                'src/main/java',
+                '../nitrogen/generated/android/kotlin'
+            ]
+        }
+    }
+
+    packaging {
+        jniLibs {
+            keepDebugSymbols.add("**/*.so")
+        }
+    }
+}
+
+repositories {
+    // The com.google.ai.edge.litertlm group is routed to a local Maven
+    // repo by the allprojects.repositories block in the consuming app's
+    // android/build.gradle (see scripts/install-litert-frameworks.sh —
+    // it patches that file with an exclusiveContent rule). We don't
+    // re-declare the rule here because Gradle gets confused if the same
+    // exclusiveContent appears at both the allprojects and project level
+    // — resolution silently fails for the group with no useful error.
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    // React Native
+    implementation 'com.facebook.react:react-android'
+
+    // Nitro Modules
+    implementation project(':react-native-nitro-modules')
+
+    // fbjni for HybridObject JNI bridge
+    implementation 'com.facebook.fbjni:fbjni:0.6.0'
+
+    // Kotlin coroutines for async operations
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // LiteRT-LM Kotlin API + .so files. Resolved from the local Maven repo
+    // above. The POM declares the same transitive deps as upstream Google
+    // Maven (gson, kotlin-reflect, kotlinx-coroutines-android), which is why
+    // we don't list them here.
+    implementation "com.google.ai.edge.litertlm:litertlm-android:${litertLmVersion}"
+}

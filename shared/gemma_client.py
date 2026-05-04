@@ -20,6 +20,7 @@ import re
 import time
 
 import google.auth
+import google.auth.impersonated_credentials
 import google.auth.transport.requests
 import requests
 
@@ -44,10 +45,70 @@ _NERIAH_IDENTITY = (
 # ─── Vertex AI helpers ────────────────────────────────────────────────────────
 
 def _get_vertex_token() -> str:
-    """Obtain a short-lived Bearer token from Application Default Credentials."""
-    creds, _ = google.auth.default()
-    creds.refresh(google.auth.transport.requests.Request())
-    return creds.token
+    """Obtain a short-lived Bearer token for Vertex AI calls.
+
+    We do NOT use the Cloud Run metadata-server token directly. Vertex AI's
+    OpenAI-compat MaaS endpoint rejects metadata-server tokens with a
+    generic 403 PERMISSION_DENIED even when the runtime SA has every
+    required role (aiplatform.user, aiplatform.endpointUser,
+    serviceusage.serviceUsageConsumer, plus cloud-platform scope).
+    The same SA's token minted via IAM Credentials API
+    (`iamcredentials.googleapis.com:generateAccessToken`) works perfectly,
+    so we explicitly self-impersonate via that path.
+
+    Requires `roles/iam.serviceAccountTokenCreator` on the runtime SA
+    granted to the runtime SA itself (self-impersonation), set up via:
+        gcloud iam service-accounts add-iam-policy-binding \\
+          neriah-ai-sa@neriah-ai-492302.iam.gserviceaccount.com \\
+          --member="serviceAccount:neriah-ai-sa@neriah-ai-492302.iam.gserviceaccount.com" \\
+          --role="roles/iam.serviceAccountTokenCreator"
+    """
+    # Source credential: the metadata-server token (cloud-platform scope).
+    # Used only to call iamcredentials.googleapis.com — we never send it
+    # to Vertex.
+    source_creds, project = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+    # `compute_engine.Credentials.service_account_email` returns the literal
+    # string "default" inside Cloud Run, not the actual SA email. Fetch the
+    # real email from the metadata server.
+    target_sa = getattr(source_creds, "service_account_email", None)
+    if not target_sa or target_sa == "default":
+        try:
+            r = requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"},
+                timeout=2,
+            )
+            r.raise_for_status()
+            target_sa = r.text.strip()
+        except Exception:
+            target_sa = None
+    if not target_sa:
+        # Fall back to the metadata-server token if we still can't identify
+        # the SA — caller will see the same 403 we'd see today, but at
+        # least we tried.
+        source_creds.refresh(google.auth.transport.requests.Request())
+        return source_creds.token
+
+    # Self-impersonation: mint a fresh access token for our own SA via
+    # IAM Credentials API. This produces an OAuth2 token equivalent to
+    # what `gcloud auth print-access-token --impersonate-service-account`
+    # produces — and unlike the metadata-server token, Vertex accepts it.
+    impersonated = google.auth.impersonated_credentials.Credentials(
+        source_credentials=source_creds,
+        target_principal=target_sa,
+        target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        lifetime=3600,
+    )
+    if hasattr(impersonated, "with_quota_project"):
+        impersonated = impersonated.with_quota_project(settings.GCP_PROJECT_ID)
+    impersonated.refresh(google.auth.transport.requests.Request())
+    logger.warning(
+        "[vertex] auth identity=%s project=%s quota_project=%s mode=self-impersonation",
+        target_sa, project, getattr(impersonated, "quota_project_id", None),
+    )
+    return impersonated.token
 
 
 # How many times to retry a failing Vertex call before giving up. Vertex MaaS
@@ -58,7 +119,11 @@ def _get_vertex_token() -> str:
 _VERTEX_MAX_ATTEMPTS = 4
 
 # Status codes that are worth retrying — quota throttling + transient 5xx.
-_VERTEX_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# 403 is included because Vertex MaaS preview returns intermittent 403
+# PERMISSION_DENIED responses for the same SA + same scope that succeeded
+# moments earlier; treat as transient and retry. Real permission failures
+# will still surface after _VERTEX_MAX_ATTEMPTS retries.
+_VERTEX_RETRY_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
 
 # Cap server-suggested Retry-After at 30s so a long suggestion doesn't blow
 # the function timeout. Below this we honour the server hint exactly.
@@ -76,6 +141,10 @@ def _vertex_chat_completions(
     Retry-After header when present (capped at 30s). Returns the assistant
     message content string. Raises classified NeriahError on persistent error.
     """
+    # Local import — keeps observability out of cold-start path and
+    # avoids any potential circular dependency.
+    import os as _os
+    from shared.observability import log_event  # noqa: PLC0415
     url = (
         f"https://aiplatform.googleapis.com/v1/projects/{settings.GCP_PROJECT_ID}"
         "/locations/global/endpoints/openapi/chat/completions"
@@ -83,6 +152,11 @@ def _vertex_chat_completions(
     headers = {
         "Authorization": f"Bearer {_get_vertex_token()}",
         "Content-Type": "application/json",
+        # x-goog-user-project pins billing + quota to our project. Some
+        # Vertex MaaS endpoints (like the OpenAI-compat chat completions)
+        # 403 with a generic PERMISSION_DENIED when this header is missing
+        # and the SA's default quota project differs from the URL project.
+        "x-goog-user-project": settings.GCP_PROJECT_ID,
     }
     body: dict = {
         "model": settings.VERTEX_MODEL_ID,
@@ -92,10 +166,28 @@ def _vertex_chat_completions(
         "temperature": temperature if temperature is not None else settings.VERTEX_TEMPERATURE,
     }
 
+    # Pricing knobs — set via env so we can tune without redeploying. Defaults
+    # match Gemma 4 26B MaaS public pricing as of 2026-04. USD per 1M tokens.
+    try:
+        price_in = float(_os.getenv("VERTEX_PRICE_IN_PER_M", "0.30"))
+    except ValueError:
+        price_in = 0.30
+    try:
+        price_out = float(_os.getenv("VERTEX_PRICE_OUT_PER_M", "0.60"))
+    except ValueError:
+        price_out = 0.60
+
     last_exc: Exception | None = None
+    call_started = time.perf_counter()
     for attempt in range(_VERTEX_MAX_ATTEMPTS):
+        attempt_start = time.perf_counter()
         try:
-            response = requests.post(url, headers=headers, json=body, timeout=120)
+            # 240s timeout: Gemma 4 26B on Vertex MaaS can take 120s+ on
+            # large structured generations (40-question quizzes, full
+            # lesson notes). The Cloud Function has a 300s ceiling, so 240
+            # leaves room for retries on transient failures without ever
+            # exceeding the function timeout.
+            response = requests.post(url, headers=headers, json=body, timeout=240)
 
             # Retryable status codes — back off and try again before raising.
             if response.status_code in _VERTEX_RETRY_STATUSES and attempt < _VERTEX_MAX_ATTEMPTS - 1:
@@ -114,11 +206,58 @@ def _vertex_chat_completions(
                     "[vertex] %d on attempt %d/%d — backing off %.2fs (retry-after=%r)",
                     response.status_code, attempt + 1, _VERTEX_MAX_ATTEMPTS, wait, ra_raw,
                 )
+                log_event(
+                    "vertex.call.retry",
+                    "warn",
+                    payload={
+                        "status": response.status_code,
+                        "wait_s": wait,
+                        "attempt": attempt + 1,
+                    },
+                    surface="vertex",
+                    ai={"model": settings.VERTEX_MODEL_ID},
+                )
                 time.sleep(wait)
                 continue
 
+            # On non-2xx, surface the response body in the log before raising.
+            # Without this, a 403/404 reaches the caller as a bare HTTPError
+            # and the actual reason (e.g. "license not accepted", "model not
+            # found in this region", "quota exhausted") never makes it into
+            # Cloud Logging — it has bitten us multiple times during MaaS
+            # endpoint rollout.
+            if not response.ok:
+                logger.error(
+                    "[vertex] %d %s — body: %.1000s",
+                    response.status_code,
+                    response.reason,
+                    response.text,
+                )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+
+            data = response.json()
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            prompt_tokens = int(usage.get("prompt_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or 0)
+            cost_usd = (
+                (prompt_tokens / 1_000_000.0) * price_in
+                + (completion_tokens / 1_000_000.0) * price_out
+            )
+            latency_ms = (time.perf_counter() - call_started) * 1000.0
+            log_event(
+                "vertex.call.success",
+                "info",
+                surface="vertex",
+                latency_ms=latency_ms,
+                ai={
+                    "model": settings.VERTEX_MODEL_ID,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "cost_usd": round(cost_usd, 6),
+                    "attempt": attempt + 1,
+                },
+            )
+            return data["choices"][0]["message"]["content"]
 
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             # Transient network blips — retry, don't surface as quota error.
@@ -129,17 +268,78 @@ def _vertex_chat_completions(
                     "[vertex] %s on attempt %d/%d — backing off %.2fs",
                     type(exc).__name__, attempt + 1, _VERTEX_MAX_ATTEMPTS, wait,
                 )
+                log_event(
+                    "vertex.call.retry",
+                    "warn",
+                    payload={
+                        "status": None,
+                        "wait_s": wait,
+                        "attempt": attempt + 1,
+                        "reason": type(exc).__name__,
+                    },
+                    surface="vertex",
+                    ai={"model": settings.VERTEX_MODEL_ID},
+                )
                 time.sleep(wait)
                 continue
+            latency_ms = (time.perf_counter() - call_started) * 1000.0
+            log_event(
+                "vertex.call.failed",
+                "error",
+                surface="vertex",
+                latency_ms=latency_ms,
+                error=exc,
+                ai={
+                    "model": settings.VERTEX_MODEL_ID,
+                    "attempt": attempt + 1,
+                },
+            )
             raise
 
     # All retries exhausted on a retryable status — re-issue once more so
     # raise_for_status() turns it into a classified HTTPError for the caller.
-    response = requests.post(url, headers=headers, json=body, timeout=120)
-    response.raise_for_status()
-    if last_exc is not None:
-        raise last_exc
-    return response.json()["choices"][0]["message"]["content"]
+    try:
+        response = requests.post(url, headers=headers, json=body, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+        usage = data.get("usage", {}) if isinstance(data, dict) else {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        cost_usd = (
+            (prompt_tokens / 1_000_000.0) * price_in
+            + (completion_tokens / 1_000_000.0) * price_out
+        )
+        latency_ms = (time.perf_counter() - call_started) * 1000.0
+        log_event(
+            "vertex.call.success",
+            "info",
+            surface="vertex",
+            latency_ms=latency_ms,
+            ai={
+                "model": settings.VERTEX_MODEL_ID,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": round(cost_usd, 6),
+                "attempt": _VERTEX_MAX_ATTEMPTS + 1,
+            },
+        )
+        if last_exc is not None:
+            raise last_exc
+        return data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - call_started) * 1000.0
+        log_event(
+            "vertex.call.failed",
+            "error",
+            surface="vertex",
+            latency_ms=latency_ms,
+            error=exc,
+            ai={
+                "model": settings.VERTEX_MODEL_ID,
+                "attempt": _VERTEX_MAX_ATTEMPTS + 1,
+            },
+        )
+        raise
 
 
 def _generate(
@@ -174,19 +374,44 @@ def chat(
     """
     Multi-turn Vertex AI chat. Sends full message history to the model.
     Returns the assistant response text. Raises on error.
+
+    When ``image_bytes`` is provided we collapse the system prompt and a
+    compact history transcript into the same user content as the image.
+    Vertex MaaS Gemma's OpenAI-compat endpoint silently drops image content
+    blocks when a `system` role message + multi-turn history are present —
+    mirroring the working _generate() shape (single user turn, image-then-
+    text content blocks, no system role) is the only reliable way to keep
+    the image attached.
     """
+    if image_bytes is not None:
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        # Cap history at the last 6 turns to keep the context lean — the
+        # model only needs short-term continuity, not the full transcript.
+        compact_history = ""
+        if history:
+            recent = history[-6:]
+            transcript = "\n".join(
+                f"{(m.get('role') or 'user').upper()}: {m.get('content', '')}"
+                for m in recent
+            )
+            compact_history = (
+                "\n\n---\nPREVIOUS TURNS (for context only):\n" + transcript
+            )
+        merged_text = (
+            f"{system_prompt}{compact_history}\n\n"
+            f"---\nCURRENT MESSAGE:\n{current_message}"
+        )
+        content = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            {"type": "text", "text": merged_text},
+        ]
+        return _vertex_chat_completions([{"role": "user", "content": content}])
+
+    # Text-only path — system + history + user, the standard shape.
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     for msg in history:
         messages.append({"role": msg["role"], "content": msg["content"]})
-    if image_bytes is not None:
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        content: list = [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            {"type": "text", "text": current_message},
-        ]
-        messages.append({"role": "user", "content": content})
-    else:
-        messages.append({"role": "user", "content": current_message})
+    messages.append({"role": "user", "content": current_message})
     return _vertex_chat_completions(messages)
 
 
@@ -1031,15 +1256,106 @@ def student_tutor(
             "opportunities — never as failures."
         )
 
+    # ── Image-attached behaviour ─────────────────────────────────────────────
+    # When the student attaches an image, the Socratic "let the student lead"
+    # rule was making the model ignore the picture entirely and ask the student
+    # to pick a subject — even though the image was right there in the request.
+    # When image_bytes is present we override that with an explicit "engage
+    # with the image first" instruction so the student sees that Neriah
+    # actually saw what they shared.
+    image_attached_block = ""
+    if image_bytes is not None:
+        image_attached_block = (
+            "\n\nIMAGE ATTACHED — IMPORTANT:\n"
+            "The student has shared an image with this message. Do NOT claim "
+            "you cannot see it and do NOT ignore it. Your reply MUST:\n"
+            "1. Briefly state what you see (one short sentence — e.g. \"I can see "
+            "a maths problem about fractions\" or \"I see a road sign that "
+            "warns of a two-way traffic ahead\").\n"
+            "2. THEN engage with whatever the student wants to learn about it. "
+            "Schools teach a wide range of topics — academic subjects, road "
+            "safety, civics, life skills, science, history, geography, the "
+            "environment, current events, general knowledge — and students "
+            "are curious about even more. Treat ANY image of educational "
+            "interest (a road sign, a plant, an animal, a building, a piece "
+            "of art, a map, a diagram, a textbook page, a homework question, "
+            "a news photo, etc.) as fair game for teaching.\n"
+            "3. Match the format to the type:\n"
+            "   - Homework problem from their workbook → Socratic guidance "
+            "(no direct answers, ask what they've tried).\n"
+            "   - Anything else educational → explain the concept directly "
+            "and clearly, then invite a follow-up question. The Socratic "
+            "\"never give answers\" rule applies to GRADED HOMEWORK, not to "
+            "general learning.\n"
+            "4. Only redirect if the image is genuinely off-topic (a meme, "
+            "a selfie of friends, food with no educational angle). Even then, "
+            "be warm — never lecture the student or claim a topic \"isn't a "
+            "school subject\" if they could plausibly learn from it.\n"
+            "Always lead with the acknowledgement — never skip step 1."
+        )
+
+    # ── Weakness-query override ──────────────────────────────────────────────
+    # When the student is asking about their own weak areas AND we have real
+    # data, switch out of Socratic mode and report the data directly. Without
+    # this block the model defaults to "let's pick a subject", which is the
+    # wrong answer when actual performance data exists.
+    weakness_data: list[dict] = ctx.get("weakness_data") or []
+    is_weakness_query: bool = bool(ctx.get("is_weakness_query"))
+    weakness_report_block = ""
+    if is_weakness_query:
+        first_name = ctx.get("student_first_name") or "there"
+        if weakness_data:
+            lines = []
+            for w in weakness_data:
+                topic = w.get("topic", "")
+                acc = w.get("accuracy_pct", 0)
+                attempts = w.get("attempts", 0)
+                correct = w.get("correct", 0)
+                lines.append(f"- {topic}: {acc}% accuracy ({correct}/{attempts} correct)")
+            data_block = "\n".join(lines)
+            weakness_report_block = (
+                f"\n\nWEAKNESS REPORT MODE:\n"
+                f"The student ({first_name}) is asking about their own weak areas. "
+                f"You have their actual performance data below. Override the "
+                f"\"let the student lead\" rule for this turn — don't ask them to pick "
+                f"a subject. Instead, report this data warmly and naturally:\n\n"
+                f"{data_block}\n\n"
+                f"Instructions:\n"
+                f"- Open with brief encouragement using their name.\n"
+                f"- List the top 3-5 weakest topics with the accuracy percentages.\n"
+                f"- For the weakest topic, offer to practice it together.\n"
+                f"- Keep it under 6 sentences. Plain text only — no markdown.\n"
+                f"- Do NOT invent topics that aren't in the list above.\n"
+                f"- Do NOT give direct answers to homework — that rule still applies."
+            )
+        else:
+            weakness_report_block = (
+                f"\n\nWEAKNESS REPORT MODE:\n"
+                f"The student ({first_name}) is asking about their own weak areas, "
+                f"but there isn't enough graded work yet to show specific weak topics "
+                f"(need at least 2 attempts on a topic). Tell them this directly and "
+                f"warmly: explain that once their teacher grades a few more "
+                f"submissions, you'll be able to show them exactly which topics to "
+                f"focus on. Then offer to help them practice any subject they want "
+                f"in the meantime. Keep it under 4 sentences. Plain text only."
+            )
+
     # Profile-aware addendum: age band rules, hallucination control,
     # interaction style, format hints, country-specific cultural context,
     # hard refusals. Country comes from user_context (resolved from the
     # student's phone number / school document).
+    #
+    # NOTE: subject is intentionally NOT passed here. The SUBJECT SCOPE
+    # rule inside build_system_addendum tells the model to refuse anything
+    # outside one specific subject — but students study many subjects and
+    # ask about general-knowledge topics too (road signs, life skills,
+    # current events, plants, animals, etc.). The LET THE STUDENT LEAD
+    # block in the tutor template already keeps the conversation focused
+    # without hard-pinning.
     from shared.guardrails import build_system_addendum  # noqa: PLC0415
     addendum = build_system_addendum(
         role="student",
         education_level=education_level,
-        subject=ctx.get("subject"),
         country=ctx.get("country"),
     )
 
@@ -1047,14 +1363,19 @@ def student_tutor(
         _TUTOR_SYSTEM_TEMPLATE.format(identity=_NERIAH_IDENTITY, education_level=education_level)
         + curriculum_note
         + weakness_note
+        + weakness_report_block
+        + image_attached_block
         + addendum
     )
 
+    # Don't fabricate a fake AI reply on failure — the route catches and
+    # returns a proper error response so the client can show a real
+    # error/toast rather than a hardcoded string in an "AI" bubble.
     try:
         return chat(system_prompt, conversation_history, message, image_bytes)
-    except Exception:
+    except Exception as exc:
         logger.exception("student_tutor failed")
-        return "I'm having a little trouble right now. Please try again in a moment!"
+        raise classify_vertex_exception(exc) from exc
 
 
 # ─── Raising variants for grading-critical paths ─────────────────────────────

@@ -9,12 +9,14 @@ from flask import Blueprint, jsonify, request
 from shared.auth import require_role
 from shared.firestore_client import delete_doc, get_doc, increment_field, query, query_single, upsert
 from shared.models import Class
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 classes_bp = Blueprint("classes", __name__)
 
 
 @classes_bp.get("/classes")
+@instrument_route("classes.list", "classes")
 def list_classes():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -25,6 +27,7 @@ def list_classes():
 
 
 @classes_bp.post("/classes")
+@instrument_route("classes.create", "classes")
 def create_class():
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -51,6 +54,7 @@ def create_class():
 
 
 @classes_bp.get("/classes/<class_id>")
+@instrument_route("classes.get", "classes")
 def get_class_detail(class_id: str):
     """Get a single class by ID. Accessible by teacher or student."""
     _, err = require_role(request, "teacher", "student")
@@ -74,6 +78,7 @@ def get_class_detail(class_id: str):
 
 
 @classes_bp.put("/classes/<class_id>")
+@instrument_route("classes.update", "classes")
 def update_class(class_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -96,6 +101,7 @@ def update_class(class_id: str):
 
 
 @classes_bp.post("/classes/fix-counts")
+@instrument_route("classes.fix_counts", "classes")
 def fix_student_counts():
     """
     Recount actual students per class and fix stale student_count fields.
@@ -129,6 +135,7 @@ def fix_student_counts():
 
 
 @classes_bp.delete("/classes/<class_id>")
+@instrument_route("classes.delete", "classes")
 def delete_class(class_id: str):
     teacher_id, err = require_role(request, "teacher")
     if err:
@@ -212,6 +219,7 @@ def _classes_for_school_name(school_name: str, search: str = "") -> list[dict]:
 
 
 @classes_bp.get("/classes/school/<school_id>")
+@instrument_route("classes.by_school_id", "classes")
 def classes_by_school(school_id: str):
     """
     Public — list classes for a school by school_id.
@@ -235,6 +243,7 @@ def classes_by_school(school_id: str):
 
 
 @classes_bp.get("/classes/by-school")
+@instrument_route("classes.by_school", "classes")
 def classes_by_school_name():
     """
     Public — list classes for a school by school name (query param).
@@ -255,6 +264,7 @@ def classes_by_school_name():
 
 
 @classes_bp.get("/classes/join/<code>")
+@instrument_route("classes.join_info", "classes")
 def class_join_info(code: str):
     cls = query_single("classes", [("join_code", "==", code.upper())])
     if not cls:
@@ -263,6 +273,7 @@ def class_join_info(code: str):
 
 
 @classes_bp.post("/classes/join")
+@instrument_route("classes.join", "classes")
 def class_join():
     student_id, err = require_role(request, "student")
     if err:

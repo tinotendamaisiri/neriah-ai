@@ -7,3 +7,14 @@ assets/models/*.task
 # node_modules consistently across machines.
 android/
 ios/
+
+# Local Maven repo for the vendored LiteRT-LM AAR — populated on every
+# `npm install` by scripts/install-litert-frameworks.sh from the canonical
+# vendor/litert-android/litertlm-android.aar (which IS tracked). Tracking
+# the staging dir would duplicate the AAR + risk it going stale relative
+# to the canonical source.
+vendor/litert-android-maven/
+
+# Expo + build artifacts
+dist/
+patch-package-error.json.gz

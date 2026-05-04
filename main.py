@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 import functions_framework
-from flask import Flask, jsonify, request as flask_request
+from flask import Flask, g, jsonify, request as flask_request
 
 from functions.analytics import analytics_bp
 from functions.answer_keys import answer_keys_bp, homework_bp
@@ -28,7 +29,10 @@ from functions.auth import auth_bp
 from functions.classes import classes_bp
 from functions.curriculum import curriculum_bp
 from functions.email_poller import poll_email_pubsub  # noqa: F401 — Pub/Sub entry point exposed at module top-level so `gcloud functions deploy --entry-point=poll_email_pubsub` resolves it
+from functions.events import events_bp
+from functions.keep_alive import keep_alive_bp
 from functions.mark import mark_bp
+from functions.training_admin import training_admin_bp
 from functions.push import push_bp
 from functions.schools import schools_bp
 from functions.students import students_bp
@@ -37,6 +41,7 @@ from functions.suggestions import suggestions_bp
 from functions.teacher_assistant import teacher_assistant_bp
 from functions.tutor import tutor_bp
 from functions.whatsapp import whatsapp_bp
+from shared.observability import current_trace_id, new_id
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +70,19 @@ _ALLOWED_ORIGINS = {
 }
 
 
+@app.before_request
+def _start_request_trace():
+    """Stamp every inbound request with a trace id + start timer.
+
+    The trace id is preferred from the inbound ``x-trace-id`` header so a
+    mobile client can correlate its own emitted events with backend logs
+    for the same request. When absent we mint a new id.
+    """
+    incoming = (flask_request.headers.get("x-trace-id") or "").strip()
+    g.trace_id = incoming or new_id("trace")
+    g.req_start = time.perf_counter()
+
+
 @app.after_request
 def add_cors_headers(response):
     origin = flask_request.headers.get("Origin", "")
@@ -72,12 +90,18 @@ def add_cors_headers(response):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Headers"] = (
-            "Content-Type, Authorization, X-Requested-With"
+            "Content-Type, Authorization, X-Requested-With, X-Trace-Id"
         )
         response.headers["Access-Control-Allow-Methods"] = (
             "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         )
         response.headers["Vary"] = "Origin"
+    # Echo the trace id so clients can correlate.
+    try:
+        trace_id = getattr(g, "trace_id", None) or current_trace_id()
+        response.headers["x-trace-id"] = trace_id
+    except Exception:
+        pass
     return response
 
 
@@ -117,6 +141,9 @@ app.register_blueprint(tutor_bp,       url_prefix=_API)
 app.register_blueprint(whatsapp_bp,    url_prefix=_API)
 app.register_blueprint(analytics_bp,   url_prefix=_API)
 app.register_blueprint(curriculum_bp,  url_prefix=_API)
+app.register_blueprint(events_bp,      url_prefix=_API)
+app.register_blueprint(keep_alive_bp,  url_prefix=_API)
+app.register_blueprint(training_admin_bp, url_prefix=_API)
 
 
 @app.get("/api/health")

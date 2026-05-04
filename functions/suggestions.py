@@ -15,6 +15,7 @@ from flask import Blueprint, jsonify, request
 
 from shared.auth import require_role
 from shared.firestore_client import get_doc
+from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
 suggestions_bp = Blueprint("suggestions", __name__)
@@ -60,6 +61,7 @@ def _build_reason(entry: dict) -> str:
 
 
 @suggestions_bp.get("/students/<student_id>/suggestions")
+@instrument_route("suggestions.list", "suggestions")
 def get_suggestions(student_id: str):
     req_student_id, err = require_role(request, "student")
     if err:
