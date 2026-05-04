@@ -2,9 +2,11 @@
 
 > Single source of truth for navigating this repository. Every directory, every endpoint, every screen, every script, every architecture decision documented here.
 >
-> Last updated: 2026-05-04. Verified against the actual code, not aspirational docs. Earlier versions of this file referenced Azure — that migration happened. The current backend is **Google Cloud Functions Gen2 in `us-central1`**, not Azure.
+> Last updated: 2026-05-04 (afternoon). Verified against the actual code, not aspirational docs. Earlier versions of this file referenced Azure — that migration happened. The current backend is **Google Cloud Functions Gen2 in `us-central1`**, not Azure.
 >
-> Major additions on 2026-05-04: full observability layer (every backend route + mobile screen + AI call logged to Firestore `events`), admin monitoring dashboard at `/admin/monitoring` (Live feed, Errors, Funnels, AI usage, Per-user trace), training-data archive viewer at `/admin/training`, unified admin hub at `/admin`, Vertex AI cost telemetry per call, dedicated runtime SA `neriah-ai-sa`, Supabase keep-alive cron. See § 9.5 for the full diff.
+> Major additions on 2026-05-04 morning: full observability layer (every backend route + mobile screen + AI call logged to Firestore `events`), admin monitoring dashboard at `/admin/monitoring` (Live feed, Errors, Funnels, AI usage, Per-user trace), training-data archive viewer at `/admin/training`, unified admin hub at `/admin`, Vertex AI cost telemetry per call, dedicated runtime SA `neriah-ai-sa`, Supabase keep-alive cron.
+>
+> Major additions on 2026-05-04 afternoon: **Neriah Play** — gamified study mini-games on the student Play tab. Four arcade scenes built on `@shopify/react-native-skia` 2.6.2 (Lane Runner, Stacker, Blaster, Snake) with character art, animations, HUD treatments and pause overlay ported from the GemmaPlay Phaser prototype to Neriah's four-teal palette. Lesson generator runs in one strict pass — every saved lesson contains exactly 100 questions via three-tier same-domain auto-expansion (notes-grounded → broader concepts → fundamentals). No draft state, no `/expand` or `/append` routes. See § 9.6 for the full diff.
 
 ---
 
@@ -31,7 +33,7 @@ Neriah is an AI-powered homework grading assistant for African schools. Teachers
 |---|---|---|
 | **Backend runtime** | Google Cloud Functions Gen2 | Python 3.11, 1 GB, 300 s timeout, single Flask app |
 | **Backend region** | `us-central1` | Function name `neriah-grading`, project `neriah-ai-492302` |
-| **Database** | Firestore (Native mode) | NoSQL, 9 composite indexes in `firestore.indexes.json` |
+| **Database** | Firestore (Native mode) | NoSQL, 18 composite indexes in `firestore.indexes.json` |
 | **File storage** | Google Cloud Storage | Buckets: `scans`, `marked`, `submissions` |
 | **OCR** | Document AI + Gemma 4 Vision | Document AI for layout, Gemma for handwriting |
 | **LLM** | Vertex AI — Gemma 4 (cloud) | E2B/E4B variants; LiteRT-LM E2B on-device |
@@ -43,6 +45,7 @@ Neriah is an AI-powered homework grading assistant for African schools. Teachers
 | **Mobile app** | React Native 0.83.6 + Expo SDK 55 | TypeScript 5.9.2, native arm64 only |
 | **On-device AI** | `react-native-litert-lm` 0.3.4 | Vendored XCFramework + AAR (HEAD-of-main Bazel rebuild) |
 | **On-device OCR** | `@react-native-ml-kit/text-recognition` | Latin script, runs on device |
+| **Mobile games** | `@shopify/react-native-skia` 2.6.2 + `react-native-reanimated` 4.3.0 + `react-native-worklets` 0.8.3 | Neriah Play scenes (Lane Runner, Stacker, Blaster, Snake) — pure Skia drawing, no Phaser/WebView/react-native-game-engine |
 | **Web (marketing)** | Next.js 15.2.6 + Tailwind 3.4 | App Router, deployed to Vercel |
 | **Web CMS** | Sanity 4.x | Blog + foundation updates, ISR via webhook |
 | **Web DB** | Supabase (PostgreSQL) | Contact form + newsletter submissions |
@@ -73,7 +76,7 @@ neriah-ai/
 ├── .vercelignore                      ← excludes Python from web deploy
 ├── vercel.json                        ← `{}` — defaults only; real Vercel config lives in neriah-website/
 ├── cloudbuild.yaml                    ← Cloud Build deploy pipeline (Cloud Functions Gen2)
-├── firestore.indexes.json             ← 9 composite indexes
+├── firestore.indexes.json             ← 18 composite indexes
 ├── requirements.txt                   ← Python deps (Flask, google-cloud-firestore, vertexai, twilio, …)
 ├── main.py                            ← Cloud Function entrypoint (Flask app + blueprint registration + CORS)
 ├── kaggle_notebook.ipynb              ← Kaggle Gemma 4 hackathon submission
@@ -89,6 +92,7 @@ neriah-ai/
 │   ├── events.py                      ← POST /events/batch (mobile ingestion) + GET /admin/events/{list,errors,trace,funnel,ai_usage} (dashboard)
 │   ├── keep_alive.py                  ← GET /internal/keep-alive — Cloud Scheduler-triggered Supabase + Upstash pings
 │   ├── mark.py                        ← POST /mark — full grading pipeline
+│   ├── play.py                        ← Neriah Play — student-facing arcade lessons (CRUD + sessions + stats)
 │   ├── push.py                        ← Expo push-token registration
 │   ├── schools.py                     ← School directory (seed + Firestore)
 │   ├── students.py                    ← Roster CRUD + image/file extraction
@@ -117,6 +121,7 @@ neriah-ai/
 │   ├── observability.py               ← log_event() async writer + @instrument_route decorator + trace_id propagation
 │   ├── orientation.py                 ← Image orientation correction (EXIF + heuristics)
 │   ├── pdf_pages.py                   ← PDF → page images (pdf2image / pypdfium fallback)
+│   ├── play_generator.py              ← Three-tier MCQ generator for /play/lessons (always lands at exactly 100)
 │   ├── router.py                      ← Cross-feature routing helpers
 │   ├── sms_client.py                  ← Twilio wrapper (Verify API + alphanumeric)
 │   ├── student_matcher.py             ← Fuzzy match inbound submissions to a student
@@ -372,6 +377,20 @@ Triggered by Cloud Scheduler → Pub/Sub (no public HTTP). Polls Zoho IMAP, clas
 |---|---|---|---|
 | POST | `/push/register` | T/S | Store Expo push token |
 
+#### Play (`functions/play.py`)
+
+Student-only arcade-mode lesson backend. Every saved lesson holds exactly 100 questions — generation is one-shot via three-tier same-domain escalation (`shared/play_generator.generate_lesson_questions`, see § 4.5). When the generator can't reach 100 the route returns 503 with `GenerationFellShortError`; partial lessons are never saved. There is no draft state, no `/expand` or `/append` endpoints — the screen flow goes Build → Preview → Game directly.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/play/lessons` | S | Generate a 100-question lesson from `{title, source_content, subject?, grade?}`. Returns the full lesson incl. questions and `was_expanded` flag |
+| GET | `/play/lessons` | S | List own + class-shared lessons (each tagged `origin: 'mine' \| 'class' \| 'shared'`) |
+| GET | `/play/lessons/<id>` | S | Full lesson detail (questions + source_content). Owner OR class-shared |
+| DELETE | `/play/lessons/<id>` | S (owner) | Cascade-delete the lesson + every linked play_session |
+| PATCH | `/play/lessons/<id>/sharing` | S (owner) | Toggle `shared_with_class` + `allow_copying` (`class_id` required when sharing) |
+| POST | `/play/sessions` | S | Record a play session outcome (game_format, duration, score, attempted/correct, end_reason) |
+| GET | `/play/lessons/<id>/stats` | S | Best score, last played, total sessions for the calling student |
+
 #### Analytics (`functions/analytics.py`)
 
 | Method | Path | Auth | Purpose |
@@ -442,7 +461,8 @@ Schema for every event: `{id, timestamp, source, surface, event_type, severity, 
 | `gemma_client.py` | Vertex AI Gemma 4 — text + multimodal, retry with exponential backoff |
 | `embeddings.py` | Vertex AI text embeddings; falls back to local Ollama in dev |
 | `vector_db.py` | Firestore vector search (`rag_syllabuses` queries) |
-| `models.py` | Pydantic v2 models: Teacher, Student, Class, AnswerKey, Mark, Submission, Verdict, OTPVerification, Session, Rubric |
+| `models.py` | Pydantic v2 models: Teacher, Student, Class, AnswerKey, Mark, Submission, Verdict, OTPVerification, Session, Rubric, PlayQuestion, PlayLesson, PlaySession |
+| `play_generator.py` | Three-tier MCQ generator that always lands at the target count. Tier 0 (grounded): strictly within source notes. Tier 1 (expand): broader related concepts of the same topic. Tier 2 (fundamentals): open-ended review at the topic+level alone. Climbs a tier on stall, hard cap 20 batches, raises `GenerationFellShortError` if it can't reach 100 (route maps to 503). Per-batch dedup via prompt hash + cosine similarity ≥ 0.85 (Vertex embeddings). Position-randomises the correct-answer index across the final bank so A/B/C/D each appear ≈25% |
 | `observability.py` | `log_event(...)` async fire-and-forget Firestore writer; `@instrument_route(prefix, surface)` decorator wraps every Flask view to emit `<prefix>.start/success/failed` with latency + status; ULID generation; `current_trace_id()` reads `x-trace-id` header or generates a fresh one; non-throwing JWT user extraction; error fingerprinting (sha1 of type+message); module-level `ThreadPoolExecutor(max_workers=4)` so writes never block the request |
 | `errors.py` | Standardised HTTP error helpers (json + status code) |
 | `utils.py` | ID generation (`make_id`), string normalisation, datetime helpers |
@@ -482,6 +502,8 @@ Schema for every event: `{id, timestamp, source, surface, event_type, severity, 
 | `terms_acceptances` | by `user_id` | Audit trail of terms-acceptance events |
 | `events` | (severity, ts), (surface, ts), (user_id, ts), (user_phone, ts), (trace_id, ts), (student_id, submitted_at) | Observability event log — every backend route call, every mobile screen view + tap + API call, every Vertex AI call. Written async fire-and-forget via `shared/observability.log_event`. 90-day retention (configurable TTL). Read by `/admin/monitoring` dashboard. |
 | `student_submissions` | by `student_id` (composite with `submitted_at` DESC) | Companion row to `marks` for the App / WhatsApp / Email channels — drives the student's Results tab. Teacher-scan marks now back-merge here too via the resilient `/submissions/student/<id>` endpoint. |
+| `play_lessons` | (owner_id, created_at DESC), (class_id, shared_with_class, created_at DESC) | Neriah Play lessons. Each row holds exactly 100 questions. Fields: title, subject, grade, owner_id, owner_role, source_content, questions[], question_count, was_expanded, created_at, shared_with_class, allow_copying, class_id |
+| `play_sessions` | (player_id, lesson_id, started_at DESC) | Neriah Play attempts. Fields: lesson_id, player_id, game_format, started_at, ended_at, duration_seconds, final_score, questions_attempted, questions_correct, end_reason |
 
 ### 4.7 External Service Integrations
 
@@ -605,6 +627,7 @@ KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-
 - **File extraction:** `expo-file-system`, `jszip`, `pako` (DOCX, PDF text + scanned-render fallback, legacy .doc via `cfb`)
 - **Charts:** `react-native-chart-kit`
 - **Camera / picker:** `expo-camera`, `expo-image-picker`, `expo-document-picker`
+- **Games (Neriah Play):** `@shopify/react-native-skia` 2.6.2, `react-native-reanimated` 4.3.0, `react-native-worklets` 0.8.3, `react-native-gesture-handler` for pan / swipe gestures
 - **Resilience:** `expo-keep-awake` for downloads, `expo-network` for offline detection, `@react-native-community/netinfo` for online edge
 
 **Platforms:** iOS 14+ arm64 device only (no simulator), Android API 23+ arm64-v8a only.
@@ -644,10 +667,34 @@ KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-
 - `SettingsScreen.tsx` — Profile, school, language picker, Set/Reset PIN, logout, version, training-data consent
 
 **Student:**
-- `StudentHomeScreen.tsx` — Class card, open assignments, latest results
+- `StudentHomeScreen.tsx` — Class card, open assignments, latest results (Recent Feedback rail is tappable, top 3 + "See more")
 - `StudentTutorScreen.tsx` — Socratic tutor chat with multimodal support (image + question)
-- `StudentResultsScreen.tsx` — Graded mark history, per-question feedback, annotated image preview. Refetches on tab focus with a 30 s stale check via `useFocusEffect` so newly approved marks appear without pull-to-refresh.
+- `StudentResultsScreen.tsx` — **Renames in spirit only** — the bottom-nav route name is preserved for deep-link compatibility but the file mounts the full `<PlayNavigator />` (Neriah Play). The "Results" sub-tab the student sees lives inside `StudentHomeScreen` next to "My Assignments".
 - `StudentSettingsScreen.tsx` — Profile, language, logout
+- `FeedbackScreen.tsx` — Tap-to-open from Recent Feedback. Annotated image, per-question verdicts, teacher's note. Back button on the score band.
+
+**Neriah Play (`src/play/`):** student-only gamified study mini-games. The bottom-nav "Play" tab routes here through `StudentResultsScreen.tsx → <PlayNavigator />`.
+
+- `play/PlayNavigator.tsx` — Native stack: PlayHome → PlayLibrary → PlayBuild → PlayBuildProgress → PlayPreview → PlayGame → PlaySessionEnd → PlayShare. (PlayNotEnough was deleted on 2026-05-04 PM along with the draft state.)
+- `play/screens/PlayHomeScreen.tsx` — Greeting, recommended lesson rail, "+ Make a new game" CTA, "View library" CTA
+- `play/screens/PlayLibraryScreen.tsx` — Subject filter rail + origin filter pills (All / Mine / Class / Shared); each lesson card carries a bordered origin badge (teal / amber / gray)
+- `play/screens/PlayBuildScreen.tsx` — Title + Subject pills (one line) + Level pills + 4-source picker (Camera via `<InAppCamera>`, Gallery, PDF, Word). PDFs / DOCX / scanned PDFs all routed through `services/clientFileExtract.extractAttachmentText`. Header shows online indicator dot + profile circle.
+- `play/screens/PlayBuildProgressScreen.tsx` — Drives offline (on-device) generation through `lessonGenerator.generateLessonOnDevice`; persists progress to AsyncStorage so backgrounding doesn't lose work
+- `play/screens/PlayPreviewScreen.tsx` — Lesson detail + 4 game-format cards. Defensive 400 ms post-focus tap suppression on format-card taps to eliminate the stale-tap class. Shows a one-time "We added more questions" Alert when `wasExpanded` is true.
+- `play/screens/PlayGameScreen.tsx` — Loads the lesson, mounts `<GameEngine />`, wraps it with the SessionEnd hop
+- `play/screens/PlaySessionEndScreen.tsx` — Tone-matched header (≤30 tough, ≤60 mixed, ≤85 good, else excellent), headline stats, three navigation pills
+- `play/screens/PlayShareScreen.tsx` — Toggle "Share with class" + "Allow copying"; class id required when sharing
+
+**Play runtime (`src/play/runtime/`):** the gameplay layer. Pure `@shopify/react-native-skia` 2.6.2 — no Phaser, no WebView, no react-native-game-engine. `GameEngine.tsx` owns score, question shuffling, bidirectional speed (×1.05 on correct, ×0.95 on wrong, floor 0.5, ceiling 2.5), pause state, and SessionResult construction. Layout top-to-bottom: HUD → QuestionBanner → AnswerGrid → Scene canvas (fills remaining space).
+
+- `runtime/GameEngine.tsx` — orchestrator
+- `runtime/HUD.tsx` — top status bar with SCORE / QUESTION panels + per-format hints (health / length / stack)
+- `runtime/QuestionBanner.tsx`, `runtime/AnswerGrid.tsx` — banner + 2×2 letter grid (four-teal palette)
+- `runtime/PauseOverlay.tsx` — dark slate scrim + big "Paused" title + stacked Resume / Quit (GemmaPlay-fidelity)
+- `runtime/scenes/LaneRunnerScene.tsx` — 4-lane pseudo-3D road, scrolling strips, yellow dashed dividers, stick-figure runner with glasses + smile + hair tuft and animated swinging arms/legs. Swipe left/right to change lane, swipe up to commit. One-time onboarding hint via AsyncStorage `play.lane_runner.onboarded`.
+- `runtime/scenes/StackerScene.tsx` — 8×12 grid playfield, 3-layer chunky teal block (shadow + body + highlight), four white-rounded letter bins with four-teal rings; wrong-answer animates the bin row up by 1 cell over 220 ms; loss when bin row reaches ROWS-2.
+- `runtime/scenes/BlasterScene.tsx` — pixel-art ship + invader sprites (3 px per pixel, GemmaPlay patterns), two-layer parallax starfield, on-canvas health bar (green > 60%, amber > 30%, red below). +1 segment per 2 corrects, drain on wrong. Tap an invader to shoot it.
+- `runtime/scenes/SnakeScene.tsx` — 12×16 grid; rounded body cells with white inset stroke + head→tail teal gradient; amber head with two white sclera + dark pupils; smooth ~150 ms cell-to-cell tween via per-frame interpolation. Four food tiles labelled A/B/C/D.
 
 **Components (`src/components/`):**
 - `ScanButton.tsx` — Camera capture with frame guide overlay
@@ -669,7 +716,8 @@ KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-
 |---|---|
 | `analytics.ts` | Event recorder for the observability layer. `bootAnalytics()` (called from `App.tsx`) hydrates queue from AsyncStorage, schedules 30 s flush, hooks AppState background. `track`, `trackError`, `trackScreen`, `trackTap`, `setUser`, `newTraceId`, `flush`. Buffers up to 1000 events, batches 50 per POST to `/api/events/batch`. Uses its own axios instance (bypasses interceptor) to avoid recursive `api.events.batch.*` events. Sample-throttles `tap.scroll`/`tap.focus` to 10%. |
 | `api.ts` | Axios client; every backend endpoint as a typed function; JWT interceptor; 401 → logout. Also: request interceptor injects `x-trace-id` + emits `api.<route>.start`; response interceptor emits `api.<route>.success` / `.failed` with `latency_ms` |
-| `router.ts` | Decides cloud vs on-device per request kind. `resolveRoute('teacher_assistant' \| 'tutor' \| 'grading' \| 'scheme')` returns `'cloud' \| 'on-device' \| 'unavailable'` |
+| `router.ts` | Decides cloud vs on-device per request kind. `resolveRoute('teacher_assistant' \| 'tutor' \| 'grading' \| 'scheme' \| 'play_lesson_gen')` returns `'cloud' \| 'on-device' \| 'unavailable'` |
+| `play.ts` | Typed REST client for `/play/*` (createLesson, listLessons, getLesson, deleteLesson, updateSharing, logSession, getLessonStats). 180 s timeout on createLesson because three-tier escalation can take 30-90 s |
 | `litert.ts` | `loadModel()`, `generateResponse()`, `generateResponseWithImage()`, prompt builders (`buildTutorPrompt`, `buildGradingPrompt`, `buildAssistantPrompt`), state subscription |
 | `modelManager.ts` | Resumable downloads with `DownloadResumable` + `savable()` snapshot every 3 s, exponential-backoff retry (50 attempts), `expo-keep-awake` during downloads, post-download size verification (rejects truncated files) |
 | `ocr.ts` | MLKit text-recognition wrapper |
@@ -689,7 +737,7 @@ KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-
 
 ### 5.6 Internationalisation
 
-`src/i18n/translations.ts` — three languages, ~150 keys covering all wired screens. Switch is immediate, persisted, and applied via `useLanguage().t(key)`.
+`src/i18n/translations.ts` — three languages, ~280 keys covering every wired screen including the full Neriah Play surface (en/sn/nd parity enforced by `tests/test_homework_creation_flow.py::TestLanguageAndMultiClass`). Switch is immediate, persisted, and applied via `useLanguage().t(key)`.
 
 ### 5.7 On-device AI (LiteRT-LM)
 
@@ -868,6 +916,9 @@ events:               (user_id, timestamp ASC)
 events:               (user_phone, timestamp ASC)
 events:               (trace_id, timestamp ASC)
 student_submissions:  (student_id ASC, submitted_at DESC)
+play_lessons:         (owner_id ASC, created_at DESC)
+play_lessons:         (class_id ASC, shared_with_class ASC, created_at DESC)
+play_sessions:        (player_id ASC, lesson_id ASC, started_at DESC)
 ```
 
 Plus the implicit Firestore vector index on `rag_syllabuses` (created via `scripts/create_vector_indexes.py`).
@@ -886,12 +937,12 @@ Plus the implicit Firestore vector index on `rag_syllabuses` (created via `scrip
 
 ### 7.5 Tests (`tests/`)
 
-`pytest`-based suite, 14 test modules. `tests/conftest.py` sets env vars + fixtures. Tests use `@feature_test` decorator for categorisation. Skipped automatically when Ollama (local embeddings) is unavailable.
+`pytest`-based suite, 16 test modules. `tests/conftest.py` sets env vars + fixtures. Tests use `@feature_test` decorator for categorisation. Skipped automatically when Ollama (local embeddings) is unavailable.
 
 ```
 test_grading.py                  Verdict / scoring / feedback
 test_multi_page_grading.py       Page-by-page OCR + aggregation
-test_homework_creation_flow.py   End-to-end homework setup
+test_homework_creation_flow.py   End-to-end homework setup (also enforces InAppCamera + en/sn/nd parity)
 test_email_submission.py         Inbound email routing
 test_rag_connectivity.py         Syllabus indexing + retrieval
 test_curriculum_options.py       Curriculum + level validation
@@ -903,6 +954,8 @@ test_guardrails_phase1.py        OCR / image quality guardrails
 test_guardrails_phase2.py        Country / level / rubric guardrails
 test_role_invariants.py          Role-based access enforcement
 test_integration.py              Cross-module integration
+test_play_generator.py           Three-tier MCQ generator: dedup (hash + cosine), validation/truncation, position randomisation, safety-valve raise on under-target
+test_play_routes.py              /play/lessons CRUD, sharing toggles, sessions, stats, owner-vs-classmate visibility
 ```
 
 Run: `cd /Users/tinotendamaisiri/Desktop/neriah-ai && source .venv/bin/activate && pytest`.
@@ -989,7 +1042,7 @@ npm run dev      # localhost:3000
 - Admin hub live at `https://neriah.ai/admin` → links to Monitoring, Curriculum, Training data
 - Mobile app: iOS dev build runs on registered device; Android release APK builds clean and runs on Samsung test device with full observability + JS bundle baked in (no Metro needed)
 - 30 syllabus PDFs indexed in `rag_syllabuses`
-- 15 Firestore composite indexes deployed (added 6 for `events` + 1 for `student_submissions` on 2026-05-04)
+- 18 Firestore composite indexes deployed (15 from earlier + 3 added for Neriah Play: `play_lessons` × 2 + `play_sessions` × 1)
 - Twilio SMS OTP live (US Verify + intl Programmable SMS as "Neriah")
 - Resend `send.neriah.africa` verified (DKIM + SPF)
 - Supabase contact + newsletter tables live, kept alive by daily cron + GH Actions
@@ -997,6 +1050,7 @@ npm run dev      # localhost:3000
 - Vertex AI Gemma 4 26B MaaS calls succeeding (cloud tutor, teacher assistant, grading)
 - Training-data archive bucket `gs://neriah-training-data` provisioned + wired to approval cascade
 - **Editable marks UI** — teacher can tap any verdict row in `MarkResult` to override correctness, awarded marks, and feedback. `EditVerdictModal` saves via the existing `updateMark` flow; `functions/mark.py` re-derives aggregate score from edited verdicts on save.
+- **Neriah Play live (student tab).** Four arcade games on `@shopify/react-native-skia` 2.6.2: Lane Runner, Stacker, Blaster, Snake. Backend route family `/play/*` (CRUD + sessions + stats). Generator runs in one strict pass to exactly 100 questions via three-tier same-domain escalation. Online uses Vertex Gemma 4 26B, offline uses on-device LiteRT-LM Gemma 4 E2B. Visual fidelity ported from the GemmaPlay Phaser prototype to Neriah's four-teal palette (stick-figure runner, pixel-art ship + invaders, smooth snake tween, 3-layer chunky stacker block). Test coverage: `tests/test_play_generator.py` (6) + `tests/test_play_routes.py` (5).
 
 ### 9.2 Held by external dependencies
 
@@ -1044,7 +1098,34 @@ npm run dev      # localhost:3000
 - **Supabase + Upstash keep-alive** wired on two redundant paths: Cloud Scheduler `keep-alive-daily` calling `/api/internal/keep-alive` (Cloud Function endpoint), and updated GitHub Actions workflow with authenticated SELECT (was hitting `/rest/v1/` root which doesn't count as activity). Project will not pause again as long as either source runs.
 - **Cloud Build SA permissions** — granted `roles/secretmanager.secretAccessor` so deploys can access `WHATSAPP_*` and `APP_JWT_SECRET` secrets.
 
-### 9.5 Backlog
+### 9.5 Recent fixes (2026-05-04 PM) — Neriah Play
+
+#### Build out
+- **Backend** — `functions/play.py` shipped with 7 routes (CRUD + sessions + stats + sharing). `shared/play_generator.py` implements the three-tier MCQ generator (notes-grounded → broader concepts → fundamentals) that always lands at the target count and raises `GenerationFellShortError` if it can't. Tests: `tests/test_play_generator.py` (6) + `tests/test_play_routes.py` (5). 3 new Firestore composite indexes for `play_lessons` and `play_sessions`.
+- **Mobile screens** — 9 screens under `app/mobile/src/play/screens/`: PlayHome, PlayLibrary, PlayBuild, PlayBuildProgress, PlayPreview, PlayGame, PlaySessionEnd, PlayShare. (PlayNotEnough was deleted along with the draft state.) Stack defined in `app/mobile/src/play/PlayNavigator.tsx`. Mounted from `app/mobile/src/screens/StudentResultsScreen.tsx` so the existing bottom-nav slot routes there without renaming.
+- **Game runtime** — `app/mobile/src/play/runtime/GameEngine.tsx` orchestrator + four Skia scenes. Bidirectional speed (×1.05 on correct, ×0.95 on wrong, floor 0.5, ceiling 2.5). HUD with SCORE/QUESTION panels, dark slate pause overlay with stacked Resume / Quit.
+- **Deps** — added `@shopify/react-native-skia` 2.6.2, `react-native-reanimated` 4.3.0, `react-native-worklets` 0.8.3.
+
+#### Strict-100 contract
+- The generator no longer returns partial lessons. Tier 0 stays grounded in the user's notes; when low-yield batches stall it climbs to Tier 1 (broader related concepts using `topic_hint = title · subject · level`) and finally Tier 2 (fundamentals on the topic alone — open-ended). Per-batch is 30 questions at 6144 max_tokens; hard cap 20 batches. Safety valve fires only when all three tiers exhaust their attempts without reaching 100 — route returns a clear 503, never saves a 99-question lesson.
+- `is_draft` removed from `PlayLesson` model + frontend types. `/play/lessons/<id>/expand` and `/append` routes deleted. `services/play.expandLesson` and `appendLesson` deleted on the mobile side. `PlayNotEnoughScreen.tsx` deleted; `PlayNotEnough` route removed from `PlayStackParamList` and `PlayNavigator`.
+- A subtle "we added more questions" Alert fires once on `PlayPreviewScreen` when `wasExpanded` is true (i.e. the generator climbed to Tier 1 or Tier 2). Cleared via `navigation.setParams` so re-focusing doesn't re-trigger.
+
+#### GemmaPlay visual fidelity port
+Reference: `~/Desktop/gemmaplay/frontend/src/scenes/`. Four-teal answer palette preserved; everything else (character art, animations, layout, polish) ported.
+- **LaneRunnerScene** — pseudo-3D road with trapezoidal lanes converging at horizon, alternating asphalt strips (scrolling), white edge lines, yellow dashed lane dividers that scale with perspective. Stick-figure runner: round head with glasses + smile + three hair tufts, swinging arms (~35°) and legs (~25°) on a 300 ms gait cycle, body bob at 2× gait. Swipe-up commit gesture in addition to lane-change horizontal swipes. One-time onboarding hint via AsyncStorage `play.lane_runner.onboarded`.
+- **StackerScene** — 8×12 decorative grid playfield, chunky teal block (3-layer composite: shadow + body + highlight), white-rounded letter bins with four-teal coloured rings, animated bin push-up over 220 ms on wrong, loss when bin row reaches ROWS-2.
+- **BlasterScene** — pixel-art ship + invader sprites (3 px per pixel, GemmaPlay patterns), two-layer parallax starfield (slow far + fast near), on-canvas health bar with green/amber/red thresholds, +1 segment per 2 corrects. Bullet flash from ship on tap.
+- **SnakeScene** — rounded body cells with white inset stroke + head→tail teal gradient; amber head with two white sclera + dark pupils; ~150 ms cell-to-cell tween via per-frame interpolation; rounded food tiles with white inset border in four-teal; length=1 + miss = game over.
+
+#### Build/UX polish
+- **Library origin badges + Shared filter** — every lesson card shows a bordered origin badge (Mine teal / Class amber / Shared gray, ~50pt × 24pt). Filter rail now has 4 pills (All / Mine / Class / Shared); backend already returns `origin` per lesson via `_lesson_summary`.
+- **Layout** — reordered top-to-bottom HUD → QuestionBanner → AnswerGrid → Scene canvas. Answer grid sits directly under the banner; gameplay area fills the rest.
+- **PlayBuildScreen redesign** — header has a profile circle (right) with online indicator dot in place of the "Online · Gemma 4" pill. Subjects shrunk to Math/English/Science/Other on a single horizontal scroll row. "Grade" relabelled to "Level". Source picker now offers Camera (via `<InAppCamera>`, enforced by `tests/test_homework_creation_flow.py::TestInAppCameraEnforcement`), Gallery, PDF, Word — all routed through `services/clientFileExtract.extractAttachmentText` so scanned PDFs/DOCX work via OCR fallback.
+- **Picker stale-tap guard** — `PlayPreviewScreen` ignores format-card taps fired within 400 ms of a focus regain to eliminate the Android "exit on picker auto-routes into a game" report. Suppressed taps log as `play.preview.format_pick.suppressed`.
+- **Tone bands verified** — `PlaySessionEndScreen` maps 0–30 → tough, 31–60 → mixed, 61–85 → good, 86+ → excellent; all three locales translated.
+
+### 9.6 Backlog
 
 - [ ] Bulk scanning — photograph multiple student books in rapid succession
 - [ ] Class-performance summaries on demand (currently lazily computed in analytics)
@@ -1061,6 +1142,9 @@ npm run dev      # localhost:3000
 - [ ] Phase 3 monitoring: Slack alerts on critical errors, WebSocket live tail (replace 5 s polling), session replay
 - [ ] Migrate existing `Pressable` / `TouchableOpacity` callsites to `TrackedPressable` for full tap coverage (component is shipped, migration is incremental)
 - [ ] `cloudbuild.yaml` cleanup: switch from `--set-env-vars` (which would wipe live config) to `--update-env-vars` + `--set-secrets` referencing only secrets that exist (today's deploys use `gcloud functions deploy` directly to avoid this; cloudbuild path is stale)
+- [ ] **Neriah Play — confirm picker bug.** No AppState/persistence/auto-nav code exists in `src/play`; the user-reported "exit on picker auto-routes into a game" cannot fire from the current code. A 400 ms post-focus tap suppression has been added defensively. If the report recurs, we need a steps-to-repro to track it down.
+- [ ] **Neriah Play — leaderboards / class score wall.** `play_sessions` already captures everything needed; just needs an aggregation view and a screen.
+- [ ] **Neriah Play — share-to-class polish.** Sharing toggles work but the UI on `PlayShareScreen` could surface the receiving classroom roster preview.
 
 ---
 
@@ -1075,6 +1159,9 @@ npm run dev      # localhost:3000
 - **JWT** — HS256, 365-day expiry, payload `{sub, role, token_version, iat, exp}`. `token_version` bumped on phone change / logout-all.
 - **Education levels** drive grading intensity. Set on the class, inherited by all homework.
 - **Submission codes** (HW7K2P) are 6-char unique per homework — printed on the slip students take home, used by email channel.
+- **Play lessons** are always exactly 100 questions. No draft state. If the generator can't reach 100, the route returns 503 — never save a partial bank. Same-domain auto-expansion happens silently inside one request.
+- **Play game runtime** uses `@shopify/react-native-skia` only. No Phaser, no WebView, no `react-native-game-engine`. Animation is driven by `requestAnimationFrame` + React state (or per-frame interpolation for tweens). Keep additions in that style.
+- **Four-teal answer palette** (`A=#0D7377`, `B=#085041`, `C=#3AAFA9`, `D=#9FE1CB`) is fixed across every Play surface (lanes, bins, food tiles, invader bodies, AnswerGrid, library badge "mine"). Amber `#F5A623` is reserved for score / correct / Snake head.
 
 ---
 
@@ -1091,6 +1178,8 @@ npm run dev      # localhost:3000
 9. **Want to know a specific user's history?** → `/admin/monitoring` → Per-user trace tab → enter phone or user_id.
 10. **Want to see what AI is costing per day?** → `/admin/monitoring` → AI usage tab.
 11. **Want to spot-check what's getting archived for training?** → `/admin/training`.
+12. **Neriah Play feature?** → Backend lives in `functions/play.py` + `shared/play_generator.py`. Mobile screens are in `app/mobile/src/play/screens/`, navigator at `app/mobile/src/play/PlayNavigator.tsx`, game runtime at `app/mobile/src/play/runtime/` (GameEngine + 4 Skia scenes). The bottom-nav slot is `StudentResultsScreen.tsx` which mounts `<PlayNavigator />` for backwards compat with the old route name.
+13. **Need to tweak Play visuals?** → Each scene is one file under `runtime/scenes/`. The GemmaPlay reference repo is at `~/Desktop/gemmaplay/frontend/src/scenes/` (LaneRunnerScene, TetrisAnswerScene → Stacker, ShooterAnswerScene → Blaster, SnakeKnowledgeScene). HUD + PauseOverlay match GemmaPlay treatment with Neriah palette.
 
 ---
 
