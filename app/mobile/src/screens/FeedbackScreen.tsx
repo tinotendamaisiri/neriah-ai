@@ -19,6 +19,7 @@ import { getMark } from '../services/api';
 import { StudentMark, GradingVerdict, StudentRootStackParamList } from '../types';
 import { COLORS } from '../constants/colors';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { BackButton } from '../components/BackButton';
 
 type Props = NativeStackScreenProps<StudentRootStackParamList, 'Feedback'>;
 
@@ -91,6 +92,10 @@ export default function FeedbackScreen({ route, navigation }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Score header */}
       <View style={[styles.scoreHeader, { backgroundColor: color }]}>
+        {/* StudentRootStack hides the native nav header (`headerShown: false`),
+            so the screen used to have no way back. White-circle back button
+            sits over the coloured score band — high contrast on red/amber/green. */}
+        <BackButton variant="onTeal" style={styles.backBtn} />
         <Text style={styles.scoreMain}>{mark.score}/{mark.max_score}</Text>
         <Text style={styles.scorePct}>{pct}%</Text>
         <Text style={styles.scoreLabel}>
@@ -222,6 +227,13 @@ const styles = StyleSheet.create({
   scoreHeader: {
     paddingVertical: 32,
     alignItems: 'center',
+    position: 'relative',
+  },
+  backBtn: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    zIndex: 1,
   },
   scoreMain: { fontSize: 52, fontWeight: '900', color: COLORS.white },
   scorePct: { fontSize: 24, fontWeight: '700', color: 'rgba(255,255,255,0.85)', marginTop: 4 },

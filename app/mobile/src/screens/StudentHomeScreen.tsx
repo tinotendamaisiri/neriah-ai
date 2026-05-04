@@ -90,7 +90,9 @@ export default function StudentHomeScreen() {
 
     const [assignmentsResult, marksResult] = await Promise.allSettled([
       classId ? getAssignments(classId) : Promise.resolve([]),
-      getStudentMarks(user.id, 5),
+      // Recent Feedback shows the latest 3 graded marks. Full history with
+      // pending + withdraw lives in the Results sub-tab.
+      getStudentMarks(user.id, 3),
     ]);
 
     if (assignmentsResult.status === 'fulfilled') {
@@ -290,14 +292,19 @@ export default function StudentHomeScreen() {
         })
       )}
 
-      {/* Recent feedback */}
+      {/* Recent feedback — latest 3, tappable, with See more switching to Results sub-tab */}
       {recentMarks.length > 0 && (
         <>
           <Text style={styles.sectionTitle}>{t('recent_feedback')}</Text>
-          {recentMarks.map(m => {
+          {recentMarks.slice(0, 3).map(m => {
             const pct = m.max_score > 0 ? Math.round((m.score / m.max_score) * 100) : 0;
             return (
-              <View key={m.id} style={styles.markCard}>
+              <TouchableOpacity
+                key={m.id}
+                style={styles.markCard}
+                onPress={() => navigation.navigate('Feedback', { mark_id: m.id, mark: m })}
+                activeOpacity={0.75}
+              >
                 <View style={styles.markCardLeft}>
                   <Text style={styles.markSubject}>{m.answer_key_title ?? 'Assignment'}</Text>
                   {m.feedback ? (
@@ -307,9 +314,17 @@ export default function StudentHomeScreen() {
                 <View style={[styles.scoreCircle, { borderColor: gradeColor(pct) }]}>
                   <Text style={[styles.scoreText, { color: gradeColor(pct) }]}>{pct}%</Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
+          {/* See more — switches to the Results sub-tab in this same screen */}
+          <TouchableOpacity
+            style={styles.seeMoreBtn}
+            onPress={() => setTab('results')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.seeMoreText}>{t('see_more')} →</Text>
+          </TouchableOpacity>
         </>
       )}
 
@@ -376,6 +391,18 @@ const styles = StyleSheet.create({
     color: COLORS.textLight,
   },
   tabBtnTextActive: {
+    color: COLORS.teal500,
+  },
+  // ── See more (under Recent Feedback) ─────────────────────────────────────
+  seeMoreBtn: {
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+  seeMoreText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: COLORS.teal500,
   },
   header: {
