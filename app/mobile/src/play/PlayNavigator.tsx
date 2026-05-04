@@ -18,7 +18,6 @@ import PlayHomeScreen from './screens/PlayHomeScreen';
 import PlayLibraryScreen from './screens/PlayLibraryScreen';
 import PlayBuildScreen from './screens/PlayBuildScreen';
 import PlayBuildProgressScreen from './screens/PlayBuildProgressScreen';
-import PlayNotEnoughScreen from './screens/PlayNotEnoughScreen';
 import PlayPreviewScreen from './screens/PlayPreviewScreen';
 import PlayGameScreen from './screens/PlayGameScreen';
 import PlaySessionEndScreen from './screens/PlaySessionEndScreen';
@@ -35,7 +34,6 @@ export default function PlayNavigator() {
       <Stack.Screen name="PlayLibrary" component={PlayLibraryScreen} />
       <Stack.Screen name="PlayBuild" component={PlayBuildScreen} />
       <Stack.Screen name="PlayBuildProgress" component={PlayBuildProgressScreen} />
-      <Stack.Screen name="PlayNotEnough" component={PlayNotEnoughScreen} />
       <Stack.Screen name="PlayPreview" component={PlayPreviewScreen} />
       <Stack.Screen name="PlayGame" component={PlayGameScreen} />
       <Stack.Screen name="PlaySessionEnd" component={PlaySessionEndScreen} />

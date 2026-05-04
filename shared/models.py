@@ -302,9 +302,9 @@ class PlayLesson(BaseModel):
     """A bank of MCQs generated from teacher- or student-supplied source
     content. Owned by a student; can be optionally shared with their class.
 
-    ``is_draft`` is True when the generator returned fewer than 70 unique
-    questions — the student can call /expand or /append to top up the bank
-    before the lesson exits draft state.
+    Every saved lesson has exactly 100 questions — the generator runs in a
+    single pass with same-domain auto-expansion until the target is hit.
+    There is no draft state.
     """
 
     id: str = Field(default_factory=_uid)
@@ -316,7 +316,6 @@ class PlayLesson(BaseModel):
     source_content: str
     questions: list[PlayQuestion] = []
     question_count: int
-    is_draft: bool = False
     was_expanded: bool = False  # generator auto-augmented broader-topic content
     created_at: str = Field(default_factory=lambda: _now().isoformat())
     shared_with_class: bool = False

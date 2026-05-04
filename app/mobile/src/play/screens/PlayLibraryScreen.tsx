@@ -31,7 +31,8 @@ import type { PlayLesson, PlayStackParamList } from '../types';
 import { PLAY_FONT, playStyles } from '../playStyles';
 
 type Nav = NativeStackNavigationProp<PlayStackParamList, 'PlayLibrary'>;
-type OriginFilter = 'all' | 'mine' | 'class';
+type OriginFilter = 'all' | 'mine' | 'class' | 'shared';
+type CardOrigin = 'mine' | 'class' | 'shared';
 
 // Hard-coded core subject pills — supplemented at runtime by any subject
 // values present on the loaded lessons. Keeps the filter useful even when
@@ -82,18 +83,23 @@ export default function PlayLibraryScreen() {
     return ['all', ...Array.from(found)];
   }, [lessons]);
 
+  const resolveOrigin = useCallback(
+    (l: PlayLesson): CardOrigin => {
+      if (l.origin === 'mine' || l.origin === 'class' || l.origin === 'shared') {
+        return l.origin;
+      }
+      return l.owner_id === (user?.id ?? '') ? 'mine' : 'class';
+    },
+    [user?.id],
+  );
+
   const filtered = useMemo(() => {
     return lessons.filter((l) => {
       if (subjectFilter !== 'all' && l.subject !== subjectFilter) return false;
-      if (originFilter === 'mine') {
-        return l.origin === 'mine' || (!l.origin && l.owner_id === (user?.id ?? ''));
-      }
-      if (originFilter === 'class') {
-        return l.origin === 'class' || l.origin === 'shared';
-      }
-      return true;
+      if (originFilter === 'all') return true;
+      return resolveOrigin(l) === originFilter;
     });
-  }, [lessons, subjectFilter, originFilter, user?.id]);
+  }, [lessons, subjectFilter, originFilter, resolveOrigin]);
 
   if (loading) {
     return (
@@ -142,14 +148,16 @@ export default function PlayLibraryScreen() {
 
       {/* Origin filter rail */}
       <View style={styles.originRail}>
-        {(['all', 'mine', 'class'] as OriginFilter[]).map((o) => {
+        {(['all', 'mine', 'class', 'shared'] as OriginFilter[]).map((o) => {
           const active = originFilter === o;
           const label =
             o === 'all'
               ? t('play_library_filter_all')
               : o === 'mine'
               ? t('play_library_filter_mine')
-              : t('play_library_filter_class');
+              : o === 'class'
+              ? t('play_library_filter_class')
+              : t('play_library_filter_shared');
           return (
             <TrackedPressable
               key={o}
@@ -187,10 +195,25 @@ export default function PlayLibraryScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const origin: 'mine' | 'class' =
-            item.origin === 'mine' || (!item.origin && item.owner_id === (user?.id ?? ''))
-              ? 'mine'
-              : 'class';
+          const origin = resolveOrigin(item);
+          const badgeBgStyle =
+            origin === 'mine'
+              ? playStyles.originBadgeMine
+              : origin === 'class'
+              ? playStyles.originBadgeClass
+              : playStyles.originBadgeShared;
+          const badgeTextStyle =
+            origin === 'mine'
+              ? playStyles.originBadgeTextMine
+              : origin === 'class'
+              ? playStyles.originBadgeTextClass
+              : playStyles.originBadgeTextShared;
+          const badgeLabel =
+            origin === 'mine'
+              ? t('play_library_origin_mine')
+              : origin === 'class'
+              ? t('play_library_origin_class')
+              : t('play_library_origin_shared');
           return (
             <TrackedPressable
               analyticsId="play.library.lesson.open"
@@ -202,23 +225,9 @@ export default function PlayLibraryScreen() {
                 <Text style={playStyles.cardTitle} numberOfLines={2}>
                   {item.title}
                 </Text>
-                <View
-                  style={[
-                    playStyles.originBadge,
-                    origin === 'mine' ? playStyles.originBadgeMine : playStyles.originBadgeClass,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      playStyles.originBadgeText,
-                      origin === 'mine'
-                        ? playStyles.originBadgeTextMine
-                        : playStyles.originBadgeTextClass,
-                    ]}
-                  >
-                    {origin === 'mine'
-                      ? t('play_library_origin_mine')
-                      : t('play_library_origin_class')}
+                <View style={[playStyles.originBadge, badgeBgStyle]}>
+                  <Text style={[playStyles.originBadgeText, badgeTextStyle]}>
+                    {badgeLabel}
                   </Text>
                 </View>
               </View>
@@ -227,9 +236,6 @@ export default function PlayLibraryScreen() {
                   .filter(Boolean)
                   .join(' · ')}
               </Text>
-              {item.is_draft && (
-                <Text style={styles.draftTag}>{t('play_library_draft')}</Text>
-              )}
             </TrackedPressable>
           );
         }}
@@ -304,13 +310,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     marginBottom: 4,
-  },
-  draftTag: {
-    marginTop: 6,
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.amber700,
-    fontFamily: PLAY_FONT,
   },
   emptyWrap: {
     paddingTop: 60,

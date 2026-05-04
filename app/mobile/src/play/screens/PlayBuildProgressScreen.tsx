@@ -32,7 +32,6 @@ import {
   readPersistedProgress,
   clearPersistedProgress,
   TARGET_QUESTION_COUNT,
-  MIN_QUESTION_COUNT,
   OFFLINE_GEN_STORAGE_PREFIX,
 } from '../lessonGenerator';
 import type { PlayStackParamList, PlayQuestion } from '../types';
@@ -84,7 +83,7 @@ export default function PlayBuildProgressScreen() {
   const { t } = useLanguage();
 
   const [count, setCount] = useState(0);
-  const [target, setTarget] = useState(TARGET_QUESTION_COUNT);
+  const target = TARGET_QUESTION_COUNT;
   const [stalls, setStalls] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -142,32 +141,23 @@ export default function PlayBuildProgressScreen() {
           onProgress: (n) => {
             if (cancelled) return;
             setCount(n);
-            // Soften the displayed target after the generator has stalled
-            // a couple times so the bar reads as "almost there" instead of
-            // visibly stuck.
-            if (n < TARGET_QUESTION_COUNT) {
-              // No-op until we get the stall hint below.
-            }
           },
           onStallHint: (s) => {
             if (cancelled) return;
             setStalls(s);
-            if (s >= 2 && target === TARGET_QUESTION_COUNT) {
-              setTarget(MIN_QUESTION_COUNT);
-            }
           },
         });
 
         if (cancelled || controller.signal.aborted) return;
 
-        if (result.count < MIN_QUESTION_COUNT) {
-          // Persist the partial via cloud if we can; otherwise just
-          // surface the situation. Without a lesson_id from the server
-          // there's no PlayNotEnough to navigate to. The fallback is to
-          // alert and bounce back to build for now.
+        if (result.count < TARGET_QUESTION_COUNT) {
+          // Contract: every saved lesson has exactly TARGET_QUESTION_COUNT
+          // questions. The on-device three-tier generator hit its budget
+          // without reaching the target — surface that and bounce back so
+          // the student can retry with broader notes.
           Alert.alert(
-            t('play_notenough_title'),
-            t('play_notenough_subtitle'),
+            t('play_build_short_title'),
+            t('play_build_short_body'),
             [{ text: 'OK', onPress: () => navigation.replace('PlayBuild') }],
           );
           return;

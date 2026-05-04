@@ -255,11 +255,12 @@ export const translations = {
     play_library_filter_all: 'All',
     play_library_filter_mine: 'Mine',
     play_library_filter_class: 'Class',
+    play_library_filter_shared: 'Shared',
     play_library_subject_all: 'All subjects',
     play_library_empty: 'No games match this filter yet.',
     play_library_origin_mine: 'Mine',
     play_library_origin_class: 'Class',
-    play_library_draft: 'Draft',
+    play_library_origin_shared: 'Shared',
 
     // Build
     play_build_title: 'Make a game',
@@ -289,17 +290,10 @@ export const translations = {
     play_progress_quality_note: 'Online quality is higher. Connect when possible.',
     play_progress_cancel: 'Cancel',
 
-    // Not enough
-    play_notenough_title: 'Need more questions',
-    play_notenough_subtitle:
-      'We could not generate enough unique questions from your notes. Pick one to continue.',
-    play_notenough_count: '{count} of 70 ready',
-    play_notenough_expand: 'Add AI-generated content',
-    play_notenough_expand_sub: 'Let Gemma 4 invent more on the same topic.',
-    play_notenough_append: 'Type more notes',
-    play_notenough_append_sub: 'Add extra material so the model has more to work with.',
-    play_notenough_append_placeholder: 'Add more notes here.',
-    play_notenough_append_submit: 'Add notes',
+    // Generator fell short of the 100-question target (rare).
+    play_build_short_title: 'Could not build a full game',
+    play_build_short_body:
+      'We could not get enough unique questions from that topic. Try adding more detail or picking a slightly broader subject.',
 
     // Preview
     play_preview_pick_a_game: 'Pick a game',
@@ -589,11 +583,12 @@ export const translations = {
     play_library_filter_all: 'Zvose',
     play_library_filter_mine: 'Zvangu',
     play_library_filter_class: 'Kirasi',
+    play_library_filter_shared: 'Zvakagovaniwa',
     play_library_subject_all: 'Zvidzidzo zvose',
     play_library_empty: 'Hapana mitambo iri pano.',
     play_library_origin_mine: 'Zvangu',
     play_library_origin_class: 'Kirasi',
-    play_library_draft: 'Chinongedzo',
+    play_library_origin_shared: 'Zvakagovaniwa',
 
     play_build_title: 'Gadzira mutambo',
     play_build_online_indicator: 'Online · Gemma 4',
@@ -621,16 +616,9 @@ export const translations = {
     play_progress_quality_note: 'Online inonaka. Bata WiFi paunokwanisa.',
     play_progress_cancel: 'Mira',
 
-    play_notenough_title: 'Mibvunzo isingakwane',
-    play_notenough_subtitle:
-      'Hatina kukwanisa kugadzira mibvunzo yakakwana kubva munotsi dzako. Sarudza imwe yenzira.',
-    play_notenough_count: '{count} ye70 dzagadzirira',
-    play_notenough_expand: 'Wedzera zvinogadzirwa neAI',
-    play_notenough_expand_sub: 'Rega Gemma 4 ifungidzire zvimwe pamusoro yedzidzo.',
-    play_notenough_append: 'Nyora dzimwe notsi',
-    play_notenough_append_sub: 'Wedzera zvimwe kuitira kuti modhi rive nezvimwe.',
-    play_notenough_append_placeholder: 'Wedzera notsi dzimwe pano.',
-    play_notenough_append_submit: 'Wedzera notsi',
+    play_build_short_title: 'Hatigoni kugadzira mutambo wakakwana',
+    play_build_short_body:
+      'Hatina kukwanisa kuwana mibvunzo yakakwana yakaenderana nemusoro uyu. Edza kuwedzera zvakawanda kana kusarudza musoro mukuru.',
 
     play_preview_pick_a_game: 'Sarudza mutambo',
     play_preview_expanded_title: 'Tawedzera mibvunzo',
@@ -916,11 +904,12 @@ export const translations = {
     play_library_filter_all: 'Konke',
     play_library_filter_mine: 'Eyami',
     play_library_filter_class: 'Ikilasi',
+    play_library_filter_shared: 'Okwabelwene',
     play_library_subject_all: 'Zonke izifundo',
     play_library_empty: 'Ayikho imidlalo lapha.',
     play_library_origin_mine: 'Eyami',
     play_library_origin_class: 'Ikilasi',
-    play_library_draft: 'Idrafu',
+    play_library_origin_shared: 'Okwabelwene',
 
     play_build_title: 'Yenza umdlalo',
     play_build_online_indicator: 'Online · Gemma 4',
@@ -948,16 +937,9 @@ export const translations = {
     play_progress_quality_note: 'I-online incono. Xhumeka uma ukwazi.',
     play_progress_cancel: 'Khansela',
 
-    play_notenough_title: 'Kudingeka imibuzo eminengi',
-    play_notenough_subtitle:
-      'Asikwazanga ukwakha imibuzo eyanele kusukela kumanothi akho. Khetha indlela.',
-    play_notenough_count: '{count} kwe-70 ekulungele',
-    play_notenough_expand: 'Engeza okwakhiwe yi-AI',
-    play_notenough_expand_sub: 'Vumela uGemma 4 acabange okunengi kwesi sihloko.',
-    play_notenough_append: 'Bhala amanothi amanengi',
-    play_notenough_append_sub: 'Engeza okunengi ukuze imodeli ibe nokunengi okumayisebenzela.',
-    play_notenough_append_placeholder: 'Engeza amanothi amanengi lapha.',
-    play_notenough_append_submit: 'Engeza amanothi',
+    play_build_short_title: 'Asikwazi ukwakha umdlalo ogcwele',
+    play_build_short_body:
+      'Asitholanga imibuzo eyanele esihlokweni esikhethile. Zama ukungeza okuningi kumanothi noma ukhethe isihloko esibanzi kancane.',
 
     play_preview_pick_a_game: 'Khetha umdlalo',
     play_preview_expanded_title: 'Sengeze imibuzo',

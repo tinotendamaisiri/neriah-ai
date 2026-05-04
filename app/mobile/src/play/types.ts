@@ -25,9 +25,6 @@ export interface PlayLesson {
   grade: string | null;
   owner_id: string;
   question_count: number;
-  /** True when the generator could not reach the 70-question minimum.
-   *  Auto-expand makes this practically always false on fresh lessons. */
-  is_draft?: boolean;
   /** True when the generator auto-augmented broader-topic questions
    *  because the supplied notes were too sparse for a full bank. */
   was_expanded?: boolean;
@@ -39,8 +36,8 @@ export interface PlayLesson {
   /**
    * Backend-tagged origin so the library UI can colour-code each card:
    *   'mine'   — owned by the current student
-   *   'class'  — shared by their teacher / school
-   *   'shared' — copied from another student's shared lesson
+   *   'class'  — class-shared by a classmate or teacher (student is enrolled)
+   *   'shared' — copied from another student's shared lesson (future state)
    */
   origin?: 'mine' | 'class' | 'shared';
   /** Only present when the API returned the full lesson detail. */
@@ -67,7 +64,6 @@ export type PlayStackParamList = {
   PlayLibrary: undefined;
   PlayBuild: undefined;
   PlayBuildProgress: { taskId: string };
-  PlayNotEnough: { lessonId: string };
   PlayPreview: { lessonId: string; wasExpanded?: boolean };
   PlayGame: { lessonId: string; format: GameFormat };
   PlaySessionEnd: { sessionResult: SessionResult; lessonId: string };

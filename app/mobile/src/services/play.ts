@@ -3,9 +3,8 @@
 //
 // All calls go through the shared axios `client` from api.ts so they pick up
 // JWT auth, the route-key trace headers, and the same offline error mapping
-// the rest of the app uses. Long timeouts are applied to LLM-bound endpoints
-// (createLesson, expand, append) — Gemma 4 generation typically takes 30-60s
-// on the cloud path.
+// the rest of the app uses. Long timeout on createLesson — Gemma 4 generation
+// typically takes 30-90s on the cloud path (three-tier escalation).
 
 import type { AxiosResponse } from 'axios';
 import { client } from './api';
@@ -25,10 +24,6 @@ export interface CreateLessonInput {
   grade?: string;
 }
 
-export interface AppendLessonInput {
-  additional_content: string;
-}
-
 export interface PlayLessonStats {
   best_score: number;
   last_played: string | null;
@@ -37,13 +32,11 @@ export interface PlayLessonStats {
 
 export const playApi = {
   /**
-   * Cloud-side lesson generation. Backend OCRs / cleans the source content,
-   * calls Gemma 4 to emit MCQs, dedupes (semantic + hash), validates and
-   * persists. Returns the full PlayLesson on success.
-   *
-   * When the backend can only generate <70 unique questions, the lesson
-   * comes back with `is_draft=true` so the caller can route to
-   * PlayNotEnoughScreen for an expand / append fallback.
+   * Cloud-side lesson generation. Backend cleans the source content, runs
+   * the three-tier Gemma 4 escalation, dedupes (semantic + hash), validates,
+   * and persists exactly 100 questions. Returns the full PlayLesson on
+   * success. When the generator falls short the route returns 503 — there
+   * is no draft state, no expand/append fallback flow.
    */
   createLesson: async (data: CreateLessonInput): Promise<PlayLesson> => {
     const res: AxiosResponse<PlayLesson> = await client.post('/play/lessons', data, {
@@ -88,33 +81,6 @@ export const playApi = {
         allow_copying,
         ...(class_id ? { class_id } : {}),
       },
-    );
-    return res.data;
-  },
-
-  /**
-   * Ask Gemma 4 to invent more questions on the same topic, no extra text
-   * input from the student. Used by the "Add AI-generated content" CTA on
-   * PlayNotEnoughScreen.
-   */
-  expandLesson: async (id: string): Promise<PlayLesson> => {
-    const res: AxiosResponse<PlayLesson> = await client.post(
-      `/play/lessons/${id}/expand`,
-      {},
-      { timeout: GEN_TIMEOUT },
-    );
-    return res.data;
-  },
-
-  /**
-   * Append student-typed extra notes so Gemma 4 has more material to draw
-   * from. Used by the "Type more notes" CTA on PlayNotEnoughScreen.
-   */
-  appendLesson: async (id: string, additional_content: string): Promise<PlayLesson> => {
-    const res: AxiosResponse<PlayLesson> = await client.post(
-      `/play/lessons/${id}/append`,
-      { additional_content },
-      { timeout: GEN_TIMEOUT },
     );
     return res.data;
   },

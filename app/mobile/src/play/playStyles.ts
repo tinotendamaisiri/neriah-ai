@@ -122,29 +122,42 @@ export const playStyles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Origin badges.
+  // Origin badges. ~50pt × 24pt, 7-8pt bold, rounded, bordered.
   originBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
+    borderWidth: 1,
     alignSelf: 'flex-start',
+    minWidth: 50,
+    alignItems: 'center',
   },
   originBadgeMine: {
-    backgroundColor: COLORS.teal100,
+    backgroundColor: COLORS.teal50,
+    borderColor: COLORS.teal500,
   },
   originBadgeClass: {
-    backgroundColor: COLORS.amber100,
+    backgroundColor: COLORS.amber50,
+    borderColor: COLORS.amber500,
+  },
+  originBadgeShared: {
+    backgroundColor: COLORS.gray50,
+    borderColor: COLORS.border,
   },
   originBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     fontFamily: PLAY_FONT,
+    textAlign: 'center',
   },
   originBadgeTextMine: {
-    color: COLORS.teal700,
+    color: COLORS.teal500,
   },
   originBadgeTextClass: {
     color: COLORS.amber700,
+  },
+  originBadgeTextShared: {
+    color: COLORS.gray500,
   },
 
   // Status chip (Online · Gemma 4 / Offline · Gemma 4 (on-device)).

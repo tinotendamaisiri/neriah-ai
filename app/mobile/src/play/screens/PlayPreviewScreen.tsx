@@ -6,7 +6,7 @@
 // played, question count), the four game format cards, and links to
 // Edit sharing + Delete (owner only).
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -59,6 +59,12 @@ export default function PlayPreviewScreen() {
   const [stats, setStats] = useState<PlayLessonStats | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Defensive: ignore format-card taps fired in the first 400 ms after the
+  // screen regains focus. Eliminates the stale-tap class of "exit on
+  // picker auto-routes into a game" reports — a focus-restored Pressable
+  // can otherwise replay a buffered touch event on Android.
+  const focusedAtRef = useRef<number>(0);
+
   useEffect(() => {
     trackScreen('PlayPreview');
   }, []);
@@ -94,6 +100,7 @@ export default function PlayPreviewScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      focusedAtRef.current = Date.now();
       load();
     }, [load]),
   );
@@ -101,6 +108,12 @@ export default function PlayPreviewScreen() {
   const onPickFormat = useCallback(
     (format: GameFormat) => {
       if (!lesson) return;
+      // Drop taps that landed within 400 ms of the focus event — those
+      // are almost always replayed/buffered, not deliberate.
+      if (Date.now() - focusedAtRef.current < 400) {
+        track('play.preview.format_pick.suppressed', { format, lesson_id: lessonId });
+        return;
+      }
       track('play.preview.format_pick', { format, lesson_id: lessonId });
       navigation.navigate('PlayGame', { lessonId, format });
     },

@@ -30,10 +30,9 @@ import type { PlayQuestion } from './types';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
-/** Server-side minimum for a publishable lesson. Lessons under this fall
- *  through to the PlayNotEnough fallback. */
+/** Hard target — every saved lesson lands here exactly. The PlayBuild
+ *  progress screen errors out if the on-device generator can't reach it. */
 export const TARGET_QUESTION_COUNT = 100;
-export const MIN_QUESTION_COUNT = 70;
 
 /** Per-batch size. Gemma 4 (E2B) reliably emits 8-12 well-formed MCQs in a
  *  single call without context-window pressure. 10 keeps each request short

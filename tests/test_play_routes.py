@@ -81,8 +81,7 @@ def _lesson_doc(
     owner_id: str = OWNER_ID,
     shared: bool = False,
     class_id: str | None = None,
-    is_draft: bool = False,
-    questions: int = 75,
+    questions: int = 100,
 ) -> dict:
     qs = [_question_dict(f"Prompt {i}") for i in range(questions)]
     return {
@@ -95,7 +94,6 @@ def _lesson_doc(
         "source_content": "Photosynthesis is the process...",
         "questions": qs,
         "question_count": len(qs),
-        "is_draft": is_draft,
         "created_at": "2026-04-01T00:00:00+00:00",
         "shared_with_class": shared,
         "allow_copying": False,
@@ -113,14 +111,14 @@ class TestCreateLesson:
         in OWNER's list, and must NOT appear (un-shared) in CLASSMATE's
         list."""
         saved: dict = {}
-        # Synthetic generator output — 75 prompts, count above the 70-draft cutoff.
+        # Synthetic generator output — exactly 100 questions per the contract.
         generated = [
             PlayQuestion(
                 prompt=f"Prompt {i}",
                 options=["a", "b", "c", "d"],
                 correct=0,
             )
-            for i in range(75)
+            for i in range(100)
         ]
 
         owner_student = _student_doc(OWNER_ID, [CLASS_ID])
@@ -129,7 +127,7 @@ class TestCreateLesson:
         # ── Stage 1: OWNER creates lesson ────────────────────────────────────
         with patch(
             "shared.play_generator.generate_lesson_questions",
-            return_value=(generated, 75, False),
+            return_value=(generated, 100, False),
         ), patch(
             "functions.play.get_doc",
             side_effect=lambda c, d: owner_student if (c, d) == ("students", OWNER_ID) else None,
@@ -151,9 +149,9 @@ class TestCreateLesson:
         assert resp.status_code == 201, resp.get_data(as_text=True)
         body = resp.get_json()
         new_lesson_id = body["id"]
-        assert body["question_count"] == 75
-        assert body["is_draft"] is False
+        assert body["question_count"] == 100
         assert body["owner_id"] == OWNER_ID
+        assert "is_draft" not in body
         assert new_lesson_id in saved
 
         saved_lesson = saved[new_lesson_id]

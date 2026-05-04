@@ -1,11 +1,12 @@
 """
 Neriah Play — student-facing arcade-mode endpoints.
 
-A "play lesson" is a bank of 70-100 multiple-choice questions generated from
-a chunk of source content (notes, chapter excerpts, syllabus topics) the
-student supplies. The student then plays the lesson in one of four arcade
-formats — lane runner, stacker, blaster, or snake — with the questions
-driving the gameplay.
+A "play lesson" is a bank of exactly 100 multiple-choice questions
+generated from a chunk of source content (notes, chapter excerpts,
+syllabus topics) the student supplies. Generation is one-shot: when the
+source is sparse, the generator silently expands within the same domain
+until the bank is full. There is no draft state and no expand/append
+endpoints — every saved lesson is complete.
 
 Routes (all mounted under /api/play):
 
@@ -14,8 +15,6 @@ Routes (all mounted under /api/play):
   GET    /play/lessons/<id>                    fetch full lesson (incl. questions)
   DELETE /play/lessons/<id>                    owner-only cascade delete
   PATCH  /play/lessons/<id>/sharing            toggle class-share / allow-copy
-  POST   /play/lessons/<id>/expand             generate more questions (broader)
-  POST   /play/lessons/<id>/append             append to source + generate more
   POST   /play/sessions                        record a play session outcome
   GET    /play/lessons/<id>/stats              best/last/total for the calling student
 
@@ -39,7 +38,7 @@ from shared.firestore_client import (
     query,
     upsert,
 )
-from shared.models import PlayLesson, PlayQuestion, PlaySession
+from shared.models import PlayLesson, PlaySession
 from shared.observability import instrument_route
 
 logger = logging.getLogger(__name__)
@@ -82,29 +81,12 @@ def _lesson_summary(lesson: dict, origin: str) -> dict:
         "grade": lesson.get("grade"),
         "owner_id": lesson.get("owner_id"),
         "question_count": lesson.get("question_count", 0),
-        "is_draft": bool(lesson.get("is_draft", False)),
         "created_at": lesson.get("created_at"),
         "shared_with_class": bool(lesson.get("shared_with_class", False)),
         "allow_copying": bool(lesson.get("allow_copying", False)),
         "class_id": lesson.get("class_id"),
-        "origin": origin,  # 'mine' | 'class'
+        "origin": origin,  # 'mine' | 'class' | 'shared'
     }
-
-
-def _coerce_questions(raw: list | None) -> list[PlayQuestion]:
-    """Defensively rebuild PlayQuestion objects from Firestore dicts.
-
-    Firestore returns plain dicts; the generator wants typed objects so
-    its embedding-dedup pre-seeding works cleanly.
-    """
-    out: list[PlayQuestion] = []
-    for q in raw or []:
-        try:
-            out.append(PlayQuestion(**q))
-        except Exception:
-            # Skip malformed historical rows rather than crash the route.
-            continue
-    return out
 
 
 def _can_read_lesson(lesson: dict, student_id: str, student_doc: dict) -> bool:
@@ -162,31 +144,40 @@ def play_create_lesson():
         ) if part
     )
 
-    from shared.play_generator import generate_lesson_questions
+    from shared.play_generator import (
+        generate_lesson_questions,
+        GenerationFellShortError,
+    )
     try:
         questions, count, was_expanded = generate_lesson_questions(
             source_content=source_content,
             target=100,
-            minimum=70,
             topic_hint=topic_hint or None,
         )
     except NotImplementedError:
         # Should never happen — backend never sets use_on_device=True.
         return jsonify({"error": "on-device generation is a client-only path"}), 400
+    except GenerationFellShortError as exc:
+        # Safety valve fired — the three-tier escalation couldn't reach
+        # 100 questions even after broadening to fundamentals. Don't save
+        # a partial lesson; tell the student to try a different topic.
+        logger.warning(
+            "[play] generation fell short for student=%s: %d/%d",
+            student_id, exc.achieved, exc.target,
+        )
+        return jsonify({
+            "error": (
+                "We couldn't build a full game from that topic. Try adding "
+                "more detail to your notes or pick a slightly broader topic."
+            ),
+        }), 503
     except Exception:
         logger.exception("[play] generation failed for student=%s", student_id)
         return jsonify({
             "error": "We couldn't build a quiz from that content right now. Please try again in a minute."
         }), 503
 
-    if count == 0:
-        return jsonify({
-            "error": "We couldn't extract any questions from that content. Try adding more detail or pasting longer notes."
-        }), 503
-
-    # Auto-expand fills any gap in one pass, so the lesson is never a draft
-    # at create time. The minimum threshold is kept on the model for legacy
-    # rows but no longer drives a re-prompt on the student.
+    # Every saved lesson is complete — no draft state.
     lesson = PlayLesson(
         title=title,
         subject=subject if isinstance(subject, str) and subject.strip() else None,
@@ -196,7 +187,6 @@ def play_create_lesson():
         source_content=source_content,
         questions=questions,
         question_count=count,
-        is_draft=False,
         was_expanded=was_expanded,
     )
     upsert("play_lessons", lesson.id, lesson.model_dump())
@@ -399,142 +389,6 @@ def play_lesson_sharing(lesson_id: str):
         "shared_with_class": merged["shared_with_class"],
         "allow_copying": merged["allow_copying"],
         "class_id": merged.get("class_id"),
-    }), 200
-
-
-# ─── POST /play/lessons/<id>/expand ──────────────────────────────────────────
-
-@play_bp.post("/play/lessons/<lesson_id>/expand")
-@instrument_route("play.lessons.expand", "play")
-def play_lesson_expand(lesson_id: str):
-    """Owner-only. Generate additional questions covering broader concepts
-    + edge cases drawn from the same source content. Used to push a draft
-    lesson over the 70-question threshold without requiring the student to
-    type more notes.
-    """
-    student_id, err = require_role(request, "student")
-    if err:
-        return jsonify({"error": err}), 401
-
-    lesson = get_doc("play_lessons", lesson_id)
-    if not lesson:
-        return jsonify({"error": "Lesson not found"}), 404
-    if lesson.get("owner_id") != student_id:
-        return jsonify({"error": "forbidden"}), 403
-
-    current_questions = _coerce_questions(lesson.get("questions"))
-    base_content = lesson.get("source_content") or ""
-    expansion_hint = (
-        "\n\nGenerate questions covering broader related concepts and edge cases."
-    )
-
-    topic_hint = " · ".join(
-        part for part in (
-            lesson.get("title"),
-            lesson.get("subject"),
-            lesson.get("grade"),
-        ) if part
-    )
-
-    from shared.play_generator import generate_lesson_questions
-    try:
-        new_bank, new_count, _was_expanded = generate_lesson_questions(
-            source_content=base_content + expansion_hint,
-            target=100,
-            minimum=70,
-            existing_questions=current_questions,
-            topic_hint=topic_hint or None,
-        )
-    except Exception:
-        logger.exception("[play] expand failed for lesson=%s", lesson_id)
-        return jsonify({
-            "error": "Couldn't generate more questions right now. Please try again."
-        }), 503
-
-    is_draft = new_count < 70
-    updates = {
-        "questions": [q.model_dump() for q in new_bank],
-        "question_count": new_count,
-        "is_draft": is_draft,
-    }
-    upsert("play_lessons", lesson_id, updates)
-
-    return jsonify({
-        "lesson_id": lesson_id,
-        "question_count": new_count,
-        "added": max(0, new_count - len(current_questions)),
-        "is_draft": is_draft,
-    }), 200
-
-
-# ─── POST /play/lessons/<id>/append ──────────────────────────────────────────
-
-@play_bp.post("/play/lessons/<lesson_id>/append")
-@instrument_route("play.lessons.append", "play")
-def play_lesson_append(lesson_id: str):
-    """Owner-only. Append additional source content and generate more
-    questions covering the combined body. Lets students grow a lesson as
-    they cover more of a chapter.
-
-    Body:  {"additional_content": "..."}
-    """
-    student_id, err = require_role(request, "student")
-    if err:
-        return jsonify({"error": err}), 401
-
-    lesson = get_doc("play_lessons", lesson_id)
-    if not lesson:
-        return jsonify({"error": "Lesson not found"}), 404
-    if lesson.get("owner_id") != student_id:
-        return jsonify({"error": "forbidden"}), 403
-
-    body = request.get_json(silent=True) or {}
-    additional_content = (body.get("additional_content") or "").strip()
-    if not additional_content:
-        return jsonify({"error": "additional_content is required"}), 400
-
-    base_content = lesson.get("source_content") or ""
-    combined = (base_content + "\n\n" + additional_content).strip()
-
-    current_questions = _coerce_questions(lesson.get("questions"))
-
-    topic_hint = " · ".join(
-        part for part in (
-            lesson.get("title"),
-            lesson.get("subject"),
-            lesson.get("grade"),
-        ) if part
-    )
-
-    from shared.play_generator import generate_lesson_questions
-    try:
-        new_bank, new_count, _was_expanded = generate_lesson_questions(
-            source_content=combined,
-            target=100,
-            minimum=70,
-            existing_questions=current_questions,
-            topic_hint=topic_hint or None,
-        )
-    except Exception:
-        logger.exception("[play] append failed for lesson=%s", lesson_id)
-        return jsonify({
-            "error": "Couldn't add more questions right now. Please try again."
-        }), 503
-
-    is_draft = new_count < 70
-    updates = {
-        "source_content": combined,
-        "questions": [q.model_dump() for q in new_bank],
-        "question_count": new_count,
-        "is_draft": is_draft,
-    }
-    upsert("play_lessons", lesson_id, updates)
-
-    return jsonify({
-        "lesson_id": lesson_id,
-        "question_count": new_count,
-        "added": max(0, new_count - len(current_questions)),
-        "is_draft": is_draft,
     }), 200
 
 

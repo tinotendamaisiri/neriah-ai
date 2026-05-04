@@ -45,6 +45,20 @@ from shared.observability import log_event
 logger = logging.getLogger(__name__)
 
 
+class GenerationFellShortError(RuntimeError):
+    """Safety valve: every lesson must land at exactly ``target`` questions.
+    If the three-tier escalation runs out of attempts before reaching the
+    target the route returns a clear failure rather than a partial lesson.
+    """
+
+    def __init__(self, achieved: int, target: int):
+        super().__init__(
+            f"play generator only produced {achieved} of {target} questions"
+        )
+        self.achieved = achieved
+        self.target = target
+
+
 # ─── Tunables ─────────────────────────────────────────────────────────────────
 
 _BATCH_SIZE = 30               # 30 keeps each call comfortably under max_tokens
@@ -285,12 +299,32 @@ def generate_lesson_questions(
         accumulated = accumulated[:target]
 
     randomised = _position_randomise(accumulated)
-    _ = minimum  # passed in by callers; auto-expand makes the draft flag
-                 # almost always False — kept for back-compat callers.
+    _ = minimum  # passed in by callers; the safety-valve below makes draft
+                 # state impossible — kept for back-compat callers.
     was_expanded = (
         accumulated_count_when_expand_started is not None
         and len(accumulated) > accumulated_count_when_expand_started
     )
+
+    # Safety valve. The contract is "every lesson is exactly `target`".
+    # If the three-tier escalation couldn't get there, surface a clear
+    # failure to the route handler instead of saving a partial lesson —
+    # the student gets a real "couldn't build it, try a different topic"
+    # error rather than a half-broken game.
+    if len(randomised) < target:
+        log_event(
+            "play.generation.fell_short",
+            "error",
+            payload={
+                "achieved": len(randomised),
+                "target": target,
+                "batches_used": batch_n,
+                "final_tier": tier,
+                "was_expanded": was_expanded,
+            },
+            surface="play",
+        )
+        raise GenerationFellShortError(achieved=len(randomised), target=target)
     return randomised, len(randomised), was_expanded
 
 

@@ -14,9 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-from shared.models import PlayQuestion
-
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_question(prompt: str, correct: int = 0) -> dict:
@@ -100,8 +97,7 @@ def test_dedup_rejects_exact_match():
         from shared.play_generator import generate_lesson_questions
         out, count, _was_expanded = generate_lesson_questions(
             "Test source content covering basic arithmetic and geography.",
-            target=10,
-            minimum=5,
+            target=2,
         )
 
     assert count == 2
@@ -127,8 +123,7 @@ def test_dedup_rejects_semantic_match():
         from shared.play_generator import generate_lesson_questions
         out, count, _was_expanded = generate_lesson_questions(
             "Some source content for the test that's reasonably long.",
-            target=10,
-            minimum=5,
+            target=1,
         )
 
     assert count == 1, f"semantic dedup failed — got {count} questions"
@@ -155,8 +150,7 @@ def test_validation_caps_lengths():
         from shared.play_generator import generate_lesson_questions
         out, count, _was_expanded = generate_lesson_questions(
             "Source content for the truncation test that's reasonably long.",
-            target=5,
-            minimum=1,
+            target=1,
         )
 
     assert count == 1
@@ -164,34 +158,35 @@ def test_validation_caps_lengths():
     assert len(out[0].options[0]) <= 25
 
 
-def test_minimum_threshold():
-    """When batches don't reach 70, return whatever was produced.
-
-    The route handler — not the generator — owns the draft-flag decision.
-    The generator just reports the count it actually achieved.
-    """
-    # Two small batches followed by empty batches that trigger the low-yield stop.
+def test_safety_valve_raises_when_under_target():
+    """Generator must hit `target` exactly. When all batches and tier
+    escalations together can't produce 100 unique questions, the safety
+    valve fires — the route returns a clear failure rather than saving a
+    partial lesson."""
+    # Two small batches followed by empty batches across every tier — the
+    # generator burns its full _MAX_BATCHES budget without reaching 100.
     batch1 = [_make_question(f"Prompt {i}") for i in range(10)]
     batch2 = [_make_question(f"Prompt B {i}") for i in range(8)]
+    empties = [[]] * 25
 
     with patch(
         "shared.play_generator._vertex_chat_completions",
-        side_effect=_gemma_call_factory([batch1, batch2, [], [], []]),
+        side_effect=_gemma_call_factory([batch1, batch2, *empties]),
     ), patch(
         "shared.play_generator.get_embedding",
         return_value=[],
     ):
-        from shared.play_generator import generate_lesson_questions
-        out, count, _was_expanded = generate_lesson_questions(
-            "Short source body for the threshold test.",
-            target=100,
-            minimum=70,
+        from shared.play_generator import (
+            generate_lesson_questions,
+            GenerationFellShortError,
         )
-
-    # We only ever fed Gemma 18 valid questions across all batches.
-    assert count == 18
-    assert count < 70
-    assert all(isinstance(q, PlayQuestion) for q in out)
+        with pytest.raises(GenerationFellShortError) as exc_info:
+            generate_lesson_questions(
+                "Short source body for the safety-valve test.",
+                target=100,
+            )
+        assert exc_info.value.achieved == 18
+        assert exc_info.value.target == 100
 
 
 def test_use_on_device_raises():

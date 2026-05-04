@@ -8,10 +8,11 @@
 //     Scanned PDFs/DOCX are routed through extractAttachmentText which
 //     falls back to OCR rendering when the file has no embedded text.
 //   - Generate game CTA dispatches:
-//       online  → playApi.createLesson, navigate to PlayPreview (or
-//                 PlayNotEnough when is_draft).
+//       online  → playApi.createLesson, navigate to PlayPreview. The
+//                 generator always returns 100 questions in one pass; if
+//                 it can't, the route returns 503 and the screen Alerts.
 //       offline → mints a taskId, navigates to PlayBuildProgress, which
-//                 drives the generator.
+//                 drives the on-device generator.
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {

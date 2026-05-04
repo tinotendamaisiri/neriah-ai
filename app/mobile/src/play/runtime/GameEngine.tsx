@@ -4,7 +4,8 @@
 //   - score (starts at 5 for lane_runner so the score=0 loss has buffer,
 //     0 for the others)
 //   - question shuffling & sequencing
-//   - speedMultiplier (×1.04 per correct, capped at 2.5)
+//   - speedMultiplier — bidirectional: ×1.05 on correct, ×0.95 on wrong,
+//     clamped to [0.5, 2.5], reset to 1.0 at session start
 //   - pause state (button + system back hardware key)
 //   - SessionResult construction on loss / quit / completion
 //   - cross-fade between question banners
@@ -63,7 +64,9 @@ const STARTING_SCORE: Record<GameFormat, number> = {
 };
 
 const SPEED_MAX = 2.5;
-const SPEED_STEP = 1.04;
+const SPEED_MIN = 0.5;
+const SPEED_STEP_UP = 1.05;     // ×1.05 on each correct
+const SPEED_STEP_DOWN = 0.95;   // ×0.95 on each wrong
 const FLASH_MS = 220;
 const BANNER_FADE_MS = 150;
 
@@ -208,13 +211,13 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
       setFlashLetter(letter);
       setFlashKind(isCorrect ? 'correct' : 'wrong');
 
-      // Score update
+      // Score update + bidirectional speed scaling.
       let newScore = score;
       if (isCorrect) {
         newScore = score + 2;
         setScore(newScore);
         setQuestionsCorrect((c) => c + 1);
-        setSpeedMultiplier((s) => Math.min(SPEED_MAX, s * SPEED_STEP));
+        setSpeedMultiplier((s) => Math.min(SPEED_MAX, s * SPEED_STEP_UP));
         setCorrectAnswerTick((t) => t + 1);
       } else {
         // wrong: clamp to 0 floor for non-lane_runner; lane_runner allows 0 → trips loss
@@ -224,6 +227,7 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
           newScore = Math.max(0, score - 1);
         }
         setScore(newScore);
+        setSpeedMultiplier((s) => Math.max(SPEED_MIN, s * SPEED_STEP_DOWN));
         setWrongAnswerTick((t) => t + 1);
       }
       setQuestionsAttempted((n) => n + 1);
@@ -409,6 +413,14 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
         />
       </Animated.View>
 
+      <AnswerGrid
+        options={currentQuestion.options}
+        onAnswer={handleAnswer}
+        flashLetter={flashLetter}
+        flashKind={flashKind}
+        disabled={answerLocked || paused}
+      />
+
       <View style={styles.sceneHost} onLayout={onSceneLayout}>
         {sceneSize.w > 0 && sceneSize.h > 0 ? (
           <>
@@ -441,14 +453,6 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
           </>
         ) : null}
       </View>
-
-      <AnswerGrid
-        options={currentQuestion.options}
-        onAnswer={handleAnswer}
-        flashLetter={flashLetter}
-        flashKind={flashKind}
-        disabled={answerLocked || paused}
-      />
 
       <PauseOverlay
         visible={paused}
