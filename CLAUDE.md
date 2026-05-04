@@ -653,7 +653,8 @@ KEEP_ALIVE_SECRET=...                   # Cloud Scheduler sends this in `x-keep-
 - `ScanButton.tsx` — Camera capture with frame guide overlay
 - `InAppCamera.tsx` — Custom camera UI (orientation lock, tap-to-focus)
 - `StudentCard.tsx` — Name + latest score with colour coding
-- `MarkResult.tsx` — Annotated image + per-question verdict cards
+- `MarkResult.tsx` — Annotated image + per-question verdict cards. Each row is tappable to open `EditVerdictModal` for teacher overrides.
+- `EditVerdictModal.tsx` — Bottom-sheet editor for one verdict (correct / partial / incorrect, awarded marks, feedback). Save fires `updateMark` with the full edited verdict list; backend re-derives the aggregate score.
 - `CountrySelector.tsx` — Flag dropdown of supported countries
 - `SchoolPickerModal.tsx` — Searchable school picker
 - `LevelDisplay.tsx` — Education level badges
@@ -995,6 +996,7 @@ npm run dev      # localhost:3000
 - Sanity Studio + blog live
 - Vertex AI Gemma 4 26B MaaS calls succeeding (cloud tutor, teacher assistant, grading)
 - Training-data archive bucket `gs://neriah-training-data` provisioned + wired to approval cascade
+- **Editable marks UI** — teacher can tap any verdict row in `MarkResult` to override correctness, awarded marks, and feedback. `EditVerdictModal` saves via the existing `updateMark` flow; `functions/mark.py` re-derives aggregate score from edited verdicts on save.
 
 ### 9.2 Held by external dependencies
 
@@ -1045,7 +1047,6 @@ npm run dev      # localhost:3000
 ### 9.5 Backlog
 
 - [ ] Bulk scanning — photograph multiple student books in rapid succession
-- [ ] Editable marks UI — teacher overrides on individual question verdicts
 - [ ] Class-performance summaries on demand (currently lazily computed in analytics)
 - [ ] Push notifications on new student submissions (token side wired; trigger side TODO)
 - [ ] Automated report-card generation (PDF)
