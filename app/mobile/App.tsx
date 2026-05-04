@@ -304,7 +304,9 @@ function StudentTabs() {
           const icons: Partial<Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap>> = {
             StudentHome: 'document-text-outline',
             StudentTutor: 'sparkles-outline',
-            StudentResults: 'checkmark-circle-outline',
+            // Bottom-nav "Play" tab — Results moved into StudentHome as a
+            // sub-tab (see screen file header for context).
+            StudentResults: 'game-controller-outline',
           };
           return <Ionicons name={icons[route.name] ?? 'ellipse-outline'} size={size} color={color} />;
         },
@@ -323,7 +325,7 @@ function StudentTabs() {
       <StudentTab.Screen
         name="StudentResults"
         component={StudentResultsScreen}
-        options={{ title: t('results'), tabBarLabel: t('results'), headerShown: false }}
+        options={{ title: t('play'), tabBarLabel: t('play'), headerShown: false }}
       />
       <StudentTab.Screen
         name="StudentSubmit"

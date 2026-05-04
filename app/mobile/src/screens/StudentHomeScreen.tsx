@@ -27,6 +27,7 @@ import { COLORS } from '../constants/colors';
 import AvatarWithStatus from '../components/AvatarWithStatus';
 import { useLanguage } from '../context/LanguageContext';
 import { ScreenContainer } from '../components/ScreenContainer';
+import StudentResultsView from '../components/StudentResultsView';
 
 type Nav = NativeStackNavigationProp<StudentRootStackParamList>;
 
@@ -48,6 +49,10 @@ export default function StudentHomeScreen() {
   const [analytics, setAnalytics] = useState<StudentClassAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Sub-tab inside the Homework screen — "assignments" lists open homework
+  // and recent feedback; "results" embeds the same view that used to live
+  // at the bottom-nav Results tab. Default = assignments.
+  const [tab, setTab] = useState<'assignments' | 'results'>('assignments');
 
   // ── Multi-class switcher ──────────────────────────────────────────────────
   const [enrolledClasses, setEnrolledClasses] = useState<ClassInfo[]>([]);
@@ -159,12 +164,8 @@ export default function StudentHomeScreen() {
 
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']} style={{ backgroundColor: COLORS.background }}>
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.teal500} />}
-    >
-      {/* Header */}
+    <View style={styles.container}>
+      {/* Header (shared across both sub-tabs) */}
       <View style={styles.header}>
         <View style={styles.headerTitleBlock}>
           <Text style={styles.greeting} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('my_homework')}</Text>
@@ -176,6 +177,37 @@ export default function StudentHomeScreen() {
           onPress={() => navigation.navigate('StudentSettings' as any)}
         />
       </View>
+
+      {/* Sub-tab segmented control: My Assignments | Results */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'assignments' && styles.tabBtnActive]}
+          onPress={() => setTab('assignments')}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.tabBtnText, tab === 'assignments' && styles.tabBtnTextActive]}>
+            {t('my_assignments')}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'results' && styles.tabBtnActive]}
+          onPress={() => setTab('results')}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.tabBtnText, tab === 'results' && styles.tabBtnTextActive]}>
+            {t('results')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {tab === 'results' ? (
+        <StudentResultsView hideEmptyHomeworkLink />
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.content}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.teal500} />}
+        >
 
       {/* Class switcher (only if 2+ classes) */}
       {enrolledClasses.length > 1 && (
@@ -310,7 +342,9 @@ export default function StudentHomeScreen() {
           </View>
         </>
       )}
-    </ScrollView>
+        </ScrollView>
+      )}
+    </View>
     </ScreenContainer>
   );
 }
@@ -319,6 +353,31 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  // ── Sub-tab bar (My Assignments / Results) ───────────────────────────────
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabBtnActive: {
+    borderBottomColor: COLORS.teal500,
+  },
+  tabBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textLight,
+  },
+  tabBtnTextActive: {
+    color: COLORS.teal500,
+  },
   header: {
     backgroundColor: COLORS.teal500,
     paddingHorizontal: 20,
