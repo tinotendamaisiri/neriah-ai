@@ -282,6 +282,7 @@ export const translations = {
     play_build_notes_placeholder: 'Paste or type the topic notes here.',
     play_build_generate: 'Generate game',
     play_build_validating: 'Add a title and some notes to continue.',
+    play_build_generating_hint: 'Building your game — this can take up to 5 minutes for the best result. Keep the app open.',
 
     // Build progress
     play_progress_title: 'Generating questions',
@@ -609,6 +610,7 @@ export const translations = {
     play_build_notes_placeholder: 'Isa kana nyora notsi pano.',
     play_build_generate: 'Gadzira mutambo',
     play_build_validating: 'Wedzera zita uye notsi kuti uenderere mberi.',
+    play_build_generating_hint: 'Tiri kugadzira mutambo wako — zvinogona kutora kusvika maminetsi mashanu. Rega application iri yakavhurwa.',
 
     play_progress_title: 'Tirikuita mibvunzo',
     play_progress_subtitle: 'Gemma 4 iri kushanda mufoni mako. Zvichachengetedzwa.',
@@ -930,6 +932,7 @@ export const translations = {
     play_build_notes_placeholder: 'Faka noma bhala amanothi lapha.',
     play_build_generate: 'Yenza umdlalo',
     play_build_validating: 'Engeza isihloko lamanothi ukuze uqhubeke.',
+    play_build_generating_hint: 'Sakha umdlalo wakho — kungathatha kuze kufike emizuzwini emihlanu ukuthola umphumela ongcono. Vula uhlelo lokusebenza.',
 
     play_progress_title: 'Senza imibuzo',
     play_progress_subtitle: 'Gemma 4 isebenza efonini yakho. Lokhu kuyimfihlo.',

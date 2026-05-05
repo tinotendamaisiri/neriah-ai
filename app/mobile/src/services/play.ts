@@ -3,8 +3,10 @@
 //
 // All calls go through the shared axios `client` from api.ts so they pick up
 // JWT auth, the route-key trace headers, and the same offline error mapping
-// the rest of the app uses. Long timeout on createLesson — Gemma 4 generation
-// typically takes 30-90s on the cloud path (three-tier escalation).
+// the rest of the app uses. Long timeout on createLesson — the user-facing
+// promise is "your lesson becomes a game in under 5 minutes" so we wait
+// 320 s (matches the 300 s Cloud Function timeout + 20 s margin so the
+// backend's 503 always wins over a client-side timeout).
 
 import type { AxiosResponse } from 'axios';
 import { client } from './api';
@@ -15,7 +17,7 @@ import type { PlayLesson, PlayQuestion, SessionResult } from '../play/types';
 // Cloud Function timeout is 540s and the gemma_client request timeout is
 // 240s, so 180s here gives the request room to complete without the mobile
 // axios bailing first. Same reasoning as /tutor/chat.
-const GEN_TIMEOUT = 180000;
+const GEN_TIMEOUT = 320000;
 
 export interface CreateLessonInput {
   title: string;

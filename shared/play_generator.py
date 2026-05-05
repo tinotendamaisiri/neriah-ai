@@ -62,7 +62,11 @@ class GenerationFellShortError(RuntimeError):
 # ─── Tunables ─────────────────────────────────────────────────────────────────
 
 _BATCH_SIZE = 30               # 30 keeps each call comfortably under max_tokens
-_MAX_BATCHES = 20              # hard upper bound on Gemma calls per generation
+_MAX_BATCHES = 30              # upper bound on Gemma calls per generation. Sized
+                               # to the 5-minute student-facing promise: 30 batches
+                               # × ~10 s avg Vertex latency ≈ 300 s wallclock, the
+                               # same as the Cloud Function timeout. The chronic-
+                               # low-yield early-bail trims this in practice.
 _LOW_YIELD_BATCHES_BEFORE_ESCALATE = 3
 _ZERO_YIELD_BATCHES_BEFORE_STOP = 4
 _LOW_YIELD_THRESHOLD = 5       # fewer than this many uniques per batch = "low yield"
@@ -157,9 +161,14 @@ def generate_lesson_questions(
 
     while batch_n < _MAX_BATCHES and len(accumulated) < target:
         batch_n += 1
-        # Always ask for at least the full batch size — undersizing the
-        # request lets dedup eat us back below target on the last batch.
-        request_n = max(_BATCH_SIZE, target - len(accumulated))
+        # Cap at _BATCH_SIZE. Gemma's response is capped at
+        # _GEMMA_MAX_TOKENS — asking for more than ~50 questions in one
+        # call would just get the response truncated, which then makes
+        # dedup look like it's rejecting everything. The natural-stop
+        # case is "we already have target − BATCH_SIZE; ask for the
+        # remainder + a small overshoot for dedup".
+        remaining = target - len(accumulated)
+        request_n = min(_BATCH_SIZE, max(8, remaining + 5))
 
         try:
             raw = _ask_gemma_for_batch(
@@ -256,6 +265,35 @@ def generate_lesson_questions(
             consecutive_low_yield += 1
         else:
             consecutive_low_yield = 0
+
+        # Early-bail on chronically thin tier-2 batches. If we're already
+        # at the highest tier and three consecutive batches each yielded
+        # under 3 unique questions, the topic is fundamentally too narrow
+        # (or the title is gibberish — "Beheh" etc.). Burning the rest of
+        # the batch budget won't change the outcome and just makes the
+        # student wait longer for the same 503.
+        if (
+            tier >= _TIER_FUNDAMENTALS
+            and consecutive_low_yield >= 3
+            and added_this_batch < 3
+        ):
+            logger.info(
+                "[play] tier-2 chronic low yield: bailing at batch %d (have %d, "
+                "last batch yielded %d, consecutive_low_yield=%d)",
+                batch_n, len(accumulated), added_this_batch, consecutive_low_yield,
+            )
+            log_event(
+                "play.generation.tier2_thin_bail",
+                "warn",
+                payload={
+                    "batch_n": batch_n,
+                    "have": len(accumulated),
+                    "target": target,
+                    "last_yield": added_this_batch,
+                },
+                surface="play",
+            )
+            break
 
         # Tier escalation. Climb a tier whenever the current one stalls
         # *and* we still need more questions to hit the target. This is

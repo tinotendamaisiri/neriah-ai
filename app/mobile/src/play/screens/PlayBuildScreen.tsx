@@ -436,6 +436,12 @@ export default function PlayBuildScreen() {
             {t('play_build_validating')}
           </Text>
         )}
+
+        {generating && (
+          <Text style={[playStyles.bodyMuted, { marginTop: 12, textAlign: 'center' }]}>
+            {t('play_build_generating_hint')}
+          </Text>
+        )}
       </ScrollView>
 
       <InAppCamera
