@@ -353,7 +353,9 @@ const styles = StyleSheet.create({
   },
   originRail: {
     flexDirection: 'row',
+    justifyContent: 'center',
     paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 12,
     gap: 8,
   },
