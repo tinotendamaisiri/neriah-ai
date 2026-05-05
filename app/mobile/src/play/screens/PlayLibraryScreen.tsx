@@ -183,8 +183,16 @@ export default function PlayLibraryScreen() {
         }
         ListEmptyComponent={
           <View style={styles.emptyWrap}>
-            <Ionicons name="library-outline" size={56} color={COLORS.teal300} />
-            <Text style={[playStyles.body, styles.emptyText]}>{t('play_library_empty')}</Text>
+            <Ionicons
+              name={lessons.length === 0 ? 'game-controller-outline' : 'library-outline'}
+              size={56}
+              color={COLORS.teal300}
+            />
+            <Text style={[playStyles.body, styles.emptyText]}>
+              {lessons.length === 0
+                ? t('play_library_empty_zero')
+                : t('play_library_empty')}
+            </Text>
             <TrackedPressable
               analyticsId="play.library.build_cta"
               style={[playStyles.primaryPill, styles.buildCta]}

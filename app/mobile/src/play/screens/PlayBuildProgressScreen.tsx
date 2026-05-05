@@ -102,7 +102,7 @@ export default function PlayBuildProgressScreen() {
       clearFormSnapshot(taskId),
     ]).catch(() => {});
     if (navigation.canGoBack()) navigation.goBack();
-    else navigation.navigate('PlayHome');
+    else navigation.navigate('PlayLibrary');
   }, [navigation, taskId]);
 
   // Intercept Android system back / edge-swipe so a stray gesture doesn't
@@ -219,7 +219,7 @@ export default function PlayBuildProgressScreen() {
           Alert.alert(
             'Saved offline',
             'Your lesson is ready. We will sync it the next time you are online.',
-            [{ text: 'OK', onPress: () => navigation.replace('PlayHome') }],
+            [{ text: 'OK', onPress: () => navigation.replace('PlayLibrary') }],
           );
         }
       } catch (err) {

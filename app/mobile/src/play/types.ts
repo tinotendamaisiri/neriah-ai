@@ -60,7 +60,6 @@ export interface SessionResult {
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 export type PlayStackParamList = {
-  PlayHome: undefined;
   PlayLibrary: undefined;
   PlayBuild: undefined;
   PlayBuildProgress: { taskId: string };
