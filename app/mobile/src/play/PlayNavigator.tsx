@@ -33,9 +33,24 @@ export default function PlayNavigator() {
       <Stack.Screen name="PlayHome" component={PlayHomeScreen} />
       <Stack.Screen name="PlayLibrary" component={PlayLibraryScreen} />
       <Stack.Screen name="PlayBuild" component={PlayBuildScreen} />
-      <Stack.Screen name="PlayBuildProgress" component={PlayBuildProgressScreen} />
+      <Stack.Screen
+        name="PlayBuildProgress"
+        component={PlayBuildProgressScreen}
+        // Mid-generation: swiping back loses the run. Force the
+        // student to use the in-screen Cancel button instead.
+        options={{ gestureEnabled: false }}
+      />
       <Stack.Screen name="PlayPreview" component={PlayPreviewScreen} />
-      <Stack.Screen name="PlayGame" component={PlayGameScreen} />
+      <Stack.Screen
+        name="PlayGame"
+        component={PlayGameScreen}
+        // In-game swipes (lane change, snake direction, stacker steer)
+        // would otherwise be intercepted by the iOS native-stack
+        // swipe-back gesture and exit the game. Quitting goes through
+        // pause → Quit to picker, or the Android hardware back which
+        // GameEngine intercepts to show the pause overlay.
+        options={{ gestureEnabled: false }}
+      />
       <Stack.Screen name="PlaySessionEnd" component={PlaySessionEndScreen} />
       <Stack.Screen name="PlayShare" component={PlayShareScreen} />
     </Stack.Navigator>
