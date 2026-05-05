@@ -64,7 +64,7 @@ interface ErrorGroup {
   source?:     string;
 }
 
-type TabKey = 'live' | 'errors' | 'funnels' | 'ai_usage' | 'trace';
+type TabKey = 'live' | 'errors' | 'funnels' | 'ai_usage' | 'play' | 'trace';
 
 // ── Proxy fetch helper (browser → Next API → Cloud Functions) ────────────────
 async function proxyJson(path: string): Promise<unknown> {
@@ -1495,6 +1495,353 @@ function AiUsageTab() {
   );
 }
 
+// ── Play tab — Neriah Play telemetry ─────────────────────────────────────────
+
+interface PlayDailyRow {
+  date: string;
+  lessons_created: number;
+  lessons_failed: number;
+  sessions_started: number;
+  sessions_ended: number;
+}
+interface PlayStatsResponse {
+  days: number;
+  totals: {
+    lessons_created: number;
+    lessons_failed: number;
+    sessions_started: number;
+    sessions_ended: number;
+    generation_fell_short: number;
+    generation_tier_escalations: number;
+    generation_auto_expand_starts: number;
+    generation_batch_failed: number;
+    generation_batch_success: number;
+  };
+  daily: PlayDailyRow[];
+  format_distribution: { format: string; sessions: number }[];
+  end_reasons: { reason: string; count: number }[];
+  top_players: { user_id: string; phone: string; sessions: number; last_played: string }[];
+}
+
+function PlayTab({ onOpenTraceTab }: {
+  onOpenTraceTab: (params: { user_id?: string; phone?: string; trace_id?: string }) => void;
+}) {
+  const [days, setDays]       = useState<DaysWindow>(7);
+  const [data, setData]       = useState<PlayStatsResponse | null>(null);
+  const [error, setError]     = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const res = await proxyJson(
+        `/api/admin/events/play_stats?days=${days}`,
+      ) as PlayStatsResponse;
+      setData(res);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load Play stats.');
+    } finally {
+      setLoading(false);
+    }
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const formatLabel = (f: string) =>
+    f === 'lane_runner' ? 'Lane Runner'
+    : f === 'stacker'   ? 'Stacker'
+    : f === 'blaster'   ? 'Blaster'
+    : f === 'snake'     ? 'Snake'
+    : f;
+
+  const reasonLabel = (r: string) =>
+    r === 'completed'      ? 'Completed bank'
+    : r === 'quit'         ? 'Quit'
+    : r === 'collision'    ? 'Snake collision'
+    : r === 'length_zero'  ? 'Snake → length 0'
+    : r === 'bins_overflow'? 'Stacker → bins overflow'
+    : r === 'health_zero'  ? 'Blaster → health 0'
+    : r === 'invader_breach' ? 'Blaster → invader breach'
+    : r === 'score_zero'   ? 'Lane Runner → score 0'
+    : r;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.g900 }}>
+            Neriah Play
+          </h2>
+          <p style={{ margin: '2px 0 0', fontSize: 13, color: C.g500 }}>
+            Lessons generated, sessions played, generator errors — last {days} days
+          </p>
+        </div>
+        <DaysSwitcher value={days} onChange={setDays} onRefresh={load} />
+      </div>
+
+      {error && (
+        <div style={{ background: C.redLt, border: `1.5px solid ${C.red}`,
+          borderRadius: 10, padding: '10px 14px', fontSize: 13, color: C.red }}>
+          {error}
+        </div>
+      )}
+
+      {loading && !data && (
+        <p style={{ color: C.g400, fontSize: 14, textAlign: 'center' }}>
+          Loading Play stats…
+        </p>
+      )}
+
+      {data && (
+        <>
+          {/* Headline KPIs */}
+          <div style={{ display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <KpiCard
+              label="Lessons created"
+              value={data.totals.lessons_created.toLocaleString()}
+              tone="green"
+            />
+            <KpiCard
+              label="Lesson failures"
+              value={data.totals.lessons_failed.toLocaleString()}
+              tone={data.totals.lessons_failed > 0 ? 'red' : 'g500'}
+            />
+            <KpiCard
+              label="Sessions started"
+              value={data.totals.sessions_started.toLocaleString()}
+              tone="teal"
+            />
+            <KpiCard
+              label="Sessions ended"
+              value={data.totals.sessions_ended.toLocaleString()}
+              tone="teal"
+            />
+            <KpiCard
+              label="Generator fell short"
+              value={data.totals.generation_fell_short.toLocaleString()}
+              tone={data.totals.generation_fell_short > 0 ? 'red' : 'g500'}
+              hint="<100 questions on a generation"
+            />
+            <KpiCard
+              label="Tier escalations"
+              value={data.totals.generation_tier_escalations.toLocaleString()}
+              tone="amber"
+              hint="grounded → broader → fundamentals"
+            />
+            <KpiCard
+              label="Auto-expand triggered"
+              value={data.totals.generation_auto_expand_starts.toLocaleString()}
+              tone="amber"
+            />
+            <KpiCard
+              label="Batch failures"
+              value={data.totals.generation_batch_failed.toLocaleString()}
+              tone={data.totals.generation_batch_failed > 0 ? 'red' : 'g500'}
+            />
+          </div>
+
+          {/* Daily timeline */}
+          <div style={{ background: C.white, borderRadius: 12,
+            border: `1.5px solid ${C.g200}`, padding: 18, overflowX: 'auto' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 700, color: C.g900 }}>
+              Daily activity
+            </h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: C.g50, color: C.g500 }}>
+                  <th style={{ textAlign: 'left',  padding: 8 }}>Date</th>
+                  <th style={{ textAlign: 'right', padding: 8 }}>Lessons</th>
+                  <th style={{ textAlign: 'right', padding: 8 }}>Failures</th>
+                  <th style={{ textAlign: 'right', padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: 'right', padding: 8 }}>Ended</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.daily.map(d => (
+                  <tr key={d.date} style={{ borderTop: `1px solid ${C.g200}` }}>
+                    <td style={{ padding: 8, color: C.g700, fontFamily: 'monospace' }}>
+                      {d.date}
+                    </td>
+                    <td style={{ padding: 8, textAlign: 'right', color: C.g900, fontWeight: 600 }}>
+                      {d.lessons_created || '·'}
+                    </td>
+                    <td style={{ padding: 8, textAlign: 'right',
+                      color: d.lessons_failed > 0 ? C.red : C.g400 }}>
+                      {d.lessons_failed || '·'}
+                    </td>
+                    <td style={{ padding: 8, textAlign: 'right', color: C.g900 }}>
+                      {d.sessions_started || '·'}
+                    </td>
+                    <td style={{ padding: 8, textAlign: 'right', color: C.g500 }}>
+                      {d.sessions_ended || '·'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Per-format + end-reason breakdown side by side */}
+          <div style={{ display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            <div style={{ background: C.white, borderRadius: 12,
+              border: `1.5px solid ${C.g200}`, padding: 18 }}>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 700, color: C.g900 }}>
+                Sessions by format
+              </h3>
+              {data.format_distribution.every(f => f.sessions === 0) ? (
+                <p style={{ color: C.g400, fontSize: 13 }}>No sessions in this window.</p>
+              ) : (
+                data.format_distribution.map(f => {
+                  const max = Math.max(1, ...data.format_distribution.map(x => x.sessions));
+                  const pct = (f.sessions / max) * 100;
+                  return (
+                    <div key={f.format} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between',
+                        fontSize: 13, color: C.g700, marginBottom: 4 }}>
+                        <span>{formatLabel(f.format)}</span>
+                        <span style={{ fontFamily: 'monospace', color: C.g500 }}>
+                          {f.sessions}
+                        </span>
+                      </div>
+                      <div style={{ height: 6, background: C.g100, borderRadius: 3 }}>
+                        <div style={{
+                          width: `${pct}%`,
+                          height: '100%',
+                          background: C.teal,
+                          borderRadius: 3,
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ background: C.white, borderRadius: 12,
+              border: `1.5px solid ${C.g200}`, padding: 18 }}>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 700, color: C.g900 }}>
+                Why sessions end
+              </h3>
+              {data.end_reasons.length === 0 ? (
+                <p style={{ color: C.g400, fontSize: 13 }}>No ended sessions in this window.</p>
+              ) : (
+                data.end_reasons.map(r => {
+                  const max = Math.max(1, ...data.end_reasons.map(x => x.count));
+                  const pct = (r.count / max) * 100;
+                  const colour = r.reason === 'completed' ? C.green
+                    : r.reason === 'quit' ? C.g400
+                    : C.amber;
+                  return (
+                    <div key={r.reason} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between',
+                        fontSize: 13, color: C.g700, marginBottom: 4 }}>
+                        <span>{reasonLabel(r.reason)}</span>
+                        <span style={{ fontFamily: 'monospace', color: C.g500 }}>
+                          {r.count}
+                        </span>
+                      </div>
+                      <div style={{ height: 6, background: C.g100, borderRadius: 3 }}>
+                        <div style={{
+                          width: `${pct}%`,
+                          height: '100%',
+                          background: colour,
+                          borderRadius: 3,
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Top players */}
+          <div style={{ background: C.white, borderRadius: 12,
+            border: `1.5px solid ${C.g200}`, padding: 18, overflowX: 'auto' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 700, color: C.g900 }}>
+              Top players (by sessions)
+            </h3>
+            {data.top_players.length === 0 ? (
+              <p style={{ color: C.g400, fontSize: 13 }}>No sessions in this window.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: C.g50, color: C.g500 }}>
+                    <th style={{ textAlign: 'left',  padding: 8 }}>User</th>
+                    <th style={{ textAlign: 'left',  padding: 8 }}>Phone</th>
+                    <th style={{ textAlign: 'right', padding: 8 }}>Sessions</th>
+                    <th style={{ textAlign: 'left',  padding: 8 }}>Last played</th>
+                    <th style={{ textAlign: 'right', padding: 8 }}>Trace</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.top_players.map(p => (
+                    <tr key={p.user_id} style={{ borderTop: `1px solid ${C.g200}` }}>
+                      <td style={{ padding: 8, color: C.g700, fontFamily: 'monospace' }}>
+                        {p.user_id.slice(0, 12)}…
+                      </td>
+                      <td style={{ padding: 8, color: C.g500 }}>{p.phone || '—'}</td>
+                      <td style={{ padding: 8, textAlign: 'right', color: C.g900, fontWeight: 600 }}>
+                        {p.sessions}
+                      </td>
+                      <td style={{ padding: 8, color: C.g500, fontFamily: 'monospace' }}>
+                        {(p.last_played || '').replace('T', ' ').slice(0, 19)}
+                      </td>
+                      <td style={{ padding: 8, textAlign: 'right' }}>
+                        <button
+                          onClick={() => onOpenTraceTab({ user_id: p.user_id })}
+                          style={{ background: 'transparent', border: 'none',
+                            color: C.teal, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({ label, value, tone, hint }: {
+  label: string;
+  value: string;
+  tone: 'teal' | 'amber' | 'green' | 'red' | 'g500';
+  hint?: string;
+}) {
+  const colour =
+    tone === 'teal'  ? C.teal :
+    tone === 'amber' ? C.amber :
+    tone === 'green' ? C.green :
+    tone === 'red'   ? C.red :
+    C.g500;
+  return (
+    <div style={{ background: C.white, borderRadius: 12,
+      border: `1.5px solid ${C.g200}`, padding: 16 }}>
+      <div style={{ fontSize: 12, color: C.g500, fontWeight: 600,
+        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: colour, lineHeight: 1.05 }}>
+        {value}
+      </div>
+      {hint && (
+        <div style={{ fontSize: 11, color: C.g400, marginTop: 4 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Per-user trace tab — full timeline ───────────────────────────────────────
 type TraceLookup = { user_id?: string; phone?: string; trace_id?: string };
 
@@ -1745,6 +2092,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'errors',   label: 'Errors'         },
   { key: 'funnels',  label: 'Funnels'        },
   { key: 'ai_usage', label: 'AI usage'       },
+  { key: 'play',     label: 'Neriah Play'    },
   { key: 'trace',    label: 'Per-user trace' },
 ];
 
@@ -1863,6 +2211,7 @@ export default function MonitoringAdminPage() {
         {tab === 'errors'   && <ErrorsTab   onOpenTraceTab={openTraceTab} />}
         {tab === 'funnels'  && <FunnelsTab />}
         {tab === 'ai_usage' && <AiUsageTab />}
+        {tab === 'play'     && <PlayTab     onOpenTraceTab={openTraceTab} />}
         {tab === 'trace'    && <PerUserTraceTab initial={tracePrefill} />}
       </div>
     </div>

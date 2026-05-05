@@ -7,6 +7,7 @@ GET    /api/admin/events/errors         — admin: error groups by fingerprint
 GET    /api/admin/events/trace          — admin: events for a trace / user / phone
 GET    /api/admin/events/funnel         — admin: conversion funnel (teacher / student)
 GET    /api/admin/events/ai_usage       — admin: AI call telemetry (vertex + litert)
+GET    /api/admin/events/play_stats     — admin: Neriah Play telemetry (lessons / sessions / errors)
 
 Mobile clients post batches of UI / AI / submission events here. Identity is
 ALWAYS taken from the JWT — never from the client body — so a compromised
@@ -793,4 +794,204 @@ def events_ai_usage():
         "top_users_by_cost": top_users,
         "failure_rate":     failure_rate,
         "models_used":      models_used,
+    }), 200
+
+
+# ─── GET /api/admin/events/play_stats ────────────────────────────────────────
+
+# Event types Neriah Play emits via `@instrument_route("play.X", "play")` and
+# the mobile analytics service. Listed here so the dashboard query has a
+# stable cap on event-type fanout (and Firestore knows to seek the indexed
+# (event_type, timestamp) pair rather than a full collection scan).
+_PLAY_EVENT_TYPES = (
+    # Backend lifecycle (one set of start/success/failed per route)
+    "play.lessons.create.success",
+    "play.lessons.create.failed",
+    "play.lessons.list.success",
+    "play.lessons.detail.success",
+    "play.lessons.delete.success",
+    "play.sessions.create.success",
+    "play.sessions.create.failed",
+    "play.lessons.stats.success",
+    # Generator internals
+    "play.generation.batch.success",
+    "play.generation.batch.failed",
+    "play.generation.tier_escalate",
+    "play.generation.fell_short",
+    "play.generation.auto_expand.start",
+    # Mobile session lifecycle
+    "play.session.start",
+    "play.session.end",
+    "play.lesson.create.start",
+    "play.lesson.create.success",
+    "play.lesson.create.failed",
+    "play.lesson.create.cancelled",
+    "play.lesson.create.tier_escalate",
+)
+
+# Cap per event type so a runaway week doesn't stream the whole collection.
+_PLAY_STATS_PER_TYPE_CAP = 5000
+
+# Game formats we expect to see in `payload.format`.
+_PLAY_FORMATS = ("lane_runner", "stacker", "blaster", "snake")
+
+
+@events_bp.get("/admin/events/play_stats")
+@instrument_route("admin.events.play_stats", "events")
+def events_play_stats():
+    """Admin — Neriah Play telemetry.
+
+    Returns daily lesson generations + session counts, per-format
+    distribution, end-reason distribution, generator escalation +
+    fell-short totals, and the top players by session count.
+
+    Query params:
+        days   lookback window in days (default 7, max 90)
+    """
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        days = int(request.args.get("days", 7) or 7)
+    except ValueError:
+        days = 7
+    days = max(1, min(days, 90))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # ── Daily buckets ──
+    daily: dict[str, dict] = {}
+    today = datetime.now(timezone.utc).date()
+    for offset in range(days):
+        day = today - timedelta(days=offset)
+        key = day.isoformat()
+        daily[key] = {
+            "date": key,
+            "lessons_created": 0,
+            "lessons_failed": 0,
+            "sessions_started": 0,
+            "sessions_ended": 0,
+        }
+
+    # ── Aggregates ──
+    totals = {
+        "lessons_created": 0,
+        "lessons_failed": 0,
+        "sessions_started": 0,
+        "sessions_ended": 0,
+        "generation_fell_short": 0,
+        "generation_tier_escalations": 0,
+        "generation_auto_expand_starts": 0,
+        "generation_batch_failed": 0,
+        "generation_batch_success": 0,
+    }
+    format_counts: dict[str, int] = {f: 0 for f in _PLAY_FORMATS}
+    end_reason_counts: dict[str, int] = defaultdict(int)
+    user_sessions: dict[str, dict] = {}  # user_id → {phone, sessions, last_played}
+
+    try:
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        db = get_db()
+
+        for event_type in _PLAY_EVENT_TYPES:
+            try:
+                ref = (
+                    db.collection("events")
+                    .where(filter=FieldFilter("event_type", "==", event_type))
+                    .where(filter=FieldFilter("timestamp", ">=", cutoff))
+                    .limit(_PLAY_STATS_PER_TYPE_CAP)
+                )
+                for snap in ref.stream():
+                    data = snap.to_dict() or {}
+                    iso = _ts_to_iso(data.get("timestamp"))
+                    if not iso:
+                        continue
+                    date_key = iso[:10]
+                    bucket = daily.get(date_key)
+                    payload = data.get("payload") or {}
+
+                    # Lessons
+                    if event_type == "play.lessons.create.success" or event_type == "play.lesson.create.success":
+                        totals["lessons_created"] += 1
+                        if bucket:
+                            bucket["lessons_created"] += 1
+                    elif event_type == "play.lessons.create.failed" or event_type == "play.lesson.create.failed":
+                        totals["lessons_failed"] += 1
+                        if bucket:
+                            bucket["lessons_failed"] += 1
+
+                    # Sessions
+                    elif event_type == "play.session.start":
+                        totals["sessions_started"] += 1
+                        if bucket:
+                            bucket["sessions_started"] += 1
+                        fmt = (payload.get("format") or "").lower()
+                        if fmt in format_counts:
+                            format_counts[fmt] += 1
+                        # Top-players accumulation
+                        uid = data.get("user_id") or ""
+                        if uid:
+                            entry = user_sessions.setdefault(uid, {
+                                "user_id": uid,
+                                "phone": data.get("user_phone") or "",
+                                "sessions": 0,
+                                "last_played": iso,
+                            })
+                            entry["sessions"] += 1
+                            if iso > (entry["last_played"] or ""):
+                                entry["last_played"] = iso
+                    elif event_type == "play.session.end":
+                        totals["sessions_ended"] += 1
+                        if bucket:
+                            bucket["sessions_ended"] += 1
+                        reason = (payload.get("end_reason") or "unknown").lower()
+                        end_reason_counts[reason] += 1
+
+                    # Generator internals
+                    elif event_type == "play.generation.fell_short":
+                        totals["generation_fell_short"] += 1
+                    elif event_type == "play.generation.tier_escalate":
+                        totals["generation_tier_escalations"] += 1
+                    elif event_type == "play.generation.auto_expand.start":
+                        totals["generation_auto_expand_starts"] += 1
+                    elif event_type == "play.generation.batch.failed":
+                        totals["generation_batch_failed"] += 1
+                    elif event_type == "play.generation.batch.success":
+                        totals["generation_batch_success"] += 1
+            except Exception:
+                logger.exception("[admin.play_stats] query failed for %s", event_type)
+                continue
+    except Exception:
+        logger.exception("[admin.play_stats] firestore query failed")
+        return jsonify({"error": "query failed"}), 500
+
+    # Sort daily buckets ascending by date for the chart
+    daily_list = sorted(daily.values(), key=lambda r: r["date"])
+
+    # Top players by session count
+    top_players = sorted(
+        user_sessions.values(),
+        key=lambda x: x["sessions"],
+        reverse=True,
+    )[:10]
+
+    # End-reason list, sorted descending
+    end_reasons = sorted(
+        ({"reason": r, "count": c} for r, c in end_reason_counts.items()),
+        key=lambda x: x["count"],
+        reverse=True,
+    )
+
+    # Per-format list
+    format_list = [
+        {"format": f, "sessions": format_counts[f]}
+        for f in _PLAY_FORMATS
+    ]
+
+    return jsonify({
+        "days": days,
+        "totals": totals,
+        "daily": daily_list,
+        "format_distribution": format_list,
+        "end_reasons": end_reasons,
+        "top_players": top_players,
     }), 200
