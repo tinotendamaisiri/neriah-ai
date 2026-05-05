@@ -45,7 +45,11 @@ const TEXT_COLORS: Record<AnswerLetter, string> = {
 
 const STARS_FAR_COUNT = 28;
 const STARS_NEAR_COUNT = 12;
-const INVADER_BASE_FALL = 0.012; // fraction of height per second
+const INVADER_BASE_FALL = 0.006; // fraction of height per second. At
+                                 // multiplier 1.0 the closest invader takes
+                                 // ~85 s to descend, leaving the student
+                                 // plenty of time to read its letter and
+                                 // shoot. Speed scales up on correct.
 const HEALTH_MAX = 4;
 const INVADER_SIZE_RATIO = 0.18; // of canvas width
 

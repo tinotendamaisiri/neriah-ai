@@ -67,7 +67,12 @@ const STARTING_SCORE: Record<GameFormat, number> = {
 const SPEED_MAX = 2.5;
 const SPEED_MIN = 0.5;
 const SPEED_STEP_UP = 1.05;     // ×1.05 on each correct
-const SPEED_STEP_DOWN = 0.95;   // ×0.95 on each wrong
+// Wrong answers no longer slow the game down. The user wanted: start
+// slow, speed up on correct, stay at the current speed on wrong. So
+// SPEED_STEP_DOWN is kept as a constant for symmetry (and in case we
+// want to bring the slowdown back) but it is NOT applied in
+// handleAnswer.
+const SPEED_STEP_DOWN = 0.95;
 const FLASH_MS = 220;
 const BANNER_FADE_MS = 150;
 
@@ -270,7 +275,8 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
           newScore = Math.max(0, score - 1);
         }
         setScore(newScore);
-        setSpeedMultiplier((s) => Math.max(SPEED_MIN, s * SPEED_STEP_DOWN));
+        // Speed stays put on wrong (per design: slow at start, only
+        // speeds up when the student is getting things right).
         setWrongAnswerTick((t) => t + 1);
       }
       setQuestionsAttempted((n) => n + 1);

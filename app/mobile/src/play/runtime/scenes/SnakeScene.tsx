@@ -47,7 +47,11 @@ const HEAD_COLOR = '#F5A623';
 const BODY_LIGHT = '#0D7377';
 const BODY_DARK = '#04342C';
 
-const BASE_TICK_SECONDS = 0.32;     // 320 ms base step → ~150 ms at 2× speed
+const BASE_TICK_SECONDS = 0.55;     // 550 ms base step at multiplier 1.0.
+                                    // Easy to read the four food labels and
+                                    // change direction in time. Tick gets
+                                    // shorter (faster snake) as the student
+                                    // chains correct answers.
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 

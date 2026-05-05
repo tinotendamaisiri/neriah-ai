@@ -43,7 +43,11 @@ import type { AnswerLetter, SceneProps } from '../types';
 const LANE_COLORS = ['#0D7377', '#085041', '#3AAFA9', '#9FE1CB'];
 const LETTER_BY_LANE: AnswerLetter[] = ['A', 'B', 'C', 'D'];
 
-const BASE_SWEEP_SECONDS = 1.5;     // checkpoint horizon → runner
+const BASE_SWEEP_SECONDS = 6.0;     // checkpoint horizon → runner. Picked to
+                                    // give the student plenty of time to read
+                                    // an 80-character question at multiplier
+                                    // 1.0. Speed only ramps up as the student
+                                    // chains correct answers.
 const ROAD_SCROLL_RATE = 4.0;       // strips per second
 const STRIP_COUNT = 24;             // road shading strips
 const HORIZON_FRAC = 0.06;          // road horizon as fraction of height

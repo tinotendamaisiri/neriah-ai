@@ -32,7 +32,11 @@ const ROWS = 12;
 const BIN_LETTERS: AnswerLetter[] = ['A', 'B', 'C', 'D'];
 const BIN_BORDERS = ['#0D7377', '#085041', '#3AAFA9', '#9FE1CB'];
 
-const BLOCK_FALL_SECONDS = 3.0;     // base fall time top→bottom of playfield
+const BLOCK_FALL_SECONDS = 5.5;     // base fall time top→bottom of playfield.
+                                    // Slow enough at multiplier 1.0 that a
+                                    // student can read the prompt and steer
+                                    // the block. Speeds up as they chain
+                                    // correct answers.
 const BIN_RISE_TWEEN_MS = 220;      // bin-row push-up animation
 const COL_COUNT = 4;                // four answer bins, each spans 2 grid cells
 
