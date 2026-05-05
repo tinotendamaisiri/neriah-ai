@@ -439,6 +439,7 @@ def _compute_funnel(funnel_id: str, funnel: dict, cutoff: datetime) -> dict:
     # earliest_per_user[user_id] = list of earliest epoch per step (None if missing)
     earliest_per_user: dict[str, list[Optional[float]]] = {}
 
+    from google.cloud.firestore_v1 import Query as _Q
     for step_idx, step in enumerate(steps):
         for event_type in step["match"]:
             try:
@@ -446,6 +447,7 @@ def _compute_funnel(funnel_id: str, funnel: dict, cutoff: datetime) -> dict:
                     db.collection("events")
                     .where(filter=FieldFilter("event_type", "==", event_type))
                     .where(filter=FieldFilter("timestamp", ">=", cutoff))
+                    .order_by("timestamp", direction=_Q.DESCENDING)
                     .limit(_FUNNEL_PER_TYPE_CAP)
                 )
                 for snap in ref.stream():
@@ -636,10 +638,18 @@ def events_ai_usage():
 
         for event_type in _AI_EVENT_TYPES:
             try:
+                # `order_by("timestamp", DESCENDING)` is required so this
+                # query uses the existing (event_type, timestamp DESC)
+                # composite index. Without an order_by Firestore wants
+                # the ASC direction, which we don't have an index for —
+                # the query then 400's with FailedPrecondition and the
+                # AI usage tab silently shows zeros.
+                from google.cloud.firestore_v1 import Query as _Q
                 ref = (
                     db.collection("events")
                     .where(filter=FieldFilter("event_type", "==", event_type))
                     .where(filter=FieldFilter("timestamp", ">=", cutoff))
+                    .order_by("timestamp", direction=_Q.DESCENDING)
                     .limit(_AI_USAGE_PER_TYPE_CAP)
                 )
                 for snap in ref.stream():
@@ -890,6 +900,7 @@ def events_play_stats():
 
     try:
         from google.cloud.firestore_v1.base_query import FieldFilter
+        from google.cloud.firestore_v1 import Query as _Q
         db = get_db()
 
         for event_type in _PLAY_EVENT_TYPES:
@@ -898,6 +909,7 @@ def events_play_stats():
                     db.collection("events")
                     .where(filter=FieldFilter("event_type", "==", event_type))
                     .where(filter=FieldFilter("timestamp", ">=", cutoff))
+                    .order_by("timestamp", direction=_Q.DESCENDING)
                     .limit(_PLAY_STATS_PER_TYPE_CAP)
                 )
                 for snap in ref.stream():
