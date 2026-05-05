@@ -221,17 +221,31 @@ export default function PlayBuildScreen() {
 
     if (route === 'cloud') {
       setGenerating(true);
+      // Async create — the route returns 201 with status='generating'
+      // within seconds. We retry once on a no-response error because a
+      // single transient network blip on the cellular link is the most
+      // common cause of "Check your internet" — the backend itself is
+      // fast (1-2 s) and the worker thread does the long work.
+      const tryCreate = async () => playApi.createLesson({
+        title: title.trim(),
+        source_content: notes.trim(),
+        subject: subject || undefined,
+        grade: level || undefined,
+      });
       try {
-        // Async create — the route returns 201 with status='generating'
-        // within seconds. Actual question-bank generation runs server-
-        // side (worker thread, no-cpu-throttling) and survives the
-        // student backgrounding the phone. Mobile polls until ready.
-        const lesson = await playApi.createLesson({
-          title: title.trim(),
-          source_content: notes.trim(),
-          subject: subject || undefined,
-          grade: level || undefined,
-        });
+        let lesson;
+        try {
+          lesson = await tryCreate();
+        } catch (firstErr) {
+          const code = (firstErr as { error_code?: string })?.error_code;
+          if (code === 'NO_CONNECTION') {
+            track('play.lesson.create.retry', { reason: 'no_connection' });
+            await new Promise((r) => setTimeout(r, 1500));
+            lesson = await tryCreate();
+          } else {
+            throw firstErr;
+          }
+        }
         track('play.lesson.create.queued', {
           path: 'cloud',
           lesson_id: lesson.id,
@@ -240,10 +254,15 @@ export default function PlayBuildScreen() {
         navigation.replace('PlayBuildProgress', { cloudLessonId: lesson.id });
       } catch (err) {
         trackError('play.lesson.create.failed', err, { path: 'cloud' });
-        const message =
-          (err as { message?: string })?.message ||
-          'Could not start the game build. Please try again.';
-        Alert.alert('Generation failed', message);
+        const e = err as { title?: string; message?: string };
+        // Use the interceptor's title when present so the alert reads
+        // "No connection / Check your internet" instead of the
+        // hardcoded "Generation failed" — the latter is misleading
+        // when the request never even reached the backend.
+        Alert.alert(
+          e?.title || 'Generation failed',
+          e?.message || 'Could not start the game build. Please try again.',
+        );
       } finally {
         setGenerating(false);
       }

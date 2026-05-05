@@ -9,8 +9,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
+  Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -21,7 +22,6 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { COLORS } from '../../constants/colors';
 import { ScreenContainer } from '../../components/ScreenContainer';
-import { BackButton } from '../../components/BackButton';
 import TrackedPressable from '../../components/TrackedPressable';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -48,6 +48,7 @@ export default function PlayLibraryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
+  const [subjectModalOpen, setSubjectModalOpen] = useState(false);
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
 
   useEffect(() => {
@@ -121,47 +122,22 @@ export default function PlayLibraryScreen() {
     );
   }
 
+  const subjectLabel =
+    subjectFilter === 'all' ? t('play_library_subject_all') : subjectFilter;
+
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
-      {/* Teal header band */}
-      <View style={playStyles.headerBand}>
-        <View style={playStyles.headerRow}>
-          <BackButton variant="onTeal" />
-          <Text style={[playStyles.headerTitle, { flex: 1, marginLeft: 12 }]} numberOfLines={1}>
-            {t('play_library_title')}
-          </Text>
-        </View>
+      {/* Teal header band — title centered, no back button (this is
+          the root of the Play stack, students leave it via the
+          bottom-tab nav). */}
+      <View style={[playStyles.headerBand, styles.centeredHeader]}>
+        <Text style={[playStyles.headerTitle, styles.centeredTitle]} numberOfLines={1}>
+          {t('play_library_title')}
+        </Text>
       </View>
 
-      {/* Subject filter rail */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRail}
-        // flexGrow: 0 + height collapse the rail to its chip height.
-        // Without this, native-stack gives the ScrollView all leftover
-        // vertical space and the children (rounded chips) stretch into
-        // huge ellipsoids.
-        style={styles.filterRailScroll}
-      >
-        {subjects.map((s) => {
-          const active = subjectFilter === s;
-          const label = s === 'all' ? t('play_library_subject_all') : s;
-          return (
-            <TrackedPressable
-              key={s}
-              analyticsId="play.library.filter_subject"
-              analyticsPayload={{ subject: s }}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => setSubjectFilter(s)}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-            </TrackedPressable>
-          );
-        })}
-      </ScrollView>
-
-      {/* Origin filter rail */}
+      {/* Origin filter row — All / Mine / Class / Shared, sits below
+          the band and is the first thing the student sees. */}
       <View style={styles.originRail}>
         {(['all', 'mine', 'class', 'shared'] as OriginFilter[]).map((o) => {
           const active = originFilter === o;
@@ -188,6 +164,60 @@ export default function PlayLibraryScreen() {
           );
         })}
       </View>
+
+      {/* Subject dropdown — replaces the old horizontal-scrolling
+          chip rail. Default "All subjects"; tap to choose another. */}
+      <Pressable
+        style={styles.subjectSelect}
+        onPress={() => setSubjectModalOpen(true)}
+      >
+        <Text style={styles.subjectSelectText}>{subjectLabel}</Text>
+        <Ionicons name="chevron-down" size={18} color={COLORS.teal500} />
+      </Pressable>
+
+      <Modal
+        visible={subjectModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSubjectModalOpen(false)}
+      >
+        <Pressable
+          style={styles.subjectModalScrim}
+          onPress={() => setSubjectModalOpen(false)}
+        >
+          <View style={styles.subjectModalSheet}>
+            {subjects.map((s) => {
+              const label = s === 'all' ? t('play_library_subject_all') : s;
+              const active = subjectFilter === s;
+              return (
+                <Pressable
+                  key={s}
+                  onPress={() => {
+                    setSubjectFilter(s);
+                    setSubjectModalOpen(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.subjectModalRow,
+                    pressed && { backgroundColor: COLORS.gray50 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.subjectModalRowText,
+                      active && { color: COLORS.teal500, fontWeight: '700' },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                  {active ? (
+                    <Ionicons name="checkmark" size={18} color={COLORS.teal500} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </Pressable>
+      </Modal>
 
       <FlatList
         data={filtered}
@@ -269,36 +299,58 @@ export default function PlayLibraryScreen() {
 
 const styles = StyleSheet.create({
   loaderWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  filterRailScroll: {
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  filterRail: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
+  centeredHeader: {
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: COLORS.gray50,
+  centeredTitle: {
+    textAlign: 'center',
+  },
+  subjectSelect: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.white,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginRight: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
-  chipActive: {
-    backgroundColor: COLORS.teal500,
-    borderColor: COLORS.teal500,
-  },
-  chipText: {
+  subjectSelectText: {
     fontFamily: PLAY_FONT,
-    fontSize: 13,
+    fontSize: 14,
     color: COLORS.text,
     fontWeight: '600',
   },
-  chipTextActive: { color: COLORS.white },
+  subjectModalScrim: {
+    flex: 1,
+    backgroundColor: 'rgba(12,18,32,0.45)',
+    justifyContent: 'flex-end',
+  },
+  subjectModalSheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 24,
+  },
+  subjectModalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  subjectModalRowText: {
+    fontFamily: PLAY_FONT,
+    fontSize: 15,
+    color: COLORS.text,
+  },
   originRail: {
     flexDirection: 'row',
     paddingHorizontal: 16,
