@@ -134,17 +134,27 @@ def _vertex_chat_completions(
     messages: list[dict],
     max_tokens: int | None = None,
     temperature: float | None = None,
+    caller_surface: str | None = None,
 ) -> str:
     """
     POST to the Vertex AI OpenAI-compatible chat completions endpoint.
     Retries on 429 and 5xx with exponential backoff + jitter; honours the
     Retry-After header when present (capped at 30s). Returns the assistant
     message content string. Raises classified NeriahError on persistent error.
+
+    `caller_surface` is the feature name we tag every emitted event with —
+    "tutor", "ta", "mark", "play" — so the AI-usage dashboard can split
+    failure rate / latency by feature. When omitted we read it from
+    flask.g (stamped by `@instrument_route`); falls back to "vertex" out
+    of request context (e.g. background worker threads — those should
+    pass it explicitly).
     """
     # Local import — keeps observability out of cold-start path and
     # avoids any potential circular dependency.
     import os as _os
-    from shared.observability import log_event  # noqa: PLC0415
+    from shared.observability import log_event, current_caller_surface  # noqa: PLC0415
+
+    surface = caller_surface or current_caller_surface() or "vertex"
     url = (
         f"https://aiplatform.googleapis.com/v1/projects/{settings.GCP_PROJECT_ID}"
         "/locations/global/endpoints/openapi/chat/completions"
@@ -214,7 +224,7 @@ def _vertex_chat_completions(
                         "wait_s": wait,
                         "attempt": attempt + 1,
                     },
-                    surface="vertex",
+                    surface=surface,
                     ai={"model": settings.VERTEX_MODEL_ID},
                 )
                 time.sleep(wait)
@@ -247,7 +257,7 @@ def _vertex_chat_completions(
             log_event(
                 "vertex.call.success",
                 "info",
-                surface="vertex",
+                surface=surface,
                 latency_ms=latency_ms,
                 ai={
                     "model": settings.VERTEX_MODEL_ID,
@@ -277,7 +287,7 @@ def _vertex_chat_completions(
                         "attempt": attempt + 1,
                         "reason": type(exc).__name__,
                     },
-                    surface="vertex",
+                    surface=surface,
                     ai={"model": settings.VERTEX_MODEL_ID},
                 )
                 time.sleep(wait)
@@ -286,7 +296,7 @@ def _vertex_chat_completions(
             log_event(
                 "vertex.call.failed",
                 "error",
-                surface="vertex",
+                surface=surface,
                 latency_ms=latency_ms,
                 error=exc,
                 ai={
@@ -313,7 +323,7 @@ def _vertex_chat_completions(
         log_event(
             "vertex.call.success",
             "info",
-            surface="vertex",
+            surface=surface,
             latency_ms=latency_ms,
             ai={
                 "model": settings.VERTEX_MODEL_ID,
@@ -331,7 +341,7 @@ def _vertex_chat_completions(
         log_event(
             "vertex.call.failed",
             "error",
-            surface="vertex",
+            surface=surface,
             latency_ms=latency_ms,
             error=exc,
             ai={

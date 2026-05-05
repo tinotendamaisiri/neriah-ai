@@ -467,7 +467,15 @@ STUDY MATERIAL:
         {"role": "user", "content": user},
     ]
     # 30 questions at ~120 tokens each + JSON overhead → 6 KB room.
-    return _vertex_chat_completions(messages, max_tokens=_GEMMA_MAX_TOKENS, temperature=0.7)
+    # caller_surface="play" because the worker thread runs outside any
+    # flask.g request context — has to be set explicitly so AI-usage
+    # event tagging stays correct.
+    return _vertex_chat_completions(
+        messages,
+        max_tokens=_GEMMA_MAX_TOKENS,
+        temperature=0.7,
+        caller_surface="play",
+    )
 
 
 def _parse_questions_json(raw: str) -> list[dict]:

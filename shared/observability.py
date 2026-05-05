@@ -91,6 +91,20 @@ def new_id(prefix: str = "evt") -> str:
     return f"{prefix}_{time_part}{rand_part}"
 
 
+def current_caller_surface() -> Optional[str]:
+    """Read the caller surface stamped by `@instrument_route` on flask.g.
+
+    Returns None when no request context is active (e.g. the play-
+    generation worker thread). Callers that need a non-None surface
+    (typically AI-call event tagging) should pick a sensible default
+    like "vertex" themselves.
+    """
+    try:
+        return getattr(flask.g, "caller_surface", None)
+    except RuntimeError:
+        return None
+
+
 def current_trace_id() -> str:
     """Return the trace id for the current request.
 
@@ -372,6 +386,18 @@ def instrument_route(event_prefix: str, surface: Optional[str] = None) -> Callab
                 if flask.has_request_context():
                     method = flask.request.method
                     path = flask.request.path
+            except Exception:
+                pass
+
+            # Stamp the caller surface on flask.g so any AI client called
+            # downstream (shared.gemma_client._vertex_chat_completions)
+            # can read it and tag its events with the right feature
+            # name (tutor / ta / mark / play) instead of the generic
+            # "vertex". Drives the per-surface failure-rate panel on
+            # the AI usage tab.
+            try:
+                if flask.has_request_context():
+                    flask.g.caller_surface = inferred_surface
             except Exception:
                 pass
 

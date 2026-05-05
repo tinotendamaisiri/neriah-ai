@@ -95,6 +95,16 @@ export default function PlayLibraryScreen() {
 
   const filtered = useMemo(() => {
     return lessons.filter((l) => {
+      // Hide in-progress / failed / 0-question lessons from the main
+      // list. A lesson with status='generating' is being built by the
+      // backend worker thread; status='failed' was a safety-valve trip.
+      // Either way the student shouldn't see them as playable cards.
+      // Treat undefined status as legacy 'ready' so old rows still
+      // show up.
+      const status = l.status;
+      if (status && status !== 'ready') return false;
+      if ((l.question_count ?? 0) < 1) return false;
+
       if (subjectFilter !== 'all' && l.subject !== subjectFilter) return false;
       if (originFilter === 'all') return true;
       return resolveOrigin(l) === originFilter;

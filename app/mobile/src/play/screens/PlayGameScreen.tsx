@@ -100,6 +100,31 @@ export default function PlayGameScreen() {
     );
   }
 
+  // Guard: a lesson with no questions can't be played. This happens
+  // when a worker thread crashed mid-generation OR a legacy row was
+  // saved with an empty bank. Bounce the student back to the library
+  // with a clear message instead of mounting GameEngine on []
+  // (which would just instantly say "Game over").
+  const questionCount = lesson.questions?.length ?? 0;
+  if (questionCount === 0) {
+    return (
+      <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
+        <View style={styles.errorWrap}>
+          <Text style={styles.errorText}>
+            This game has no questions yet. Please make a new one.
+          </Text>
+          <TrackedPressable
+            analyticsId="play.game.empty_bank.back"
+            style={[playStyles.primaryPill, { marginTop: 12 }]}
+            onPress={() => navigation.replace('PlayLibrary')}
+          >
+            <Text style={playStyles.primaryPillText}>Back to library</Text>
+          </TrackedPressable>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
       <GameEngine lesson={lesson} format={format} onSessionEnd={onSessionEnd} />
