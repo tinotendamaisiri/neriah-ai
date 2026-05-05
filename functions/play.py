@@ -136,11 +136,20 @@ def play_create_lesson():
     # Load student to populate class_ids if the lesson is later shared.
     student = get_doc("students", student_id) or {}
 
+    # Build a topic_hint for tier-1+ broader-concept generation. We DROP
+    # the title from this hint because students often supply gibberish or
+    # placeholder titles ("Bzbs", "Test", "Hw 1") — those poison the hint
+    # and Gemma can't infer broader concepts from them. Subject + level
+    # + the first sentence of the source content gives the model enough
+    # signal to anchor on the actual topic.
+    first_sentence = source_content.split(".", 1)[0].strip()
+    if len(first_sentence) > 140:
+        first_sentence = first_sentence[:140].rstrip() + "…"
     topic_hint = " · ".join(
         part for part in (
-            title,
-            subject if isinstance(subject, str) else None,
-            grade if isinstance(grade, str) else None,
+            first_sentence or None,
+            subject if isinstance(subject, str) and subject.strip() else None,
+            grade if isinstance(grade, str) and grade.strip() else None,
         ) if part
     )
 

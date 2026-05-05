@@ -331,10 +331,19 @@ function buildBatchPrompt(input: BatchInput): string {
   const subjectLine = input.subject ? `Subject: ${input.subject}` : '';
   const gradeLine = input.grade ? `Level: ${input.grade}` : '';
 
+  // Use the first sentence of the source as the topic anchor for tier-2.
+  // Students often supply gibberish titles ("Bzbs", "Test"); the title
+  // alone makes Gemma generate questions about nothing.
+  const firstSentence = (() => {
+    const s = (input.source_content || '').split('.', 1)[0].trim();
+    return s.length > 140 ? `${s.slice(0, 140).trim()}…` : s;
+  })();
+  const topicAnchor = firstSentence || input.title;
+
   let scopeLine: string;
   if (input.tier >= TIER_FUNDAMENTALS) {
     scopeLine =
-      `You MUST output ${BATCH_SIZE} review questions on the topic "${input.title}". ` +
+      `You MUST output ${BATCH_SIZE} review questions on this topic: "${topicAnchor}". ` +
       'Cover core definitions, worked examples, applications, and common ' +
       'misconceptions a student at this level would meet. The notes below are flavour ' +
       'only — do not limit yourself to them. Stay at the implied level.';
@@ -349,7 +358,6 @@ function buildBatchPrompt(input: BatchInput): string {
 
   return [
     'You generate multiple-choice quiz questions for African school students.',
-    `Lesson title: ${input.title}`,
     subjectLine,
     gradeLine,
     '',

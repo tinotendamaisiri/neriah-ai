@@ -70,7 +70,15 @@ _MAX_BATCHES = 30              # upper bound on Gemma calls per generation. Size
 _LOW_YIELD_BATCHES_BEFORE_ESCALATE = 3
 _ZERO_YIELD_BATCHES_BEFORE_STOP = 4
 _LOW_YIELD_THRESHOLD = 5       # fewer than this many uniques per batch = "low yield"
-_SEMANTIC_DUP_COSINE = 0.85    # cosine ≥ threshold → treated as a duplicate
+_SEMANTIC_DUP_COSINE = 0.92    # cosine ≥ threshold → treated as a duplicate.
+                               # 0.92 (not 0.85) matches what an arcade quiz
+                               # actually wants: keep "Define photosynthesis" +
+                               # "What is photosynthesis?" — both are valid
+                               # 1-question gameplay rounds even if the
+                               # embeddings cluster tightly. 0.85 was rejecting
+                               # the natural paraphrase pool of finite source
+                               # content, so generation kept stalling well
+                               # before reaching the 100-question target.
 
 _GEMMA_MAX_TOKENS = 6144
 
