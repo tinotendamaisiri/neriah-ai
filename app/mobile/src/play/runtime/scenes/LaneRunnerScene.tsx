@@ -64,7 +64,18 @@ const ONBOARD_AUTO_DISMISS_MS = 4000;
 
 interface LaneRunnerProps extends SceneProps {
   loseSignal?: boolean;
+  /** Engine bumps this when the previous answer was wrong. */
+  wrongAnswerTick?: number;
+  /** Engine bumps this when the previous answer was correct. */
+  correctAnswerTick?: number;
 }
+
+// Three consecutive wrongs in a row trips the loss. With the new "wrong
+// answers don't change the score" rule there's no score-zero loss path
+// in lane runner, so we use a streak instead.
+const WRONG_STREAK_LIMIT = 3;
+// How long the green/red "Correct! / Wrong" burst sits on screen.
+const ANSWER_BURST_MS = 1000;
 
 const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
   speedMultiplier,
@@ -74,6 +85,8 @@ const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
   width,
   height,
   loseSignal,
+  wrongAnswerTick,
+  correctAnswerTick,
 }) => {
   // ── State ─────────────────────────────────────────────────────────────────
   const [lane, setLane] = useState<number>(0);
@@ -82,13 +95,49 @@ const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
   const [gaitPhase, setGaitPhase] = useState<number>(0);
   const [lossFade, setLossFade] = useState<number>(0);
   const [hintVisible, setHintVisible] = useState<boolean>(false);
+  const [burst, setBurst] = useState<'correct' | 'wrong' | null>(null);
 
   const laneRef = useRef<number>(0);
+  const wrongStreakRef = useRef<number>(0);
   const lossFiredRef = useRef<boolean>(false);
   const speedRef = useRef<number>(speedMultiplier);
   const pausedRef = useRef<boolean>(paused);
   speedRef.current = speedMultiplier;
   pausedRef.current = paused;
+
+  // ── 1-second correct/wrong burst overlay ──────────────────────────────────
+  const lastCorrectRef = useRef<number | undefined>(correctAnswerTick);
+  useEffect(() => {
+    if (
+      correctAnswerTick !== undefined &&
+      correctAnswerTick !== lastCorrectRef.current
+    ) {
+      lastCorrectRef.current = correctAnswerTick;
+      wrongStreakRef.current = 0;  // reset the streak on any correct
+      setBurst('correct');
+      const t = setTimeout(() => setBurst((b) => (b === 'correct' ? null : b)), ANSWER_BURST_MS);
+      return () => clearTimeout(t);
+    }
+  }, [correctAnswerTick]);
+
+  const lastWrongRef = useRef<number | undefined>(wrongAnswerTick);
+  useEffect(() => {
+    if (
+      wrongAnswerTick !== undefined &&
+      wrongAnswerTick !== lastWrongRef.current
+    ) {
+      lastWrongRef.current = wrongAnswerTick;
+      wrongStreakRef.current += 1;
+      setBurst('wrong');
+      const t = setTimeout(() => setBurst((b) => (b === 'wrong' ? null : b)), ANSWER_BURST_MS);
+      // Loss when the student misses three gates in a row.
+      if (wrongStreakRef.current >= WRONG_STREAK_LIMIT && !lossFiredRef.current) {
+        lossFiredRef.current = true;
+        onLoss('wrong_streak');
+      }
+      return () => clearTimeout(t);
+    }
+  }, [wrongAnswerTick, onLoss]);
 
   // ── Onboarding hint (read once on mount) ──────────────────────────────────
   useEffect(() => {
@@ -561,6 +610,58 @@ const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
         <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
 
+      {/* Letter gates: A/B/C/D chips that descend in their lanes and
+          collide with the runner row. The runner has to be in the
+          right lane when the gates arrive. Gates use the same
+          four-teal palette as the AnswerGrid letters above. */}
+      {(() => {
+        const gateSize = Math.max(36, Math.min(56, halfAtY(sweepY) * 0.5));
+        return (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {LETTER_BY_LANE.map((letter, i) => {
+              const cx = laneCenterAtY(i, sweepY);
+              const palette = LANE_COLORS[i];
+              const fg = i === 3 ? '#085041' : '#FFFFFF';
+              return (
+                <View
+                  key={letter}
+                  style={[
+                    styles.gate,
+                    {
+                      width: gateSize,
+                      height: gateSize,
+                      left: cx - gateSize / 2,
+                      top: sweepY - gateSize / 2,
+                      backgroundColor: palette,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.gateLetter, { color: fg, fontSize: gateSize * 0.5 }]}>
+                    {letter}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        );
+      })()}
+
+      {/* 1-second correct/wrong burst (green / red) */}
+      {burst ? (
+        <View pointerEvents="none" style={styles.burstWrap}>
+          <View
+            style={[
+              styles.burstCard,
+              { backgroundColor: burst === 'correct' ? '#16A34A' : '#DC2626' },
+            ]}
+          >
+            <Text style={styles.burstText}>
+              {burst === 'correct' ? 'Correct!' : 'Wrong'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
       {/* One-time onboarding hint */}
       {hintVisible ? (
         <View pointerEvents="box-none" style={styles.hintWrap}>
@@ -580,6 +681,34 @@ const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
 const styles = StyleSheet.create({
   root: {
     overflow: 'hidden',
+  },
+  gate: {
+    position: 'absolute',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  gateLetter: {
+    fontFamily: 'Georgia',
+    fontWeight: '700',
+  },
+  burstWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  burstCard: {
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 14,
+  },
+  burstText: {
+    color: '#FFFFFF',
+    fontFamily: 'Georgia',
+    fontWeight: '700',
+    fontSize: 28,
   },
   hintWrap: {
     ...StyleSheet.absoluteFillObject,

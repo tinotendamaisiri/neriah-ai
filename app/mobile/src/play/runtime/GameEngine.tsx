@@ -268,15 +268,13 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
         setSpeedMultiplier((s) => Math.min(SPEED_MAX, s * SPEED_STEP_UP));
         setCorrectAnswerTick((t) => t + 1);
       } else {
-        // wrong: clamp to 0 floor for non-lane_runner; lane_runner allows 0 → trips loss
-        if (format === 'lane_runner') {
-          newScore = score - 1;
-        } else {
-          newScore = Math.max(0, score - 1);
-        }
-        setScore(newScore);
-        // Speed stays put on wrong (per design: slow at start, only
-        // speeds up when the student is getting things right).
+        // Wrong answers are now neutral: no score change, no speed
+        // change. Per the user's design, "correct rewards points,
+        // wrong has no reward". The per-format loss conditions
+        // (lane runner: 3 wrongs in a row, stacker: bins overflow,
+        // blaster: invader breach / health 0, snake: collision /
+        // length 0) are what end the run.
+        // newScore stays = score
         setWrongAnswerTick((t) => t + 1);
       }
       setQuestionsAttempted((n) => n + 1);
@@ -332,10 +330,9 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
           setAnswerLocked(false);
         });
 
-        // Lane runner: score=0 triggers loss visualization
-        if (format === 'lane_runner' && newScore <= 0) {
-          setLoseSignal(true);
-        }
+        // Lane runner now uses the wrong-streak loss inside the scene
+        // (3 consecutive wrongs). The old score-zero path is dead with
+        // the no-deduct rule, so loseSignal stays unset here.
       }, FLASH_MS);
     },
     [
@@ -477,6 +474,8 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
               <LaneRunnerScene
                 {...sceneCommonProps}
                 loseSignal={loseSignal}
+                wrongAnswerTick={wrongAnswerTick}
+                correctAnswerTick={correctAnswerTick}
               />
             ) : null}
             {format === 'stacker' ? (
