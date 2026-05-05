@@ -35,6 +35,7 @@ import {
   BackHandler,
   Easing,
   StyleSheet,
+  Text,
   View,
   LayoutChangeEvent,
 } from 'react-native';
@@ -72,8 +73,30 @@ const BANNER_FADE_MS = 150;
 
 const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
   // ── Question pool ──
+  // Defensive validation. A malformed question (missing options,
+  // bad correct index, undefined fields) reaching Skia / a scene
+  // can cascade into a native crash, not a JS error: state updates
+  // happen each frame and one NaN deep in the math is enough to
+  // panic the canvas. Reject anything that doesn't match the
+  // PlayQuestion contract before it gets near the engine state.
   const questions: PlayQuestion[] = useMemo(() => {
-    const all = lesson.questions ?? [];
+    const all = (lesson.questions ?? []).filter((q) => {
+      if (!q || typeof q !== 'object') return false;
+      if (typeof q.prompt !== 'string' || q.prompt.length === 0) return false;
+      if (!Array.isArray(q.options) || q.options.length !== 4) return false;
+      if (q.options.some((o) => typeof o !== 'string' || o.length === 0)) {
+        return false;
+      }
+      if (
+        typeof q.correct !== 'number' ||
+        Number.isNaN(q.correct) ||
+        q.correct < 0 ||
+        q.correct > 3
+      ) {
+        return false;
+      }
+      return true;
+    });
     const copy = [...all];
     // Fisher-Yates shuffle
     for (let i = copy.length - 1; i > 0; i--) {
@@ -84,6 +107,20 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
   }, [lesson.questions]);
 
   const totalQuestions = questions.length;
+
+  // If validation rejected every question (truly broken row), bail with
+  // a friendly screen rather than crashing the canvas on undefined state.
+  // PlayGameScreen also guards on lesson.questions.length, but a row
+  // with 100 malformed entries would slip past that filter.
+  if (totalQuestions === 0) {
+    return (
+      <View style={[styles.root, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
+        <Text style={{ color: '#fff', fontFamily: 'Georgia', fontSize: 16, textAlign: 'center' }}>
+          This game has no valid questions. Please make a new one.
+        </Text>
+      </View>
+    );
+  }
 
   // ── Session state ──
   const [score, setScore] = useState<number>(STARTING_SCORE[format]);

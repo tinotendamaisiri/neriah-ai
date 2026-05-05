@@ -36,7 +36,7 @@ export const translations = {
     marking_scheme: 'Marking scheme',
     marking_scheme_hint: 'Add the questions and answers so Neriah can grade student submissions.',
     upload_question_paper_photo: 'Upload question paper photo',
-    upload_question_paper_sub: 'Take photo, choose from gallery, or upload a file — AI will generate the scheme',
+    upload_question_paper_sub: 'Take photo, choose from gallery, or upload a file: AI will generate the scheme',
     generate_with_ai: 'Generate with AI',
     generate_with_ai_sub: 'Paste or type question paper text',
     regenerate: 'Regenerate',
@@ -285,7 +285,7 @@ export const translations = {
     play_build_validating: 'Add a title and some notes to continue.',
     play_build_generating_title: 'Neriah is thinking…',
     play_build_generating_hint: 'Please be patient: your game is generating.',
-    play_progress_background_ok: 'You can close the app — generation will keep running.',
+    play_progress_background_ok: 'You can close the app: generation will keep running.',
 
     // Build progress
     play_progress_title: 'Generating questions',
@@ -383,7 +383,7 @@ export const translations = {
     marking_scheme: 'Chema chemaka',
     marking_scheme_hint: 'Wedzera mibvunzo nemhinduro kuti Neriah igone kumaka.',
     upload_question_paper_photo: 'Isa mufananidzo wemubvunzo',
-    upload_question_paper_sub: 'Tora mufananidzo kana sarudza kubva kugalari — AI ichagadzira chema',
+    upload_question_paper_sub: 'Tora mufananidzo kana sarudza kubva kugalari: AI ichagadzira chema',
     generate_with_ai: 'Gadzira ne AI',
     generate_with_ai_sub: 'Isa kana nyora mazwi emubvunzo',
     regenerate: 'Gadzira zvakare',
@@ -616,7 +616,7 @@ export const translations = {
     play_build_validating: 'Wedzera zita uye notsi kuti uenderere mberi.',
     play_build_generating_title: 'Neriah iri kufunga…',
     play_build_generating_hint: 'Tinokumbira kuti utimirire: mutambo wako uri kugadzirwa.',
-    play_progress_background_ok: 'Unogona kuvhara application — kugadzirwa kuchaenderera mberi.',
+    play_progress_background_ok: 'Unogona kuvhara application: kugadzirwa kuchaenderera mberi.',
 
     play_progress_title: 'Tirikuita mibvunzo',
     play_progress_subtitle: 'Gemma 4 iri kushanda mufoni mako. Zvichachengetedzwa.',
@@ -708,7 +708,7 @@ export const translations = {
     marking_scheme: 'Isikhema semaka',
     marking_scheme_hint: 'Engeza imibuzo nezimpendulo ukuze u-Neriah akwazi ukumaka.',
     upload_question_paper_photo: 'Layisha isithombe sekhadi lombuzo',
-    upload_question_paper_sub: 'Thatha isithombe, khetha kugalari, noma layisha ifayela — i-AI izakwakha isikhema',
+    upload_question_paper_sub: 'Thatha isithombe, khetha kugalari, noma layisha ifayela: i-AI izakwakha isikhema',
     generate_with_ai: 'Yenza nge-AI',
     generate_with_ai_sub: 'Namathisela noma bhala amagama emibuzo',
     regenerate: 'Yenza futhi',
@@ -941,7 +941,7 @@ export const translations = {
     play_build_validating: 'Engeza isihloko lamanothi ukuze uqhubeke.',
     play_build_generating_title: 'UNeriah uyacabanga…',
     play_build_generating_hint: 'Sicela ubekezele: umdlalo wakho uyakhiwa.',
-    play_progress_background_ok: 'Ungavala uhlelo — ukwakha kuzoqhubeka.',
+    play_progress_background_ok: 'Ungavala uhlelo: ukwakha kuzoqhubeka.',
 
     play_progress_title: 'Senza imibuzo',
     play_progress_subtitle: 'Gemma 4 isebenza efonini yakho. Lokhu kuyimfihlo.',

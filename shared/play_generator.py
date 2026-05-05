@@ -450,47 +450,84 @@ def _ask_gemma_for_batch(
         "no commentary."
     )
 
+    # Tier-specific prompt bodies. The earlier shared structure
+    # (always include "STUDY MATERIAL" + a "stick to the source"
+    # rule) was the reason tier 1+ batches returned parsed=0 in the
+    # wild — Gemma read the conflicting instructions and answered
+    # with an empty array. Each tier now gets its own prompt with
+    # only the rules that make sense at that scope.
     if tier >= _TIER_FUNDAMENTALS:
-        scope_block = (
-            f"You MUST produce exactly {requested} fresh review questions on "
-            f"the topic: {anchor}. Cover core definitions, worked examples, "
-            f"applications, and common misconceptions a student at this level "
-            f"would meet. The notes below are kept only as flavour — do not "
-            f"limit yourself to them. Do not jump above the implied level."
-        )
-    elif tier >= _TIER_EXPAND:
-        scope_block = (
-            f"The student's notes below have been exhausted. Generate questions "
-            f"covering broader related concepts, real-world applications, and "
-            f"common misconceptions for the topic: {anchor}. Stay within the "
-            f"educational level implied by the notes — do not jump grades."
-        )
-    else:
-        scope_block = (
-            "Generate questions strictly grounded in the study material below. "
-            "Do not introduce facts that aren't supported by the notes."
-        )
+        # Topic-only review. Source notes are NOT included so the
+        # model isn't biased back toward the (already-exhausted)
+        # supplied notes. Anchor is the title/subject/level/first-
+        # sentence string the route built.
+        user = f"""Produce exactly {requested} fresh multiple-choice review questions on this topic:
 
-    user = f"""Generate {requested} fresh multiple-choice questions.
+TOPIC: {anchor}
 
-{scope_block}
+Cover core definitions, common misconceptions, worked examples, and real-world applications a student at the implied level would meet.
 
 REQUIREMENTS:
 - Output EXACTLY {requested} questions — never fewer.
-- Each question's "prompt" MUST be 80 characters or fewer.
+- Each "prompt" MUST be 80 characters or fewer.
 - Each option in "options" MUST be 25 characters or fewer.
 - Provide EXACTLY 4 options per question.
-- "correct" is the zero-based index (0, 1, 2, or 3) of the right option in the options list.
-- Each question must be DISTINCT from the "already covered" list below — no rewording, no near-duplicates.
-- Vary difficulty and topic; avoid trivia about names that aren't in the source.
+- "correct" is the zero-based index (0, 1, 2, or 3) of the right option.
+- Each question must be DISTINCT from the "already covered" list below — different angle, different fact.
 
-OUTPUT FORMAT (raw JSON, no fences):
+OUTPUT FORMAT (raw JSON only, no markdown, no commentary):
 [
-  {{"prompt": "...", "options": ["...", "...", "...", "..."], "correct": 0}},
-  ...
+  {{"prompt": "...", "options": ["...", "...", "...", "..."], "correct": 0}}
 ]
 
-ALREADY COVERED (do not repeat or paraphrase):
+ALREADY COVERED (different angles only — no paraphrases):
+{covered_block}
+"""
+    elif tier >= _TIER_EXPAND:
+        user = f"""The student's source notes (below) have been exhausted. Produce exactly {requested} fresh multiple-choice questions on broader related concepts of the same topic.
+
+TOPIC: {anchor}
+
+Lean on adjacent sub-topics, real-world applications, and common misconceptions. Stay within the educational level the notes imply — do not jump grades.
+
+REQUIREMENTS:
+- Output EXACTLY {requested} questions — never fewer.
+- Each "prompt" MUST be 80 characters or fewer.
+- Each option in "options" MUST be 25 characters or fewer.
+- Provide EXACTLY 4 options per question.
+- "correct" is the zero-based index (0, 1, 2, or 3) of the right option.
+- Each question must be DISTINCT from the "already covered" list below — different angle, not a rewording.
+
+OUTPUT FORMAT (raw JSON only, no markdown, no commentary):
+[
+  {{"prompt": "...", "options": ["...", "...", "...", "..."], "correct": 0}}
+]
+
+SOURCE NOTES (context only — questions should go beyond them):
+{source_content}
+
+ALREADY COVERED (different angles only — no paraphrases):
+{covered_block}
+"""
+    else:
+        # Tier 0 — strictly grounded in the supplied notes.
+        user = f"""Produce exactly {requested} fresh multiple-choice questions strictly grounded in the study material below.
+
+REQUIREMENTS:
+- Output EXACTLY {requested} questions — never fewer.
+- Each "prompt" MUST be 80 characters or fewer.
+- Each option in "options" MUST be 25 characters or fewer.
+- Provide EXACTLY 4 options per question.
+- "correct" is the zero-based index (0, 1, 2, or 3) of the right option.
+- Each question must be DISTINCT from the "already covered" list below — different angle, not a rewording.
+- Do not introduce facts not supported by the notes.
+
+OUTPUT FORMAT (raw JSON only, no markdown, no commentary):
+[
+  {{"prompt": "...", "options": ["...", "...", "...", "..."], "correct": 0}}
+]
+
+ALREADY COVERED (different angles only — no paraphrases):
 {covered_block}
 
 STUDY MATERIAL:
