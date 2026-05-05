@@ -157,7 +157,11 @@ const SnakeScene: React.FC<SnakeProps> = ({
   // ── Gesture: swipe to change direction ────────────────────────────────────
   const pan = useMemo(
     () =>
-      Gesture.Pan().onEnd((e) => {
+      // .runOnJS(true) is critical: gesture-handler v2 + Reanimated v4
+      // runs `.onEnd` as a UI-thread worklet by default. Our callback
+      // touches React state + refs to update the snake direction.
+      // Doing that from a worklet SIGABRTs the iOS app.
+      Gesture.Pan().runOnJS(true).onEnd((e) => {
         const dx = e.translationX ?? 0;
         const dy = e.translationY ?? 0;
         if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;

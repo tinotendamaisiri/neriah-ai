@@ -166,7 +166,12 @@ const LaneRunnerScene: React.FC<LaneRunnerProps> = ({
   // ── Gesture: horizontal lane change + vertical commit ─────────────────────
   const pan = useMemo(
     () =>
-      Gesture.Pan().onEnd((e) => {
+      // .runOnJS(true) is critical: gesture-handler v2 + Reanimated v4
+      // runs `.onEnd` as a UI-thread worklet by default. Our callback
+      // touches React state + refs + calls the engine onAnswer prop.
+      // Doing that from a worklet throws an unhandled JS exception
+      // that escapes into Hermes/C++ and SIGABRTs the iOS app.
+      Gesture.Pan().runOnJS(true).onEnd((e) => {
         const dx = e.translationX ?? 0;
         const dy = e.translationY ?? 0;
         const SWIPE = 36;
