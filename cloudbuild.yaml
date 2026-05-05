@@ -45,9 +45,36 @@ steps:
       #     --region=us-central1 --member=allUsers \
       #     --role=roles/run.invoker --project=neriah-ai-492302
       - --memory=1Gi
-      - --timeout=300s
+      # 540 s function timeout — gives the play-generation worker thread
+      # the full 5-minute student-facing budget plus margin (request
+      # itself returns within seconds; the thread runs in the
+      # background and is the long-tailed user). Cloud Functions Gen2
+      # caps at 3600 s so 540 is well within the limit.
+      - --timeout=540s
       - --max-instances=3
       - --concurrency=1
+      # NOTE: `--no-cpu-throttling` is a Cloud Run flag, not exposed by
+      # `gcloud functions deploy`. After this deploy completes, run
+      # the helper step below to update the underlying Run service so
+      # the play-generation worker thread keeps making Vertex calls
+      # after POST /play/lessons returns.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: cpu-always
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - update
+      - neriah-grading
+      - --region=us-central1
+      # CPU=1 is required by Cloud Run when --no-cpu-throttling is on
+      # (CPU-always cannot be < 1 vCPU). The play worker thread keeps
+      # making Vertex calls after the original request returns, so we
+      # need always-allocated CPU; the bigger CPU also makes each
+      # Gemma call return faster.
+      - --cpu=1
+      - --no-cpu-throttling
+    waitFor: ['deploy']
       # Pin the runtime SA so deploys never drift back to the Compute
       # Engine default. Required roles: aiplatform.user,
       # aiplatform.endpointUser, datastore.user, storage.objectAdmin,

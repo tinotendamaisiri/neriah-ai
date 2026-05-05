@@ -559,7 +559,7 @@ _AI_EVENT_TYPES = (
     "litert.inference.failed",
 )
 
-_AI_SURFACES = ("tutor", "ta", "mark")
+_AI_SURFACES = ("tutor", "ta", "mark", "play")
 
 
 def _percentile(sorted_values: list[float], p: float) -> Optional[float]:

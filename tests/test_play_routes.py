@@ -125,6 +125,24 @@ class TestCreateLesson:
         classmate_student = _student_doc(CLASSMATE_ID, [CLASS_ID])
 
         # ── Stage 1: OWNER creates lesson ────────────────────────────────────
+        # The route is async — it spawns a worker thread and returns 201
+        # with status='generating' immediately. We patch the spawner to
+        # run the equivalent generation synchronously so the test can
+        # observe the full final state in `saved`.
+        from shared.models import PlayLesson  # local import to avoid cycles
+
+        def _sync_worker(*, lesson_id, source_content, topic_hint, student_id):  # noqa: ARG001
+            # Mirror the worker body but synchronous: write a 'ready'
+            # row with the generated questions.
+            current = saved.get(lesson_id, {})
+            current.update({
+                "status": "ready",
+                "questions": [q.model_dump() for q in generated],
+                "question_count": 100,
+                "was_expanded": False,
+            })
+            saved[lesson_id] = current
+
         with patch(
             "shared.play_generator.generate_lesson_questions",
             return_value=(generated, 100, False),
@@ -133,7 +151,10 @@ class TestCreateLesson:
             side_effect=lambda c, d: owner_student if (c, d) == ("students", OWNER_ID) else None,
         ), patch(
             "functions.play.upsert",
-            side_effect=lambda c, _id, data: saved.update({_id: {**data, "id": _id}}),
+            side_effect=lambda c, _id, data: saved.update({_id: {**saved.get(_id, {}), **data, "id": _id}}),
+        ), patch(
+            "functions.play._spawn_generation_worker",
+            side_effect=_sync_worker,
         ):
             resp = client.post(
                 "/api/play/lessons",
@@ -149,10 +170,14 @@ class TestCreateLesson:
         assert resp.status_code == 201, resp.get_data(as_text=True)
         body = resp.get_json()
         new_lesson_id = body["id"]
-        assert body["question_count"] == 100
         assert body["owner_id"] == OWNER_ID
         assert "is_draft" not in body
         assert new_lesson_id in saved
+        # The final state in `saved` is what the worker wrote — full bank,
+        # ready status. The route response itself is the placeholder row
+        # (status='generating') that the mobile would poll on.
+        assert saved[new_lesson_id]["question_count"] == 100
+        assert saved[new_lesson_id]["status"] == "ready"
 
         saved_lesson = saved[new_lesson_id]
         # ── Stage 2: list as OWNER ───────────────────────────────────────────

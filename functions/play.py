@@ -153,40 +153,14 @@ def play_create_lesson():
         ) if part
     )
 
-    from shared.play_generator import (
-        generate_lesson_questions,
-        GenerationFellShortError,
-    )
-    try:
-        questions, count, was_expanded = generate_lesson_questions(
-            source_content=source_content,
-            target=100,
-            topic_hint=topic_hint or None,
-        )
-    except NotImplementedError:
-        # Should never happen — backend never sets use_on_device=True.
-        return jsonify({"error": "on-device generation is a client-only path"}), 400
-    except GenerationFellShortError as exc:
-        # Safety valve fired — the three-tier escalation couldn't reach
-        # 100 questions even after broadening to fundamentals. Don't save
-        # a partial lesson; tell the student to try a different topic.
-        logger.warning(
-            "[play] generation fell short for student=%s: %d/%d",
-            student_id, exc.achieved, exc.target,
-        )
-        return jsonify({
-            "error": (
-                "We couldn't build a full game from that topic. Try adding "
-                "more detail to your notes or pick a slightly broader topic."
-            ),
-        }), 503
-    except Exception:
-        logger.exception("[play] generation failed for student=%s", student_id)
-        return jsonify({
-            "error": "We couldn't build a quiz from that content right now. Please try again in a minute."
-        }), 503
-
-    # Every saved lesson is complete — no draft state.
+    # Async fire-and-forget pattern. We create the lesson row with
+    # status='generating' and return immediately so the mobile client
+    # can navigate straight to the polling progress screen — even if
+    # the user backgrounds the phone, the worker thread keeps running
+    # to completion (Cloud Function deployed with --no-cpu-throttling
+    # so CPU stays allocated outside the active request). The mobile
+    # polls GET /play/lessons/<id> every few seconds and renders
+    # final state when status flips to 'ready' or 'failed'.
     lesson = PlayLesson(
         title=title,
         subject=subject if isinstance(subject, str) and subject.strip() else None,
@@ -194,19 +168,102 @@ def play_create_lesson():
         owner_id=student_id,
         owner_role="student",
         source_content=source_content,
-        questions=questions,
-        question_count=count,
-        was_expanded=was_expanded,
+        questions=[],
+        question_count=0,
+        status="generating",
     )
     upsert("play_lessons", lesson.id, lesson.model_dump())
 
+    _spawn_generation_worker(
+        lesson_id=lesson.id,
+        source_content=source_content,
+        topic_hint=topic_hint or None,
+        student_id=student_id,
+    )
+
     out = lesson.model_dump()
     out["origin"] = "mine"
-    # Surface primary_class_id on response so the mobile client knows
-    # which class the lesson would default-share to.
     primary_class_ids = _student_class_ids(student)
     out["primary_class_id"] = primary_class_ids[0] if primary_class_ids else None
     return jsonify(out), 201
+
+
+def _spawn_generation_worker(
+    *,
+    lesson_id: str,
+    source_content: str,
+    topic_hint: Optional[str],
+    student_id: str,
+) -> None:
+    """Kick off the actual question-bank generation in a daemon thread.
+    Updates the play_lessons doc when done — status='ready' on success
+    with the full question bank attached, status='failed' on safety-
+    valve trip or unexpected error with `error_message` populated.
+    """
+    import threading
+
+    def _worker():
+        try:
+            from shared.play_generator import (
+                generate_lesson_questions,
+                GenerationFellShortError,
+            )
+            try:
+                questions, count, was_expanded = generate_lesson_questions(
+                    source_content=source_content,
+                    target=100,
+                    topic_hint=topic_hint,
+                )
+            except GenerationFellShortError as exc:
+                logger.warning(
+                    "[play] generation fell short for lesson=%s student=%s: %d/%d",
+                    lesson_id, student_id, exc.achieved, exc.target,
+                )
+                upsert("play_lessons", lesson_id, {
+                    "status": "failed",
+                    "error_message": (
+                        "We couldn't build a full game from that topic. Try "
+                        "adding more detail to your notes or pick a slightly "
+                        "broader topic."
+                    ),
+                })
+                return
+            except Exception:
+                logger.exception(
+                    "[play] generation worker failed for lesson=%s student=%s",
+                    lesson_id, student_id,
+                )
+                upsert("play_lessons", lesson_id, {
+                    "status": "failed",
+                    "error_message": (
+                        "We couldn't build a quiz from that content right "
+                        "now. Please try again in a minute."
+                    ),
+                })
+                return
+
+            upsert("play_lessons", lesson_id, {
+                "status": "ready",
+                "questions": [q.model_dump() for q in questions],
+                "question_count": count,
+                "was_expanded": was_expanded,
+            })
+        except Exception:
+            # Never let the worker thread leak an exception that would
+            # leave the lesson stuck in 'generating'.
+            logger.exception(
+                "[play] worker outer exception for lesson=%s", lesson_id,
+            )
+            try:
+                upsert("play_lessons", lesson_id, {
+                    "status": "failed",
+                    "error_message": "Generation worker crashed unexpectedly.",
+                })
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_worker, name=f"play-gen-{lesson_id}", daemon=True)
+    t.start()
 
 
 # ─── GET /play/lessons ────────────────────────────────────────────────────────

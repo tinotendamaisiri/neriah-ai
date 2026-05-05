@@ -28,6 +28,13 @@ export interface PlayLesson {
   /** True when the generator auto-augmented broader-topic questions
    *  because the supplied notes were too sparse for a full bank. */
   was_expanded?: boolean;
+  /** Async-generation lifecycle. New lessons are returned with
+   *  status='generating' from POST /play/lessons; the mobile polls
+   *  GET /play/lessons/<id> until status flips to 'ready' (worker
+   *  succeeded) or 'failed' (worker hit safety valve / crashed —
+   *  read `error_message`). Legacy rows default to 'ready'. */
+  status?: 'generating' | 'ready' | 'failed';
+  error_message?: string | null;
   /** ISO timestamp. */
   created_at: string;
   shared_with_class: boolean;
@@ -62,7 +69,15 @@ export interface SessionResult {
 export type PlayStackParamList = {
   PlayLibrary: undefined;
   PlayBuild: undefined;
-  PlayBuildProgress: { taskId: string };
+  PlayBuildProgress: {
+    /** Offline / on-device generation task id (drives lessonGenerator). */
+    taskId?: string;
+    /** Cloud-side lesson id — when set, the screen polls
+     *  GET /play/lessons/<id> until status='ready' instead of running
+     *  the on-device generator. Set by PlayBuildScreen after the
+     *  POST /play/lessons fire-and-forget create. */
+    cloudLessonId?: string;
+  };
   PlayPreview: { lessonId: string; wasExpanded?: boolean };
   PlayGame: { lessonId: string; format: GameFormat };
   PlaySessionEnd: { sessionResult: SessionResult; lessonId: string };

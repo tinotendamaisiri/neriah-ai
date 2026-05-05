@@ -316,6 +316,11 @@ class PlayLesson(BaseModel):
     source_content: str
     questions: list[PlayQuestion] = []
     question_count: int
+    # Lifecycle: 'generating' (worker still building the bank), 'ready' (full
+    # 100 questions saved), 'failed' (worker raised — payload includes
+    # error_message). Default 'ready' so legacy rows stay valid.
+    status: str = "ready"
+    error_message: Optional[str] = None
     was_expanded: bool = False  # generator auto-augmented broader-topic content
     created_at: str = Field(default_factory=lambda: _now().isoformat())
     shared_with_class: bool = False

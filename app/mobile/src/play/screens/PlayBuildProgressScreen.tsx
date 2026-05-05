@@ -80,12 +80,16 @@ async function clearFormSnapshot(taskId: string): Promise<void> {
 export default function PlayBuildProgressScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<R>();
-  const { taskId } = route.params;
+  const { taskId, cloudLessonId } = route.params;
+  const isCloudMode = !!cloudLessonId;
   const { t } = useLanguage();
 
   const [count, setCount] = useState(0);
   const target = TARGET_QUESTION_COUNT;
   const [stalls, setStalls] = useState(0);
+  // Steady time-based ramp for the cloud-mode progress bar (cloud
+  // doesn't expose incremental progress — we just show motion).
+  const [cloudProgress, setCloudProgress] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
@@ -95,15 +99,20 @@ export default function PlayBuildProgressScreen() {
   }, []);
 
   const onCancel = useCallback(() => {
-    track('play.lesson.create.cancel', { taskId });
+    track('play.lesson.create.cancel', { taskId, cloudLessonId });
     abortRef.current?.abort();
-    Promise.all([
-      clearPersistedProgress(taskId),
-      clearFormSnapshot(taskId),
-    ]).catch(() => {});
+    if (taskId) {
+      Promise.all([
+        clearPersistedProgress(taskId),
+        clearFormSnapshot(taskId),
+      ]).catch(() => {});
+    }
+    // For cloud lessons we DON'T delete the row — the worker keeps
+    // running and the lesson will appear in the student's library when
+    // ready. They simply leave the wait screen.
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.navigate('PlayLibrary');
-  }, [navigation, taskId]);
+  }, [navigation, taskId, cloudLessonId]);
 
   // Intercept Android system back / edge-swipe so a stray gesture doesn't
   // kill an in-progress generation. Confirm before cancelling.
@@ -125,8 +134,77 @@ export default function PlayBuildProgressScreen() {
     }, [onCancel]),
   );
 
-  // Kick off the generator once on mount.
+  // ── Cloud-poll mode ──────────────────────────────────────────────────────
+  // Backend created a placeholder lesson with status='generating' and
+  // started a worker thread. Poll every 4 s until status flips to
+  // 'ready' (→ navigate to PlayPreview) or 'failed' (→ alert + bounce).
+  // The polling stops while the screen is unfocused / app backgrounded
+  // and resumes on focus, so backgrounding the phone is safe.
   useEffect(() => {
+    if (!cloudLessonId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const lesson = await playApi.getLesson(cloudLessonId);
+        if (cancelled) return;
+        if (lesson.status === 'ready') {
+          if (timer) clearInterval(timer);
+          track('play.lesson.create.success', {
+            path: 'cloud',
+            lesson_id: cloudLessonId,
+            count: lesson.question_count,
+            was_expanded: !!lesson.was_expanded,
+          });
+          navigation.replace('PlayPreview', {
+            lessonId: lesson.id,
+            wasExpanded: !!lesson.was_expanded,
+          });
+        } else if (lesson.status === 'failed') {
+          if (timer) clearInterval(timer);
+          trackError('play.lesson.create.failed', new Error('worker_failed'), {
+            path: 'cloud',
+            lesson_id: cloudLessonId,
+          });
+          Alert.alert(
+            'Generation failed',
+            lesson.error_message ||
+              "We couldn't build a full game from that topic. Try adding more detail or pick a slightly broader topic.",
+            [{ text: 'OK', onPress: () => navigation.replace('PlayBuild') }],
+          );
+        }
+        // status === 'generating' or undefined → keep polling
+      } catch (err) {
+        // Network blip — keep polling, don't bail.
+        // (axios offline maps to interceptor reject; we just retry.)
+      }
+    };
+
+    // First tick immediately, then every 4 s.
+    tick();
+    timer = setInterval(tick, 4000);
+
+    // Drive the time-based progress fill (~270 s to 0.95).
+    const startedAt = Date.now();
+    const progressTimer = setInterval(() => {
+      const elapsedMs = Date.now() - startedAt;
+      const pct = Math.min(0.95, elapsedMs / 270_000);
+      setCloudProgress(pct);
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      clearInterval(progressTimer);
+    };
+  }, [cloudLessonId, navigation]);
+
+  // Kick off the on-device generator once on mount (offline mode only).
+  useEffect(() => {
+    if (isCloudMode) return;
+    if (!taskId) return;
     if (startedRef.current) return;
     startedRef.current = true;
 
@@ -240,7 +318,34 @@ export default function PlayBuildProgressScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
-  const pct = Math.max(0, Math.min(1, target > 0 ? count / target : 0));
+  const pct = isCloudMode
+    ? cloudProgress
+    : Math.max(0, Math.min(1, target > 0 ? count / target : 0));
+
+  // Rotating quote rail (only while we're showing the wait UI).
+  const QUOTES = [
+    'Curiosity is the ignition of every great mind.',
+    'Mistakes are proof you are trying.',
+    'Mastery starts with one good question.',
+    'Slow learning beats fast forgetting.',
+    'Knowledge multiplies the moment you share it.',
+    'Africa’s brightest minds practise every day.',
+    'A mind that questions is a mind that grows.',
+    'Practice makes patterns. Patterns become skill.',
+    'Every expert was once a complete beginner.',
+    'Repetition is the mother of skill.',
+    'Small daily reps build big real-world results.',
+    'Effort compounds. Stay with it.',
+  ];
+  const [quoteIdx, setQuoteIdx] = useState(0);
+  useEffect(() => {
+    setQuoteIdx(Math.floor(Math.random() * QUOTES.length));
+    const id = setInterval(() => {
+      setQuoteIdx((i) => (i + 1) % QUOTES.length);
+    }, 7000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <ScreenContainer scroll={false} edges={['top', 'left', 'right']}>
@@ -249,32 +354,40 @@ export default function PlayBuildProgressScreen() {
       </View>
 
       <View style={styles.body}>
-        <View
-          style={[
-            playStyles.statusChip,
-            playStyles.statusChipOffline,
-            { marginBottom: 16 },
-          ]}
-        >
-          <Text style={[playStyles.statusChipText, playStyles.statusChipTextOffline]}>
-            {t('play_build_offline_indicator')}
-          </Text>
-        </View>
+        {!isCloudMode && (
+          <View
+            style={[
+              playStyles.statusChip,
+              playStyles.statusChipOffline,
+              { marginBottom: 16 },
+            ]}
+          >
+            <Text style={[playStyles.statusChipText, playStyles.statusChipTextOffline]}>
+              {t('play_build_offline_indicator')}
+            </Text>
+          </View>
+        )}
 
-        <Text style={styles.title}>{t('play_progress_title')}</Text>
-        <Text style={styles.subtitle}>{t('play_progress_subtitle')}</Text>
+        <Text style={styles.title}>{t('play_build_generating_title')}</Text>
+        <Text style={styles.subtitle}>{t('play_build_generating_hint')}</Text>
 
         <View style={styles.barTrack}>
           <View style={[styles.barFill, { width: `${pct * 100}%` }]} />
         </View>
 
-        <Text style={styles.counter}>
-          {t('play_progress_counter')
-            .replace('{n}', String(count))
-            .replace('{target}', String(target))}
-        </Text>
+        {!isCloudMode && (
+          <Text style={styles.counter}>
+            {t('play_progress_counter')
+              .replace('{n}', String(count))
+              .replace('{target}', String(target))}
+          </Text>
+        )}
 
-        <Text style={styles.qualityNote}>{t('play_progress_quality_note')}</Text>
+        <Text style={styles.quote}>“{QUOTES[quoteIdx]}”</Text>
+
+        <Text style={styles.backgroundOk}>
+          {t('play_progress_background_ok')}
+        </Text>
 
         <TrackedPressable
           analyticsId="play.progress.cancel"
@@ -333,7 +446,25 @@ const styles = StyleSheet.create({
   },
   barFill: {
     height: '100%',
-    backgroundColor: COLORS.amber300,
+    backgroundColor: COLORS.teal500,
+  },
+  quote: {
+    marginTop: 24,
+    fontFamily: PLAY_FONT,
+    fontSize: 14,
+    fontStyle: 'italic',
+    color: COLORS.textLight,
+    textAlign: 'center',
+    paddingHorizontal: 12,
+    lineHeight: 21,
+  },
+  backgroundOk: {
+    marginTop: 18,
+    fontFamily: PLAY_FONT,
+    fontSize: 12,
+    color: COLORS.teal500,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   counter: {
     marginTop: 14,

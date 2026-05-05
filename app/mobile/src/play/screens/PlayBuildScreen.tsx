@@ -222,30 +222,27 @@ export default function PlayBuildScreen() {
     if (route === 'cloud') {
       setGenerating(true);
       try {
+        // Async create — the route returns 201 with status='generating'
+        // within seconds. Actual question-bank generation runs server-
+        // side (worker thread, no-cpu-throttling) and survives the
+        // student backgrounding the phone. Mobile polls until ready.
         const lesson = await playApi.createLesson({
           title: title.trim(),
           source_content: notes.trim(),
           subject: subject || undefined,
           grade: level || undefined,
         });
-        track('play.lesson.create.success', {
+        track('play.lesson.create.queued', {
           path: 'cloud',
           lesson_id: lesson.id,
-          count: lesson.question_count,
-          was_expanded: !!lesson.was_expanded,
+          status: lesson.status ?? 'unknown',
         });
-        // Single-pass flow: auto-expand handled gaps server-side. Always
-        // go straight to preview; the preview shows a one-time toast when
-        // was_expanded so the student knows we added related questions.
-        navigation.replace('PlayPreview', {
-          lessonId: lesson.id,
-          wasExpanded: !!lesson.was_expanded,
-        });
+        navigation.replace('PlayBuildProgress', { cloudLessonId: lesson.id });
       } catch (err) {
         trackError('play.lesson.create.failed', err, { path: 'cloud' });
         const message =
           (err as { message?: string })?.message ||
-          'Could not generate a game right now. Please try again.';
+          'Could not start the game build. Please try again.';
         Alert.alert('Generation failed', message);
       } finally {
         setGenerating(false);
@@ -416,7 +413,9 @@ export default function PlayBuildScreen() {
           style={styles.notesInput}
         />
 
-        {/* Generate */}
+        {/* Generate — brief spinner during the POST (1-2 s); the long
+            wait UI lives on PlayBuildProgressScreen which we navigate
+            to immediately after the create. */}
         <TrackedPressable
           analyticsId="play.build.generate"
           style={[
@@ -437,12 +436,6 @@ export default function PlayBuildScreen() {
         {!canGenerate && !generating && (
           <Text style={[playStyles.bodyMuted, { marginTop: 8, textAlign: 'center' }]}>
             {t('play_build_validating')}
-          </Text>
-        )}
-
-        {generating && (
-          <Text style={[playStyles.bodyMuted, { marginTop: 12, textAlign: 'center' }]}>
-            {t('play_build_generating_hint')}
           </Text>
         )}
       </ScrollView>
