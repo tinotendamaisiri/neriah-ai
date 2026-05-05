@@ -129,11 +129,17 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // System back → open pause
+  // System back (hardware key OR Android 10+ edge-swipe back gesture)
+  // → open the pause overlay. The handler is registered ONCE with
+  // empty deps so there's no remove/re-add gap when `paused` flips —
+  // a back event landing during the gap would otherwise pop the screen
+  // and exit the game. Mutable state is read through refs.
+  const pausedRef = useRef<boolean>(paused);
+  pausedRef.current = paused;
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (sessionEndedRef.current) return false;
-      if (!paused) {
+      if (!pausedRef.current) {
         setPaused(true);
         return true;
       }
@@ -141,7 +147,7 @@ const GameEngine: React.FC<Props> = ({ lesson, format, onSessionEnd }) => {
       return true;
     });
     return () => sub.remove();
-  }, [paused]);
+  }, []);
 
   // ── Helpers ──
   const buildSessionResult = useCallback(

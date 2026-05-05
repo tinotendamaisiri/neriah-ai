@@ -12,11 +12,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -103,6 +104,26 @@ export default function PlayBuildProgressScreen() {
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.navigate('PlayHome');
   }, [navigation, taskId]);
+
+  // Intercept Android system back / edge-swipe so a stray gesture doesn't
+  // kill an in-progress generation. Confirm before cancelling.
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        Alert.alert(
+          'Stop building?',
+          'You will lose the progress on this game.',
+          [
+            { text: 'Keep building', style: 'cancel' },
+            { text: 'Stop', style: 'destructive', onPress: onCancel },
+          ],
+        );
+        return true;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => sub.remove();
+    }, [onCancel]),
+  );
 
   // Kick off the generator once on mount.
   useEffect(() => {
