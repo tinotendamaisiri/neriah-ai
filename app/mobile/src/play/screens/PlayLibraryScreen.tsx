@@ -138,6 +138,11 @@ export default function PlayLibraryScreen() {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterRail}
+        // flexGrow: 0 + height collapse the rail to its chip height.
+        // Without this, native-stack gives the ScrollView all leftover
+        // vertical space and the children (rounded chips) stretch into
+        // huge ellipsoids.
+        style={styles.filterRailScroll}
       >
         {subjects.map((s) => {
           const active = subjectFilter === s;
@@ -264,10 +269,15 @@ export default function PlayLibraryScreen() {
 
 const styles = StyleSheet.create({
   loaderWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  filterRailScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
   filterRail: {
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 8,
+    alignItems: 'center',
   },
   chip: {
     paddingHorizontal: 14,
