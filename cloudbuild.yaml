@@ -35,7 +35,15 @@ steps:
       - --source=.
       - --entry-point=neriah
       - --trigger-http
-      - --allow-unauthenticated
+      # NOTE: --allow-unauthenticated is intentionally omitted. The IAM
+      # binding `allUsers → roles/run.invoker` is already set on the
+      # underlying Run service and Cloud Build SA does not have
+      # `run.services.setIamPolicy` to re-assert it. Omitting the flag
+      # leaves the existing policy untouched. If you ever need to grant
+      # public access on a fresh service, run once manually:
+      #   gcloud run services add-iam-policy-binding neriah-grading \
+      #     --region=us-central1 --member=allUsers \
+      #     --role=roles/run.invoker --project=neriah-ai-492302
       - --memory=1Gi
       - --timeout=300s
       - --max-instances=3
