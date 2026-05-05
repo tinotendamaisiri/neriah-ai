@@ -279,8 +279,11 @@ export default function PlayBuildScreen() {
       edges={['top', 'left', 'right']}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
     >
-      <View style={playStyles.headerBand}>
-        <View style={playStyles.headerRow}>
+      {/* Header band — paddingBottom trimmed (no subtitle on this screen)
+          and headerRow's marginBottom zeroed so the back button + title +
+          profile row sits visually centered in the teal column. */}
+      <View style={[playStyles.headerBand, { paddingBottom: 14 }]}>
+        <View style={[playStyles.headerRow, { marginBottom: 0 }]}>
           <BackButton variant="onTeal" />
           <Text style={[playStyles.headerTitle, { flex: 1, marginLeft: 12 }]} numberOfLines={1}>
             {t('play_build_title')}
