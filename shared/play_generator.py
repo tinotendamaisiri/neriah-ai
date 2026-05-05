@@ -70,15 +70,20 @@ _MAX_BATCHES = 30              # upper bound on Gemma calls per generation. Size
 _LOW_YIELD_BATCHES_BEFORE_ESCALATE = 3
 _ZERO_YIELD_BATCHES_BEFORE_STOP = 4
 _LOW_YIELD_THRESHOLD = 5       # fewer than this many uniques per batch = "low yield"
-_SEMANTIC_DUP_COSINE = 0.92    # cosine ≥ threshold → treated as a duplicate.
-                               # 0.92 (not 0.85) matches what an arcade quiz
-                               # actually wants: keep "Define photosynthesis" +
-                               # "What is photosynthesis?" — both are valid
-                               # 1-question gameplay rounds even if the
-                               # embeddings cluster tightly. 0.85 was rejecting
-                               # the natural paraphrase pool of finite source
-                               # content, so generation kept stalling well
-                               # before reaching the 100-question target.
+_SEMANTIC_DUP_COSINE = 0.95    # cosine ≥ threshold → treated as a duplicate.
+                               # 0.95 only rejects near-identical paraphrases
+                               # ("Define photosynthesis." vs "Define
+                               # photosynthesis"). Anything looser was rejecting
+                               # legitimately-distinct rounds as dupes — a
+                               # 1-question-per-game arcade is fine with 100
+                               # variations on a topic, the dedup is only there
+                               # to stop literal repeats.
+
+_MIN_ACCEPTABLE_COUNT = 50     # Save the lesson if we got at least this many
+                               # unique questions, even if we couldn't reach
+                               # the 100-question target. Better UX than a
+                               # hard fail — the student gets a playable
+                               # game on the topic they asked for.
 
 _GEMMA_MAX_TOKENS = 6144
 
@@ -352,26 +357,51 @@ def generate_lesson_questions(
         and len(accumulated) > accumulated_count_when_expand_started
     )
 
-    # Safety valve. The contract is "every lesson is exactly `target`".
-    # If the three-tier escalation couldn't get there, surface a clear
-    # failure to the route handler instead of saving a partial lesson —
-    # the student gets a real "couldn't build it, try a different topic"
-    # error rather than a half-broken game.
-    if len(randomised) < target:
+    achieved = len(randomised)
+    # Floor the minimum at the target — callers who ask for a smaller
+    # bank (e.g. tests with target=2) shouldn't have to clear 50.
+    min_acceptable = min(_MIN_ACCEPTABLE_COUNT, target)
+
+    # Soft fallback: between min_acceptable and target counts as a
+    # successful lesson — the student wanted a game on this topic and
+    # got one, just shorter than the 100-question ideal. Log it so we
+    # can see how often it happens, but do not raise. Mark
+    # was_expanded=True so the preview screen surfaces "we expanded
+    # the topic to give you what we could".
+    if achieved < target and achieved >= min_acceptable:
+        log_event(
+            "play.generation.short_but_acceptable",
+            "warn",
+            payload={
+                "achieved": achieved,
+                "target": target,
+                "min_acceptable": min_acceptable,
+                "batches_used": batch_n,
+                "final_tier": tier,
+            },
+            surface="play",
+        )
+        return randomised, achieved, True
+
+    # Hard safety valve. Below the minimum we'd be saving a barely-
+    # playable lesson; surface a clear failure instead and let the
+    # student retry with broader notes / topic.
+    if achieved < min_acceptable:
         log_event(
             "play.generation.fell_short",
             "error",
             payload={
-                "achieved": len(randomised),
+                "achieved": achieved,
                 "target": target,
+                "min_acceptable": min_acceptable,
                 "batches_used": batch_n,
                 "final_tier": tier,
                 "was_expanded": was_expanded,
             },
             surface="play",
         )
-        raise GenerationFellShortError(achieved=len(randomised), target=target)
-    return randomised, len(randomised), was_expanded
+        raise GenerationFellShortError(achieved=achieved, target=target)
+    return randomised, achieved, was_expanded
 
 
 # ─── Gemma prompt construction ────────────────────────────────────────────────
@@ -400,7 +430,12 @@ def _ask_gemma_for_batch(
     # context for the model to avoid the most-recent overlap. Sending the
     # full 90-prompt list every time wastes context tokens and isn't
     # measurably better than the last 30.
-    recent = list(already_covered_prompts[-30:])
+    # Send the last 60 prompts. The earlier 30-window meant Gemma would
+    # reach back into the older 60-100 prompts and re-emit them, costing
+    # us batches to dedup-reject. Doubling the avoid-list lets the model
+    # diversify across the full bank instead of looping. Cost: ~600
+    # extra tokens per request — well within the 6 KB max_tokens budget.
+    recent = list(already_covered_prompts[-60:])
     covered_block = (
         "\n".join(f"- {p}" for p in recent)
         if recent else "(none yet — this is the first batch)"
